@@ -1,0 +1,30 @@
+# Materiały kursu — nie nasze, nie publikujemy.
+# Własna dokumentacja projektu jest wyjęta spod ignorowania poniżej,
+# bo docs/DECYZJE.md musi być widoczne w repozytorium.
+docs/*
+!docs/DECYZJE.md
+!docs/RUNBOOK.md
+!docs/INSTALACJA.md
+!docs/WYMAGANIA.md
+
+# Roboczy korpus do indeksowania (Etap 6).
+# Deterministyczny korpus testowy dla e2e siedzi w tests/corpus/ i jest wersjonowany.
+dokumenty/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Generowane przy budowaniu — źródłem prawdy jest git, nie plik w drzewie.
+version.json
+dist/
+
+# Lokalne nadpisania
+.env
+*.local.yaml
+kubeconfig*
