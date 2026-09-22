@@ -3,6 +3,7 @@
 #
 #   ci/build.sh api            build lokalny, brudne drzewo dozwolone
 #   RELEASE=1 ci/build.sh api  build wydania, brudne drzewo odrzucone
+#   PUSH=1 ci/build.sh api     publikacja do rejestru po weryfikacji
 #
 # Obraz jest samoopisujący się: version.json powstaje wewnątrz niego z build
 # argów, więc nie da się go rozdzielić z tożsamością.
@@ -41,16 +42,7 @@ docker build \
 df_log "zbudowano $image:$tag"
 
 # Kryterium zakończenia Etapu 0: to, co obraz mówi o sobie, zgadza się z gitem.
-reported=$(docker run --rm --entrypoint cat "$image:$tag" /app/version.json)
-echo "$reported"
-
-echo "$reported" | python3 -c '
-import json, sys
-actual = json.load(sys.stdin)["commit"]
-sys.exit(0 if actual == sys.argv[1] else 1)
-' "$commit" || { echo "BŁĄD: version.json w obrazie nie zgadza się z commitem" >&2; exit 1; }
-
-df_log "version.json zgodny z $commit"
+df_verify_image_identity "$image:$tag" "$commit"
 
 if [[ "${PUSH:-0}" == "1" ]]; then
   df_log "publikacja do $image"

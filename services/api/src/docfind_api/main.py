@@ -1,35 +1,21 @@
-"""DOCFIND API — szkielet z Etapu 0.
+"""Złożenie aplikacji DOCFIND API.
 
-Na tym etapie /search jest zaślepką, a /readyz nie ma jeszcze czego sprawdzać.
-Wypełniają się w Etapie 6 (Elasticsearch) i 7 (LLM).
+Ten moduł tylko montuje routery. Logika endpointów mieszka w docfind_api.routers,
+kontrakt odpowiedzi w docfind_api.models.
 """
 
 from __future__ import annotations
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI
 
-from .version import build_info
+from docfind_api.routers import diagnostics, search
 
-app = FastAPI(title="DOCFIND API", docs_url="/docs", redoc_url=None)
+app = FastAPI(
+    title="DOCFIND API",
+    summary="Wyszukiwarka dokumentów z odpowiedziami generowanymi przez model",
+    docs_url="/docs",
+    redoc_url=None,
+)
 
-
-@app.get("/healthz")
-def healthz() -> dict[str, str]:
-    """Żyje. Nie dotyka zależności — inaczej awaria ES restartowałaby API."""
-    return {"status": "ok"}
-
-
-@app.get("/readyz")
-def readyz() -> dict[str, str]:
-    """Gotowe na ruch. Od Etapu 6 sprawdza tu alias w ES i backend LLM."""
-    return {"status": "ready", "checks": "none"}
-
-
-@app.get("/version")
-def version() -> dict[str, str]:
-    return build_info()
-
-
-@app.get("/search")
-def search(q: str = Query(..., min_length=1, description="Zapytanie")) -> dict[str, object]:
-    return {"query": q, "fragments": [], "answer": None}
+app.include_router(diagnostics.router)
+app.include_router(search.router)
