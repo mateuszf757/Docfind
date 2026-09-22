@@ -1,0 +1,65 @@
+name: ci
+
+# PR      → lint i testy, nic nie opuszcza pipeline'u
+# main    → dodatkowo build i publikacja obrazu otagowanego commitem
+# tag v*  → build wydania; brudne drzewo odrzucone, obraz otagowany wersją
+#
+# fetch-depth: 0 jest konieczne — git describe bez pełnej historii i tagów
+# zwróci samo sha i wersja artefaktu przestanie rosnąć.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: shellcheck skryptów CI
+        run: shellcheck ci/*.sh
+
+      - name: lint i testy
+        run: ./ci/run-tests.sh
+
+  build:
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: logowanie do GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: build i publikacja obrazu api
+        env:
+          # Na tagu v* to jest build wydania: brudne drzewo przerywa pipeline.
+          RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
+          PUSH: "1"
+        run: ./ci/build.sh api
