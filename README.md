@@ -9,18 +9,26 @@ razem z ich kosztami, siedzą w [docs/DECYZJE.md](docs/DECYZJE.md).
 
 ## Stan
 
-Etap 0 z 11 — szkielet repozytorium i pipeline. Zrobione:
+Etap 1 z 11 — usługa w kontenerze. Zrobione:
 
 - `/version` raportuje wersję z `git describe` i commit zgodny z HEAD
-- obraz jest samoopisujący się: `version.json` powstaje przy budowaniu z danych z gita
+- obraz jest samoopisujący się i waży 120 MB; buduje się z `uv.lock`, więc
+  zawiera dokładnie wersje, które przeszły testy
+- konfiguracja walidowana modelem Pydantic — nieznany klucz albo zła wartość
+  kończy się odmową startu z komunikatem wskazującym pole
+- `app.schema.json` generowany z modelu, a CI pilnuje, żeby był aktualny
+- `get_secret()` jako jedyne wejście do sekretów, gotowe na Vaulta z Etapu 4
+- `/metrics` z licznikiem żądań i histogramem czasu, z etykietą trasy jako
+  szablonem — bez tego skan katalogów wysadziłby kardynalność
 - build wydania z brudnego drzewa jest odrzucany
-- lint, format i testy jednostkowe uruchamiane tym samym skryptem lokalnie i w CI
+- warunki zakończenia etapu sprawdzane skryptem, nie na słowo
 
 ## Struktura
 
 ```
 services/api/      Usługa API — Dockerfile, kod, testy
-ci/                lib.sh (wersjonowanie), run-tests.sh, build.sh
+deploy/config/     app.yml.example i generowany app.schema.json
+ci/                lib.sh, run-tests.sh, build.sh, gen-schema.sh, check-runtime.sh
 tests/corpus/      Deterministyczny korpus dla testów e2e
 docs/              DECYZJE.md i dokumentacja operacyjna
 dokumenty/         Roboczy korpus do indeksowania (poza repozytorium)
@@ -31,16 +39,22 @@ dokumenty/         Roboczy korpus do indeksowania (poza repozytorium)
 Wymagania: Docker, [uv](https://docs.astral.sh/uv/), Python 3.12.
 
 ```bash
-./ci/run-tests.sh          # lint, format, testy jednostkowe
-./ci/build.sh api          # build obrazu z wersją z gita
+./ci/run-tests.sh            # lint, format, testy jednostkowe
+./ci/gen-schema.sh           # regeneracja app.schema.json z modelu
+./ci/build.sh api            # build obrazu z wersją z gita
 RELEASE=1 ./ci/build.sh api  # build wydania — odrzuca brudne drzewo
+./ci/check-runtime.sh api    # warunki zakończenia Etapu 1
 ```
 
-Podgląd działającej usługi:
+Podgląd działającej usługi. Konfiguracja jest wymagana — bez niej kontener
+świadomie odmawia startu:
 
 ```bash
-docker run --rm -p 8000:8000 ghcr.io/mateuszf757/docfind-api:$(git rev-parse --short=12 HEAD)
+mkdir -p /tmp/docfind && cp deploy/config/app.yml.example /tmp/docfind/app.yml
+docker run --rm -p 8000:8000 -v /tmp/docfind:/app/config:ro \
+  ghcr.io/mateuszf757/docfind-api:$(git rev-parse --short=12 HEAD)
 curl -s localhost:8000/version
+curl -s localhost:8000/metrics
 ```
 
 ## Etapy
@@ -48,7 +62,7 @@ curl -s localhost:8000/version
 | Etap | Zakres | Warunek zakończenia |
 |---|---|---|
 | 0 ✅ | Repozytorium i pipeline | PR uruchamia testy; build daje `version.json` zgodny z commitem |
-| 1 | API w kontenerze, walidacja konfiguracji, `/metrics` | `docker stop` < 1 s; obraz < 200 MB; zły config = czytelna odmowa startu |
+| 1 ✅ | API w kontenerze, walidacja konfiguracji, `/metrics` | obraz 120 MB < 200 MB; zły config = czytelna odmowa startu; zamykanie 0,37 s ponad narzut Dockera |
 | 2 | k3d, Deployment, probe'y, 2 repliki, PDB | `kubectl drain` węzła → zero błędów w pętli curl |
 | 3 | ingress-nginx, cert-manager (DNS-01), streaming | wymuszone odnowienie certyfikatu przechodzi bez ingerencji |
 | 4 | Vault i External Secrets Operator | rotacja sekretu dociera do podów; zero jawnych sekretów w gicie |

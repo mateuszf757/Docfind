@@ -1,0 +1,153 @@
+{
+  "$defs": {
+    "ElasticsearchConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "format": "uri",
+          "minLength": 1,
+          "title": "Url",
+          "type": "string"
+        },
+        "alias": {
+          "description": "Alias indeksu. API nigdy nie odwołuje się do nazwy indeksu wprost.",
+          "minLength": 1,
+          "title": "Alias",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "default": 5.0,
+          "exclusiveMinimum": 0,
+          "title": "Timeout Seconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "url",
+        "alias"
+      ],
+      "title": "ElasticsearchConfig",
+      "type": "object"
+    },
+    "LlmBackend": {
+      "description": "Backend modelu wybierany konfiguracją — klienci mają różny sprzęt.\n\nSTUB daje deterministyczne wyjście i nie wymaga GPU, więc na nim stoją\ntesty e2e w pipelinie (patrz docs/DECYZJE.md, decyzja 9).",
+      "enum": [
+        "stub",
+        "ollama",
+        "vllm"
+      ],
+      "title": "LlmBackend",
+      "type": "string"
+    },
+    "LlmConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "$ref": "#/$defs/LlmBackend",
+          "default": "stub"
+        },
+        "endpoint": {
+          "anyOf": [
+            {
+              "format": "uri",
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Endpoint"
+        },
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model"
+        },
+        "max_context": {
+          "default": 8192,
+          "description": "Limit kontekstu modelu w tokenach",
+          "exclusiveMinimum": 0,
+          "title": "Max Context",
+          "type": "integer"
+        },
+        "max_fragments": {
+          "default": 8,
+          "description": "Ile fragmentów trafia do promptu",
+          "exclusiveMinimum": 0,
+          "title": "Max Fragments",
+          "type": "integer"
+        }
+      },
+      "title": "LlmConfig",
+      "type": "object"
+    },
+    "LogLevel": {
+      "enum": [
+        "debug",
+        "info",
+        "warning",
+        "error"
+      ],
+      "title": "LogLevel",
+      "type": "string"
+    },
+    "ServiceConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "default": "0.0.0.0",
+          "description": "Adres nasłuchu",
+          "title": "Host",
+          "type": "string"
+        },
+        "port": {
+          "default": 8000,
+          "maximum": 65535,
+          "minimum": 1,
+          "title": "Port",
+          "type": "integer"
+        },
+        "log_level": {
+          "$ref": "#/$defs/LogLevel",
+          "default": "info"
+        },
+        "shutdown_grace_seconds": {
+          "default": 3.0,
+          "description": "Ile czekać na dokończenie żądań przy SIGTERM",
+          "exclusiveMinimum": 0,
+          "title": "Shutdown Grace Seconds",
+          "type": "number"
+        }
+      },
+      "title": "ServiceConfig",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "service": {
+      "$ref": "#/$defs/ServiceConfig"
+    },
+    "elasticsearch": {
+      "$ref": "#/$defs/ElasticsearchConfig"
+    },
+    "llm": {
+      "$ref": "#/$defs/LlmConfig"
+    }
+  },
+  "required": [
+    "elasticsearch"
+  ],
+  "title": "Konfiguracja DOCFIND",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}
