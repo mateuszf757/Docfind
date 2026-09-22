@@ -62,6 +62,57 @@ df_image_name() {
   printf 'ghcr.io/%s/docfind-%s' "${owner,,}" "$service"
 }
 
+# Odczyt pojedynczego pola z obiektu JSON podanego na stdin.
+# Python zamiast jq, bo jq nie jest gwarantowane ani na runnerze, ani na
+# maszynie deweloperskiej — a Python jest, bo buduje ten projekt.
+df_json_field() {
+  local field="${1:?podaj nazwę pola}"
+  python3 -c '
+import json
+import sys
+
+field = sys.argv[1]
+try:
+    document = json.load(sys.stdin)
+except json.JSONDecodeError as exc:
+    sys.exit(f"nieprawidlowy JSON: {exc}")
+
+if not isinstance(document, dict):
+    sys.exit("oczekiwano obiektu JSON")
+
+try:
+    print(document[field])
+except KeyError:
+    sys.exit(f"brak pola {field!r}")
+' "$field"
+}
+
+# Obraz musi mówić o sobie prawdę: version.json wypieczony w środku wskazuje
+# ten commit, z którego obraz powstał.
+df_verify_image_identity() {
+  local image_ref="${1:?podaj referencję obrazu}"
+  local expected_commit="${2:?podaj oczekiwany commit}"
+  local reported actual
+
+  reported=$(docker run --rm --entrypoint cat "$image_ref" /app/version.json) || {
+    echo "BŁĄD: nie udało się odczytać /app/version.json z $image_ref" >&2
+    return 1
+  }
+  printf '%s\n' "$reported"
+
+  actual=$(printf '%s' "$reported" | df_json_field commit) || {
+    echo "BŁĄD: version.json w obrazie jest nieczytelny" >&2
+    return 1
+  }
+
+  if [[ "$actual" != "$expected_commit" ]]; then
+    echo "BŁĄD: obraz deklaruje commit $actual, oczekiwano $expected_commit" >&2
+    return 1
+  fi
+
+  df_log "version.json zgodny z $expected_commit"
+}
+
 df_log() {
   printf '==> %s\n' "$*"
 }

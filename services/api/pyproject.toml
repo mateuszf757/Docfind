@@ -5,6 +5,9 @@ description = "DOCFIND — API wyszukiwania dokumentów"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
+    # Importowany wprost w docfind_api.models, więc jest zależnością bezpośrednią,
+    # nie przechodnią przez fastapi.
+    "pydantic>=2.9",
     "uvicorn[standard]>=0.32",
 ]
 
@@ -30,8 +33,10 @@ src = ["src", "tests"]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["docfind_api"]
+known-first-party = ["docfind_api", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# "." daje testom import pakietu tests (dane i typy wyposażenia);
+# "src" daje im kod aplikacji bez instalowania go w trybie edytowalnym.
+pythonpath = ["src", "."]
