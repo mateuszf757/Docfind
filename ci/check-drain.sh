@@ -21,7 +21,7 @@ release="docfind"
 deployment="$release-api"
 selector="app.kubernetes.io/instance=$release,app.kubernetes.io/component=api"
 probe_pod="drain-probe"
-probe_image="curlimages/curl:8.16.0"
+probe_image="$DF_CURL_IMAGE"
 expected_context="k3d-docfind"
 
 # Poniżej tej liczby pętla nie biegła naprawdę i zero błędów nic nie znaczy.
@@ -54,12 +54,10 @@ distinct_nodes=$(printf '%s\n' "${api_nodes[@]}" | sort -u | wc -l)
 # układ podów przy diagnozie. Wskazany węzeł musi hostować replikę API,
 # inaczej drain niczego nie sprawdza.
 target="${DRAIN_NODE:-${api_nodes[0]}}"
-printf '%s\n' "${api_nodes[@]}" | grep -qxF "$target" \
+[[ " ${api_nodes[*]} " == *" $target "* ]] \
   || fail "na węźle $target nie ma repliki API — drain niczego by nie sprawdził"
-probe_node=$(
-  kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' \
-    | grep -vxF "$target" | head -1
-)
+all_nodes=$(kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+probe_node=$(grep -vxF "$target" <<<"$all_nodes" | head -1 || true)
 [[ -n "$probe_node" ]] || fail "brak węzła innego niż $target dla pętli żądań"
 
 df_log "drenowany węzeł: $target; pętla żądań na: $probe_node"
@@ -113,7 +111,8 @@ EOF
 
 kubectl -n "$namespace" wait --for=condition=Ready "pod/$probe_pod" --timeout=90s >/dev/null
 sleep 5
-kubectl -n "$namespace" logs "$probe_pod" | grep -q '^200 ' \
+warmup_log=$(kubectl -n "$namespace" logs "$probe_pod")
+grep -q '^200 ' <<<"$warmup_log" \
   || fail "pętla żądań nie dostaje odpowiedzi 200 jeszcze przed drainem — test nie ma punktu odniesienia"
 
 # --- drain -------------------------------------------------------------------

@@ -36,7 +36,9 @@ verify() {
 already_installed() {
   local binary="$1" expected_version="$2"
   [[ -x "$tools_dir/$binary" ]] || return 1
-  "$tools_dir/$binary" "${@:3}" 2>/dev/null | grep -qF -- "$expected_version"
+  local reported
+  reported=$("$tools_dir/$binary" "${@:3}" 2>/dev/null) || return 1
+  [[ "$reported" == *"$expected_version"* ]]
 }
 
 install_binary() {

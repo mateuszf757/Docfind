@@ -1,6 +1,6 @@
 """Polityki dla wyrenderowanych manifestów Kubernetesa.
 
-    helm template ... | python ci/check_policy.py <nazwa źródła>
+    helm template ... | python ci/check_policy.py <nazwa źródła> [--require-digest]
 
 kubeconform sprawdza, czy manifest jest poprawny względem schematu. Tu
 sprawdzamy, czy jest zgodny z naszymi decyzjami — pole może być poprawne
@@ -31,7 +31,7 @@ def pod_spec(manifest: dict[str, Any]) -> dict[str, Any] | None:
     return spec.get("template", {}).get("spec")
 
 
-def violations(manifest: dict[str, Any]) -> Iterator[str]:
+def violations(manifest: dict[str, Any], *, require_digest: bool) -> Iterator[str]:
     spec = pod_spec(manifest)
     if spec is None:
         return
@@ -56,11 +56,24 @@ def violations(manifest: dict[str, Any]) -> Iterator[str]:
         if "cpu" in limits:
             yield f"{where}: limits.cpu={limits['cpu']} — decyzja 16 wyklucza limity CPU"
 
+        # Decyzja 20: obrazy z zewnątrz przypięte digestem. Tag jest przesuwalny,
+        # więc sam tag oznacza zgodę na zawartość, której nikt nie sprawdził.
+        if require_digest and "@sha256:" not in container.get("image", ""):
+            yield f"{where}: obraz {container.get('image')} bez digestu — decyzja 20"
+
 
 def main() -> int:
-    source = sys.argv[1] if len(sys.argv) > 1 else "stdin"
+    arguments = sys.argv[1:]
+    require_digest = "--require-digest" in arguments
+    names = [argument for argument in arguments if not argument.startswith("--")]
+    source = names[0] if names else "stdin"
+
     manifests = [doc for doc in yaml.safe_load_all(sys.stdin) if doc]
-    found = [problem for manifest in manifests for problem in violations(manifest)]
+    found = [
+        problem
+        for manifest in manifests
+        for problem in violations(manifest, require_digest=require_digest)
+    ]
 
     for problem in found:
         print(f"POLITYKA ({source}): {problem}", file=sys.stderr)

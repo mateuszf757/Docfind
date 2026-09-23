@@ -49,4 +49,4 @@ def test_missing_fields_fall_back_to_unknown(
 
     assert body["version"] == PARTIAL_BUILD["version"]
     assert body["commit"] == UNKNOWN
-    assert body["built_at"] == UNKNOWN
+    assert body["source_date"] == UNKNOWN

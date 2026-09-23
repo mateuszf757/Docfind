@@ -70,7 +70,7 @@ Potem w PowerShellu: wsl --shutdown"
   # klastra. Konflikt portu k3d zgłosiłby dopiero w połowie tworzenia klastra.
   local cluster_file="$repo_root/deploy/k3d/cluster.yaml" host_port busy_ports=()
   while read -r host_port; do
-    if ss -ltnH "sport = :$host_port" | grep -q .; then
+    if [[ -n "$(ss -ltnH "sport = :$host_port")" ]]; then
       busy_ports+=("$host_port")
     fi
   done < <(
@@ -103,7 +103,7 @@ create_cluster() {
   # KubeletInUserNamespace każe mu ten błąd pominąć. Dokładana tylko przy
   # rootless — na zwykłym Dockerze niepotrzebnie łagodziłaby kubeletowi
   # obsługę błędów, więc nie jest wpisana na stałe do cluster.yaml.
-  if docker info --format '{{.SecurityOptions}}' | grep -q 'name=rootless'; then
+  if [[ "$(docker info --format '{{.SecurityOptions}}')" == *name=rootless* ]]; then
     rootless_args=(
       --k3s-arg "--kubelet-arg=feature-gates=KubeletInUserNamespace=true@server:*"
       --k3s-arg "--kubelet-arg=feature-gates=KubeletInUserNamespace=true@agent:*"

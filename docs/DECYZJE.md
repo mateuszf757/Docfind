@@ -322,9 +322,73 @@ tam, gdzie nie trzeba.
 zmieni zachowanie w kolejnej wersji Kubernetesa — wtedy klaster lokalny
 przechodzi na Dockera z rootem, a rootless zostaje dla pozostałej pracy.
 
+## 20. Wszystko z zewnątrz przypięte digestem albo SHA commita
+
+**Wybieram niezmienne referencje zamiast czytelnych.** Tag obrazu i tag akcji
+GitHuba są przesuwalne: właściciel może pod tą samą nazwą opublikować inną
+zawartość, a pipeline pobierze ją bez żadnego sygnału. Tak w 2025 roku
+skompromitowano `tj-actions/changed-files` — przesunięte tagi, złośliwy commit,
+sekrety każdego pipeline'u z `@v…`. Binarki i charty były już weryfikowane
+sumą; obrazy i akcje nie, co było niespójne. Teraz: obrazy narzędzi, k3s, bazy
+w Dockerfile i obraz CoreDNS mają digest indeksu (działa na każdej
+architekturze), akcje pełne SHA z komentarzem wersji. Polityka w
+`ci/check_policy.py` odrzuca obraz komponentu platformy bez digestu.
+
+**Co tracę:** czytelność — `@sha256:edad48e1…` nic nie mówi bez komentarza —
+i darmowe łatki bezpieczeństwa, które przy tagu przychodziły same. Tę drugą
+stratę pokrywa Dependabot (akcje, bazy w Dockerfile, uv.lock), ale **nie**
+przypięcia w `ci/lib.sh`: k3s, narzędzia, charty i obrazy narzędzi CI
+aktualizuję ręcznie, razem z sumami.
+
+**Kiedy zmieniam zdanie:** nigdy dla samego przypinania. Ręczne aktualizacje
+z `ci/lib.sh` przeniosę do Renovate z regułami regex, gdy zaczną zalegać.
+
+## 21. Build powtarzalny bajt w bajt
+
+**Wybieram dowód zamiast założenia.** Ten sam commit budowany dwa razy dawał
+różne obrazy, więc każdy build wywoływał rollout, a digestu z klastra nie
+dało się powiązać z zawartością. Teraz: czas w obrazie to czas commita
+(`SOURCE_DATE_EPOCH`), czasy plików w warstwach są do niego przycinane,
+użytkownik nie powstaje przez `adduser` (zapisywał dzisiejszą datę w
+`/etc/shadow`), a kod aplikacji jest kopiowany jako pliki z bytecode'em
+`checked-hash`, zamiast instalowany przez uv — który zapisywał w dist-info
+ctime źródła, niemożliwe do ustawienia z przestrzeni użytkownika. Każdą z tych
+przyczyn znalazło porównanie warstwa po warstwie (`ci/compare_oci.py`).
+Wynik: identyczny obraz przy dwóch buildach od zera **i** przy dwóch różnych
+sterownikach BuildKit (lokalnym i tym z CI). `ci/check-reproducible.sh`
+sprawdza to w każdym pipeline'ie.
+
+**Co tracę:** trzy rzeczy. Pole `built_at` w `/version` zmieniło nazwę na
+`source_date`, bo podaje czas commita, a nie budowania — zmiana kontraktu.
+Lokalne obrazy nie mają atestacji pochodzenia, bo ta z natury zmienia digest
+co build; publikowane do rejestru mają. Pakiet `docfind_api` nie jest
+zainstalowany, więc nie ma go w `importlib.metadata` — kod nie korzysta
+z tego, ale narzędzie do inwentaryzacji zależności go nie zobaczy.
+
+**Kiedy zmieniam zdanie:** gdy uv przestanie zapisywać `uv_cache.json`
+z ctime albo pozwoli to wyłączyć — wtedy wracam do instalacji koła, bo to
+zwyklejszy układ dla każdego, kto otworzy obraz.
+
 ---
 
 ## Czego bym dziś nie powtórzył
 
-Do uzupełnienia w trakcie budowy. To jest najważniejsza część tego dokumentu i najrzadziej
-przygotowana — sekcja pusta na koniec projektu oznacza, że projekt niczego nie nauczył.
+Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta
+na koniec projektu oznacza, że projekt niczego nie nauczył.
+
+**Szukanie przyczyny, zanim sprawdzę, czy proces w ogóle żyje.** Klaster nie
+wstawał, agenci widzieli `connection reset` do serwera. Zbadałem DNS
+w węzłach, reguły NAT i `route_localnet` — i dopiero wtedy zauważyłem, że
+procesu k3s nie ma, a kontener stoi, bo trzyma go skrypt startowy k3d.
+Przyczyna była w logu serwera od początku (`Failed to start ContainerManager`).
+Dziś kolejność jest odwrotna: najpierw czy proces istnieje i na czym słucha,
+potem sieć.
+
+**`cmd | grep -q` przy `set -o pipefail`.** `docker buildx inspect | awk
+'… exit'` przerywał build bez żadnego komunikatu, ale nie zawsze — w pomiarze
+8 razy na 30. Konsument kończy się po pierwszym dopasowaniu, producent dostaje
+SIGPIPE, `pipefail` uznaje potok za nieudany, `set -e` kończy skrypt. W `if`
+działa to odwrotnie i daje fałszywe „nie”. Ten sam wzorzec siedział w sześciu
+miejscach w `ci/`, w tym w sondzie drainu, gdzie przy długim logu stwierdziłby,
+że nie ma żadnej odpowiedzi 200. Dziś: pełne wyjście do zmiennej, potem
+dopasowanie.

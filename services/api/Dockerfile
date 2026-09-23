@@ -2,58 +2,93 @@
 # przy venv ważącym 54 MB nie da się na niej zejść poniżej limitu 200 MB
 # z Etapu 1. Koszt tej zamiany — musl zamiast glibc — jest zapisany
 # w docs/DECYZJE.md.
+#
+# Obrazy bazowe przypięte digestem: tag python:3.12-alpine przesuwa się przy
+# każdym wydaniu łatki Pythona albo Alpine, więc ten sam commit budowany dwa
+# razy dostawałby różne bazy. Aktualizacje digestów proponuje Dependabot
+# (.github/dependabot.yml) — dlatego obrazy są wpisane wprost w FROM, a nie
+# przez ARG: Dependabot nie rozwija zmiennych w FROM i takich przypięć nigdy
+# by nie zaktualizował. Oba etapy muszą mieć tę samą bazę Pythona — bytecode
+# kompilowany w builderze jest uruchamiany w runtime.
 
-FROM python:3.12-alpine AS builder
+FROM ghcr.io/astral-sh/uv:0.12.17@sha256:10787c682e4184e4f290de1171fd4703dc63de99221f10fe1c99002ce7fa9acc AS uv
+
+
+FROM python:3.12-alpine@sha256:4c47124a8391cb7a9f571164147d154777cf012a4ece5f86097130d7a4478111 AS builder
+
+# Czas ostatniego commita (ci/lib.sh). Python, widząc tę zmienną, kompiluje
+# pliki .pyc w trybie z sumą kontrolną zamiast z czasem modyfikacji źródła,
+# więc bytecode też jest powtarzalny.
+ARG SOURCE_DATE_EPOCH
 
 WORKDIR /build
 
 # uv instaluje dokładnie wersje z uv.lock, więc obraz dostaje to, co
 # przeszło testy. pip z pyproject.toml wziąłby najnowsze pasujące do
 # ograniczeń ">=" i obraz mógłby różnić się od tego, co zweryfikowało CI.
-COPY --from=ghcr.io/astral-sh/uv:0.12.17 /uv /usr/local/bin/uv
+COPY --from=uv /uv /usr/local/bin/uv
 
-# Potrzebne tylko wtedy, gdy któraś zależność nie ma koła dla musl
-# i musi się skompilować. Zostaje w warstwie budującej, nie w obrazie.
-RUN apk add --no-cache build-base
-
+# Bez `apk add build-base`: wszystkie zależności binarne mają gotowe koła dla
+# musl, a kompilator pobierany z indeksu Alpine w chwili budowania to i tak
+# zależność od stanu sieci, nie od commita. Jeśli któraś zależność straci
+# koło dla musl, uv sync przerwie build zamiast kompilować po cichu.
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
-    UV_NO_CACHE=1
+    UV_NO_CACHE=1 \
+    UV_PYTHON_DOWNLOADS=never \
+    SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 
+# Zależności, w osobnej warstwie: zmiana kodu aplikacji nie unieważnia jej,
+# więc nie przeinstalowuje całego venv przy każdym buildzie. --no-dev pomija
+# ruff i pytest; uv nie instaluje pipa do venv — obraz bez pipa to obraz,
+# w którym nie da się doinstalować pakietu niewidocznego w gicie.
 COPY pyproject.toml uv.lock ./
-COPY src ./src
+RUN uv sync --frozen --no-dev --no-install-project
 
-# --no-dev pomija ruff i pytest; uv nie instaluje pipa do venv, więc nie ma
-# czego usuwać po fakcie. Obraz bez pipa to zresztą obraz, w którym nie da
-# się doinstalować pakietu niewidocznego w gicie.
-RUN uv sync --frozen --no-dev --no-editable
+# Kod aplikacji nie jest instalowany jako pakiet, tylko kopiowany jako pliki.
+# Instalacja przez uv — wprost z katalogu i z koła — zapisywała w dist-info
+# plik uv_cache.json z ctime źródła, którego nie da się ustawić z przestrzeni
+# użytkownika; był to jedyny plik różniący dwa buildy tego samego commita
+# (znaleziony przez ci/check-reproducible.sh). Pliki skopiowane i skompilowane
+# do .pyc w trybie checked-hash są powtarzalne z samej konstrukcji.
+COPY src /opt/app/src
+RUN python -m compileall -q --invalidation-mode checked-hash /opt/app/src
 
 
-FROM python:3.12-alpine AS runtime
+FROM python:3.12-alpine@sha256:4c47124a8391cb7a9f571164147d154777cf012a4ece5f86097130d7a4478111 AS runtime
 
 ARG VERSION=unknown
 ARG COMMIT=unknown
-ARG BUILT_AT=unknown
+ARG SOURCE_DATE=unknown
 
 LABEL org.opencontainers.image.title="docfind-api" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${COMMIT}" \
-      org.opencontainers.image.created="${BUILT_AT}" \
+      org.opencontainers.image.created="${SOURCE_DATE}" \
       org.opencontainers.image.source="https://github.com/mateuszf757/Docfind"
 
 # Obraz niesie własną tożsamość — nie da się go rozdzielić z informacją,
 # z jakiego commita powstał.
+#
+# Użytkownik dopisany wprost do /etc/passwd i /etc/group zamiast przez
+# adduser: busyboxowy adduser zapisuje w /etc/shadow dzisiejszą datę zmiany
+# hasła, więc dwa buildy tego samego commita różniłyby się tą warstwą.
+# Konto systemowe bez hasła i bez powłoki nie potrzebuje wpisu w shadow.
 RUN mkdir -p /app/config \
- && printf '{"version":"%s","commit":"%s","built_at":"%s"}\n' \
-      "${VERSION}" "${COMMIT}" "${BUILT_AT}" > /app/version.json \
- && addgroup -S -g 10001 docfind \
- && adduser -S -u 10001 -G docfind docfind \
- && chown -R docfind:docfind /app
+ && printf '{"version":"%s","commit":"%s","source_date":"%s"}\n' \
+      "${VERSION}" "${COMMIT}" "${SOURCE_DATE}" > /app/version.json \
+ && echo 'docfind:x:10001:' >> /etc/group \
+ && echo 'docfind:x:10001:10001:docfind:/app:/sbin/nologin' >> /etc/passwd
 
+# Kod, zależności i version.json należą do roota — proces aplikacji może je
+# czytać, ale nie zmienić. Aplikacja niczego nie zapisuje poza /tmp, więc
+# nie ma powodu, żeby była właścicielem czegokolwiek w obrazie.
 COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /opt/app /opt/app
 
 ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONPATH=/opt/app/src \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     DOCFIND_VERSION_FILE=/app/version.json \

@@ -18,7 +18,7 @@ COMMIT_SHA: Final = "0123456789abcdef0123456789abcdef01234567"
 RELEASE_BUILD: Final = BuildInfo(
     version="1.2.3",
     commit=COMMIT_SHA,
-    built_at="2026-09-22T10:00:00Z",
+    source_date="2026-09-22T10:00:00Z",
 )
 """Poprawna, kompletna tożsamość builda."""
 

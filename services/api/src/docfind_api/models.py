@@ -30,10 +30,17 @@ class BuildInfo(BaseModel):
 
     version: str = Field(description="Wersja z git describe", examples=["1.2.3"])
     commit: str = Field(description="Pełne sha commita", examples=["0123456789abcdef"])
-    built_at: str = Field(description="Czas budowania w UTC", examples=["2026-09-22T10:00:00Z"])
+    source_date: str = Field(
+        description=(
+            "Czas ostatniego commita w UTC (SOURCE_DATE_EPOCH). Nie czas budowania: "
+            "build jest powtarzalny, więc ten sam commit daje ten sam obraz niezależnie "
+            "od chwili budowania."
+        ),
+        examples=["2026-09-22T10:00:00Z"],
+    )
 
 
-UNKNOWN_BUILD: Final = BuildInfo(version=UNKNOWN, commit=UNKNOWN, built_at=UNKNOWN)
+UNKNOWN_BUILD: Final = BuildInfo(version=UNKNOWN, commit=UNKNOWN, source_date=UNKNOWN)
 """Odpowiedź, gdy tożsamości nie da się ustalić — kod biegnie spoza obrazu."""
 
 

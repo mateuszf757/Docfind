@@ -50,8 +50,15 @@ for rendered in "$render_dir"/*.yaml; do
 
   # Poprawne względem schematu nie znaczy zgodne z decyzjami — domyślny
   # limit CPU z charta CoreDNS przeszedł kubeconform bez słowa.
+  #
+  # Digestu wymagamy od komponentów platformy, czyli obrazów z zewnątrz.
+  # Nasz obraz w renderze testowym ma tag "lint"; jego tożsamość gwarantuje
+  # build (version.json zgodny z commitem), a w dostawie do klienta wejdzie
+  # digest z rejestru (Etap 10).
+  policy_flags=()
+  [[ "$name" == "docfind" ]] || policy_flags+=(--require-digest)
   df_log "polityki $name"
-  (cd "$repo_root/services/api" && uv run --frozen python "$repo_root/ci/check_policy.py" "$name") \
+  (cd "$repo_root/services/api" && uv run --frozen python "$repo_root/ci/check_policy.py" "$name" "${policy_flags[@]}") \
     < "$rendered"
 done
 

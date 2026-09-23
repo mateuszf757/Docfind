@@ -44,5 +44,5 @@ def build_info() -> BuildInfo:
     return BuildInfo(
         version=str(document.get("version", UNKNOWN)),
         commit=str(document.get("commit", UNKNOWN)),
-        built_at=str(document.get("built_at", UNKNOWN)),
+        source_date=str(document.get("source_date", UNKNOWN)),
     )

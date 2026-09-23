@@ -20,8 +20,12 @@ Etap 2 z 11 — usługa na Kubernetesie. Drain każdego węzła z repliką API:
 - manifesty sprawdzane kubeconformem i politykami jako kodem
   (`ci/check_policy.py`) — poprawne względem schematu nie znaczy zgodne
   z decyzjami
-- narzędzia, charty i obraz k3s w przypiętych wersjach, pobierane pliki
-  weryfikowane sumą zapisaną w repozytorium
+- wszystko z zewnątrz przypięte niezmiennie: binarki i charty sumą, obrazy
+  digestem, akcje GitHuba SHA commita; aktualizacje proponuje Dependabot
+  (decyzja 20)
+- build powtarzalny bajt w bajt, także między lokalnym BuildKitem a tym
+  z CI — ten sam commit daje ten sam obraz i nie wywołuje rolloutu
+  (decyzja 21, `ci/check-reproducible.sh`)
 
 Zrobione w Etapach 0–1:
 
@@ -63,6 +67,7 @@ także narzędzia z `ci/install-tools.sh`.
 ./ci/build.sh api            # build obrazu z wersją z gita
 RELEASE=1 ./ci/build.sh api  # build wydania — odrzuca brudne drzewo
 ./ci/check-runtime.sh api    # warunki zakończenia Etapu 1
+./ci/check-reproducible.sh api  # dwa buildy od zera → identyczny obraz
 
 ./ci/install-tools.sh        # kubectl, k3d, helm, kubeconform w przypiętych wersjach
 ./ci/deploy-local.sh         # klaster k3d + build + helm upgrade --install

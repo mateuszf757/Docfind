@@ -23,7 +23,7 @@ set -euo pipefail
 # shellcheck disable=SC2034
 {
   DF_KUBERNETES_VERSION="1.36.4"
-  DF_K3S_IMAGE="rancher/k3s:v1.36.4-k3s1"
+  DF_K3S_IMAGE="rancher/k3s:v1.36.4-k3s1@sha256:edad48e12bf81c3a09ac1c05c0c0ffaaa22145980b989d6fae84543a76b83657"
 
   DF_KUBECTL_VERSION="v1.36.4"
   DF_KUBECTL_SHA256="8b8f088da2dab964f853b38464033b1be15ede2839eca751482357c45abdd05a"
@@ -46,9 +46,17 @@ set -euo pipefail
 
   # Obrazy narzędzi uruchamianych w run-tests.sh — dzięki nim CI nie
   # potrzebuje niczego instalować, a wersja jest ta sama co lokalnie.
-  DF_SHELLCHECK_IMAGE="koalaman/shellcheck:v0.11.0"
-  DF_HELM_IMAGE="alpine/helm:${DF_HELM_VERSION}"
-  DF_KUBECONFORM_IMAGE="ghcr.io/yannh/kubeconform:${DF_KUBECONFORM_VERSION}"
+  #
+  # Każdy obraz jest przypięty digestem, nie tylko tagiem. Tag jest
+  # przesuwalny: właściciel repozytorium obrazów może pod tą samą nazwą
+  # opublikować inną zawartość, a my pobralibyśmy ją bez żadnego sygnału.
+  # Tag zostaje obok dla czytelności — przy obu Docker używa digestu.
+  # Digesty indeksów wieloarchitekturowych, nie manifestów dla amd64, żeby
+  # przypięcie działało też na runnerze arm64.
+  DF_SHELLCHECK_IMAGE="koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d"
+  DF_HELM_IMAGE="alpine/helm:${DF_HELM_VERSION}@sha256:a6cf54599ccb99d90cf0712b30f03fdb3cab062e6b94e0418cc4db7e8a1464b2"
+  DF_KUBECONFORM_IMAGE="ghcr.io/yannh/kubeconform:${DF_KUBECONFORM_VERSION}@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e"
+  DF_CURL_IMAGE="curlimages/curl:8.16.0@sha256:463eaf6072688fe96ac64fa623fe73e1dbe25d8ad6c34404a669ad3ce1f104b6"
 }
 
 # Wersja z git describe. Bez tagów spada na 0.0.0-dev.<liczba commitów>+<sha>,
@@ -74,8 +82,23 @@ df_commit() {
   git rev-parse HEAD
 }
 
-df_built_at() {
-  date -u +%Y-%m-%dT%H:%M:%SZ
+# Znacznik czasu builda według konwencji reproducible-builds.org: czas ostatniego
+# commita, a nie chwila budowania. Dzięki temu ten sam commit zbudowany dziś
+# i za miesiąc daje bajt w bajt ten sam obraz — a zmiana czasu budowania nie
+# wywołuje rolloutu, w którym nic się nie zmieniło.
+#
+# Brudne drzewo dostaje bieżący czas: jego zawartość i tak nie odpowiada
+# żadnemu commitowi, więc nie ma czego odtwarzać, a wersja niesie "-dirty".
+df_source_date_epoch() {
+  if [[ -n "$(git status --porcelain)" ]]; then
+    date -u +%s
+  else
+    git log -1 --format=%ct
+  fi
+}
+
+df_source_date() {
+  date -u -d "@${1:-$(df_source_date_epoch)}" +%Y-%m-%dT%H:%M:%SZ
 }
 
 # Build wydania z brudnego drzewa jest odrzucany. Obraz zbudowany z
