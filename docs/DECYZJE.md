@@ -258,6 +258,70 @@ wydajności poniżej tego, do czego się przyzwyczaili.
 tam, gdzie administrator klienta wymusza limity przez LimitRange lub politykę —
 wtedy limit CPU, ale z zapasem kilkukrotnie ponad request.
 
+## 17. Klaster lokalny na portach nieuprzywilejowanych, tylko na loopbacku
+
+**Wybieram mniej wygodne adresy zamiast rozluźnienia zabezpieczeń hosta.**
+Docker działa tu bez roota, więc nie otworzy portów 80 i 443. Dokumentacja
+Dockera proponuje obniżyć `net.ipv4.ip_unprivileged_port_start`, ale to odblokowuje
+cały zakres do 1023 dla każdego procesu w systemie, a nie tylko porty klastra.
+Load balancer słucha więc na 8080 i 8443, a API Kubernetesa na 6550. Wszystko
+jest związane z `127.0.0.1`, bo k3d domyślnie wiąże porty z `0.0.0.0` — w sieci
+biurowej albo przy WSL w trybie mirrored API klastra z uprawnieniami admina
+byłoby osiągalne z zewnątrz.
+
+**Co tracę:** adresy z portem (`https://docfind.<domena>:8443`) i to, że lokalny
+adres różni się od produkcyjnego. Wyzwania ACME to nie dotyka, bo DNS-01
+(decyzja 4) nie potrzebuje portu 80.
+
+**Kiedy zmieniam zdanie:** nigdy dla portów — rozwiązanie działa bez sudo, więc
+też na firmowym laptopie bez uprawnień administratora. Wiązanie z loopbackiem
+zmieniam tylko wtedy, gdy klaster ma być świadomie dostępny dla innej maszyny,
+i wtedy z konkretnym adresem interfejsu, nigdy z `0.0.0.0`.
+
+## 18. Własny CoreDNS z charta zamiast wbudowanego w k3s
+
+**Wybieram przejęcie komponentu, który dystrybucja dostarcza gotowy.** Pierwszy
+drain przeszedł z 4 nieudanymi żądaniami na 153. Diagnoza z czasów faz curl
+wykazała, że wszystkie zawiodły na rozwiązywaniu nazwy (`exit=28`, `dns=0`), a nie
+na API — razem z repliką API wyjechał z węzła jedyny pod CoreDNS. k3s uruchamia
+go w jednej replice, bez PodDisruptionBudget, a ręczne skalowanie nie przetrwa
+restartu serwera, bo k3s ponownie aplikuje własne manifesty. CoreDNS jest
+teraz instalowany z charta `coredns/coredns` o przypiętej wersji i sumie: dwie
+repliki, PDB, rozłożenie na węzły, `system-cluster-critical`, bez limitu CPU.
+Po zmianie: trzy draine, każdego węzła z repliką API, 1358 żądań, zero błędów —
+a przy ostatnim PDB wstrzymał drain, dopóki druga replika DNS nie była gotowa.
+
+**Co tracę:** aktualizacje CoreDNS są teraz moje, a nie przychodzą z k3s, więc
+wersja może zostać w tyle za dystrybucją. Znika też `host.k3d.internal`, który
+k3d wstrzykuje tylko do wbudowanego CoreDNS. `metrics-server`
+i `local-path-provisioner` zostają wbudowane, z jedną repliką — świadomie, bo
+nie leżą na ścieżce żądania: ich chwilowy brak wstrzymuje `kubectl top` i nowe
+wolumeny, nie ruch.
+
+**Kiedy zmieniam zdanie:** gdy k3s pozwoli ustawić liczbę replik i PDB dla
+CoreDNS w swojej konfiguracji — wtedy wracam do wbudowanego i jednej rzeczy
+mniej do aktualizowania.
+
+## 19. Docker rootless zostaje, mimo kosztów
+
+**Wybieram trudniejsze, bo bezpieczniejsze.** Klaster da się postawić na
+zwykłym Dockerze bez żadnego z poniższych obejść. Rootless oznacza, że
+ucieczka z kontenera daje uprawnienia użytkownika, a nie roota hosta — a to
+jest właściwość, której środowisko deweloperskie nie powinno oddawać za wygodę.
+
+**Co tracę:** cztery rzeczy, każda z własnym obejściem. Kontroler `cpuset`
+trzeba delegować do sesji użytkownika (jednorazowo, sudo). Porty poniżej 1024
+są niedostępne — stąd 8080/8443 (decyzja 17). `k3d image import` w trybie
+domyślnym zawodzi i działa tylko `--mode direct`. Kubelet wymaga bramki
+`KubeletInUserNamespace`, która w Kubernetesie 1.36 jest wciąż **alfa** —
+czyli lokalny klaster opiera się na funkcji bez gwarancji stabilności.
+Dokładam ją tylko przy rootless, żeby nie łagodzić kubeletowi obsługi błędów
+tam, gdzie nie trzeba.
+
+**Kiedy zmieniam zdanie:** gdy bramka `KubeletInUserNamespace` zniknie albo
+zmieni zachowanie w kolejnej wersji Kubernetesa — wtedy klaster lokalny
+przechodzi na Dockera z rootem, a rootless zostaje dla pozostałej pracy.
+
 ---
 
 ## Czego bym dziś nie powtórzył

@@ -37,6 +37,13 @@ set -euo pipefail
   DF_KUBECONFORM_VERSION="v0.8.0"
   DF_KUBECONFORM_SHA256="9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883"
 
+  # Charty komponentów platformy. Pobierane jako plik i weryfikowane sumą,
+  # a nie instalowane wprost z repozytorium Helma — `helm install --repo`
+  # zainstalowałby to, co repozytorium akurat serwuje pod tą wersją.
+  DF_COREDNS_CHART_VERSION="1.47.1"
+  DF_COREDNS_CHART_URL="https://github.com/coredns/helm/releases/download/coredns-${DF_COREDNS_CHART_VERSION}/coredns-${DF_COREDNS_CHART_VERSION}.tgz"
+  DF_COREDNS_CHART_SHA256="1587165a85ec63dec4603e2889a8a6f5af9222a63893b8ecc254dfeb80c0e1e0"
+
   # Obrazy narzędzi uruchamianych w run-tests.sh — dzięki nim CI nie
   # potrzebuje niczego instalować, a wersja jest ta sama co lokalnie.
   DF_SHELLCHECK_IMAGE="koalaman/shellcheck:v0.11.0"
@@ -148,6 +155,31 @@ df_verify_image_identity() {
   fi
 
   df_log "version.json zgodny z $expected_commit"
+}
+
+# Pobiera plik do pamięci podręcznej w repozytorium i weryfikuje jego sumę
+# przy każdym użyciu, nie tylko przy pobraniu — plik w pamięci podręcznej
+# też może zostać podmieniony albo uszkodzony. Wypisuje ścieżkę do pliku.
+# Pamięć podręczna leży w repozytorium (.cache/, poza gitem), żeby narzędzia
+# uruchamiane w kontenerach widziały ją pod tym samym montowaniem co kod.
+df_fetch_verified() {
+  local url="$1" expected="$2" repo_root file actual
+  repo_root=$(git rev-parse --show-toplevel)
+  file="$repo_root/.cache/downloads/$(basename "$url")"
+  mkdir -p "$(dirname "$file")"
+
+  if [[ ! -f "$file" ]]; then
+    curl -fsSL -o "$file.part" "$url"
+    mv "$file.part" "$file"
+  fi
+
+  actual=$(sha256sum "$file" | cut -d' ' -f1)
+  if [[ "$actual" != "$expected" ]]; then
+    rm -f "$file"
+    echo "BŁĄD: suma $(basename "$url") nie zgadza się z przypiętą (otrzymano $actual)." >&2
+    return 1
+  fi
+  printf '%s' "$file"
 }
 
 df_log() {

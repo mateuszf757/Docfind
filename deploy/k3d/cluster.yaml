@@ -12,12 +12,25 @@ metadata:
 servers: 1
 agents: 2
 
-# Porty 80 i 443 mapowane od razu, choć ingress wchodzi dopiero na Etapie 3:
-# mapowania portów nie da się bezboleśnie dołożyć do istniejącego klastra.
+# Wszystko, co klaster wystawia na hosta, słucha wyłącznie na loopbacku.
+# Domyślnie k3d wiąże porty z 0.0.0.0, czyli z każdym interfejsem — w sieci
+# biurowej albo przy WSL w trybie mirrored API klastra z uprawnieniami admina
+# byłoby osiągalne z zewnątrz. Decyzja 17.
+kubeAPI:
+  host: 127.0.0.1
+  hostIP: 127.0.0.1
+  hostPort: "6550"
+
+# Porty nieuprzywilejowane zamiast 80 i 443. Docker działa tu bez roota,
+# a otwarcie mu 80/443 wymagałoby obniżenia net.ipv4.ip_unprivileged_port_start,
+# co odblokowuje cały zakres 80–1023 dla każdego procesu w systemie. Środowisko
+# deweloperskie nie jest powodem do rozluźniania zabezpieczeń hosta. Mapowane
+# od razu, choć ingress wchodzi na Etapie 3 — mapowań portów nie da się
+# bezboleśnie dołożyć do istniejącego klastra.
 ports:
-  - port: 80:80
+  - port: 127.0.0.1:8080:80
     nodeFilters: [loadbalancer]
-  - port: 443:443
+  - port: 127.0.0.1:8443:443
     nodeFilters: [loadbalancer]
 
 options:
@@ -27,6 +40,14 @@ options:
       # ingress-nginx (docs/DECYZJE.md, decyzja 11) — dwa kontrolery ingressu
       # walczyłyby o te same porty.
       - arg: --disable=traefik
+        nodeFilters: [server:*]
+      # Wbudowany CoreDNS k3s ma jedną replikę i nie ma PodDisruptionBudget —
+      # drain jego węzła odcina DNS całemu klastrowi na kilka sekund, co
+      # check-drain.sh złapał jako nieudane żądania (exit=28, dns=0). Skalowanie
+      # go ręcznie nie przetrwa restartu serwera, bo k3s ponownie aplikuje
+      # własne manifesty. CoreDNS instaluje więc deploy-local.sh z charta
+      # i wartości w deploy/platform/coredns.
+      - arg: --disable=coredns
         nodeFilters: [server:*]
   kubeconfig:
     updateDefaultKubeconfig: true

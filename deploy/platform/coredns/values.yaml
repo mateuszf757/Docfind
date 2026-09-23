@@ -1,0 +1,69 @@
+# CoreDNS klastra, instalowany z charta coredns/coredns zamiast wbudowanego
+# w k3s. Wersja charta i suma: ci/lib.sh (DF_COREDNS_CHART_*).
+#
+# Wbudowany CoreDNS k3s ma jedną replikę i nie ma PodDisruptionBudget. Drain
+# jego węzła odciął DNS całemu klastrowi na kilka sekund i check-drain.sh
+# zobaczył to jako nieudane żądania do API, choć samo API przeszło drain czysto.
+# DNS jest zależnością każdego poda — musi być odporny co najmniej tak jak
+# najbardziej odporna usługa, która z niego korzysta.
+
+fullnameOverride: coredns
+
+# Etykieta k8s-app=kube-dns jest konwencją, po której NetworkPolicy zwykle
+# przepuszczają ruch DNS. Domyślna "coredns" rozjechałaby się z nimi po cichu.
+k8sAppLabelOverride: kube-dns
+
+replicaCount: 2
+
+# Kubelet każdego węzła ma w konfiguracji ten adres jako serwer DNS podów
+# (domyślny --cluster-dns k3s), więc usługa musi go zająć dokładnie.
+service:
+  name: kube-dns
+  clusterIP: 10.43.0.10
+
+# Przy braku zasobów scheduler wywłaszcza pody o niższym priorytecie, zanim
+# ruszy DNS — bez tego pod aplikacji mógłby wypchnąć CoreDNS z węzła.
+priorityClassName: system-cluster-critical
+
+# Nowa replika wstaje i przechodzi readiness, zanim stara zostanie zdjęta.
+# Domyślne maxUnavailable: 1 przy dwóch replikach zostawiałoby w trakcie
+# aktualizacji jedną, a przy jednej — zero.
+rollingUpdate:
+  maxUnavailable: 0
+  maxSurge: 1
+
+podDisruptionBudget:
+  maxUnavailable: 1
+  unhealthyPodEvictionPolicy: AlwaysAllow
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/instance: coredns
+        k8s-app: kube-dns
+    matchLabelKeys:
+      - pod-template-hash
+
+# Bez limitu CPU (decyzja 16), a dla DNS tym bardziej: dławienie CPU przez
+# CFS przekłada się wprost na opóźnienie rozwiązywania nazw w całym klastrze.
+# Request i limit pamięci jak w referencyjnym manifeście kubeadm.
+#
+# `cpu: null` jest konieczne: Helm scala mapy wartości z domyślnymi charta,
+# więc samo pominięcie klucza zostawiłoby domyślny limit 100m. Wyłapane
+# dopiero przy sprawdzeniu wyrenderowanego manifestu — kubeconform tego nie
+# zgłosi, bo limit CPU jest poprawnym polem, tylko niechcianym.
+resources:
+  requests:
+    cpu: 100m
+    memory: 70Mi
+  limits:
+    cpu: null
+    memory: 170Mi
+
+# Domyślny Corefile charta ma już `health { lameduck 10s }`: zamykana replika
+# odpowiada jeszcze przez 10 s, zanim zniknie z endpointów, więc zapytania
+# w locie nie trafiają w pustkę. Okres łaski musi to pokryć z zapasem.
+terminationGracePeriodSeconds: 30

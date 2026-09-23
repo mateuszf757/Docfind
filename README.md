@@ -9,9 +9,19 @@ razem z ich kosztami, siedzą w [docs/DECYZJE.md](docs/DECYZJE.md).
 
 ## Stan
 
-Etap 2 z 11 w toku — chart Helma gotowy i sprawdzony (`helm lint`, kubeconform,
-walidacja konfiguracji modelem), warunek zakończenia czeka na klaster: WSL
-musi działać na cgroup v2 (docs/WYMAGANIA.md).
+Etap 2 z 11 — usługa na Kubernetesie. Drain każdego węzła z repliką API:
+1358 żądań w trzech przebiegach, zero nieudanych.
+
+- chart Helma z dwiema replikami, PDB, rozłożeniem na węzły i preStop
+- własny CoreDNS z charta w dwóch replikach — wbudowany w k3s odcinał DNS
+  całemu klastrowi przy drainie swojego węzła (decyzja 18)
+- klaster lokalny wystawiony wyłącznie na loopback, bez rozluźniania
+  zabezpieczeń hosta (decyzja 17)
+- manifesty sprawdzane kubeconformem i politykami jako kodem
+  (`ci/check_policy.py`) — poprawne względem schematu nie znaczy zgodne
+  z decyzjami
+- narzędzia, charty i obraz k3s w przypiętych wersjach, pobierane pliki
+  weryfikowane sumą zapisaną w repozytorium
 
 Zrobione w Etapach 0–1:
 
@@ -33,6 +43,7 @@ Zrobione w Etapach 0–1:
 services/api/      Usługa API — Dockerfile, kod, testy
 deploy/config/     app.yml.example i generowany app.schema.json
 deploy/charts/     Chart Helma docfind
+deploy/platform/   Wartości komponentów platformy (CoreDNS)
 deploy/k3d/        Definicja lokalnego klastra (1 serwer, 2 węzły robocze)
 ci/                Skrypty budowania, testów, wdrożenia i warunków zakończenia
 tests/corpus/      Deterministyczny korpus dla testów e2e
@@ -76,7 +87,7 @@ curl -s localhost:8000/metrics
 |---|---|---|
 | 0 ✅ | Repozytorium i pipeline | PR uruchamia testy; build daje `version.json` zgodny z commitem |
 | 1 ✅ | API w kontenerze, walidacja konfiguracji, `/metrics` | obraz 120 MB < 200 MB; zły config = czytelna odmowa startu; zamykanie 0,37 s ponad narzut Dockera |
-| 2 | k3d, Deployment, probe'y, 2 repliki, PDB | `kubectl drain` węzła → zero błędów w pętli curl |
+| 2 ✅ | k3d, Deployment, probe'y, 2 repliki, PDB | drain każdego węzła: 1358 żądań, 0 błędów |
 | 3 | ingress-nginx, cert-manager (DNS-01), streaming | wymuszone odnowienie certyfikatu przechodzi bez ingerencji |
 | 4 | Vault i External Secrets Operator | rotacja sekretu dociera do podów; zero jawnych sekretów w gicie |
 | 5 | ArgoCD, app-of-apps, sync waves | ręczne `kubectl delete deploy` → ArgoCD odtwarza stan |

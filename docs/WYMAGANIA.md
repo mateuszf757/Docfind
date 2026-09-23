@@ -72,44 +72,65 @@ sudo systemctl daemon-reload
 
 Delegacja obejmuje sesje uruchomione po zmianie, więc potem `wsl --shutdown`.
 
-## Porty poniżej 1024 dla Dockera rootless
+## Wolne porty 6550, 8080 i 8443 na loopbacku
 
-**Sprawdzenie:** `sysctl -n net.ipv4.ip_unprivileged_port_start` — musi być ≤ 80.
+**Sprawdzenie:** `ss -ltn 'sport = :6550 or sport = :8080 or sport = :8443'` —
+nic nie powinno słuchać.
 
-**Dlaczego:** demon rootless nie ma uprawnień roota, więc nie otworzy portów 80
-i 443, na które `deploy/k3d/cluster.yaml` mapuje load balancer. Domyślna granica
-w Linuksie to 1024.
+Klaster wystawia na hosta API Kubernetesa (6550) oraz load balancer pod ingress
+z Etapu 3 (8080 → 80, 8443 → 443), wyłącznie na `127.0.0.1`. Szczegóły
+i uzasadnienie: decyzja 17.
 
-**Naprawa:**
+**Czego świadomie nie robimy.** Docker rootless nie otworzy portów 80 i 443.
+Obejściem, które podaje dokumentacja Dockera, jest obniżenie
+`net.ipv4.ip_unprivileged_port_start` (nawet do 0). Otwiera to jednak dla
+każdego procesu bez roota **cały zakres od tej wartości do 1023**, a nie tylko
+porty klastra. Każdy proces użytkownika mógłby wtedy zająć port usługi
+systemowej, zanim wstanie ona sama. Węższe obejście, `setcap cap_net_bind_service`
+na binarce rootlesskit, znika przy każdej aktualizacji pakietu i dryfuje
+niezauważenie. Środowisko deweloperskie nie jest powodem do rozluźniania
+zabezpieczeń hosta. Wymaganie sudo odcięłoby też każdego, kto pracuje na
+firmowym laptopie bez uprawnień administratora.
+
+Jeśli sysctl został już zmieniony, należy go wycofać:
 
 ```bash
-echo 'net.ipv4.ip_unprivileged_port_start=80' | sudo tee /etc/sysctl.d/99-rootless-ports.conf
-sudo sysctl --system
+sudo rm /etc/sysctl.d/99-rootless-ports.conf
+sudo sysctl -w net.ipv4.ip_unprivileged_port_start=1024
 ```
 
-To obniża granicę dla wszystkich procesów w systemie. Na jednoosobowym WSL-u
-to akceptowalne; na współdzielonej maszynie lepiej zmapować 8080 i 8443
-w `cluster.yaml` i zostawić granicę w spokoju.
-
 Wszystkie trzy powyższe warunki sprawdza `ci/deploy-local.sh` przed utworzeniem
-klastra i zgłasza je razem — każdy wymaga restartu WSL, więc zgłaszanie po
-jednym kosztowałoby restart na każdy.
+klastra i zgłasza je razem — dwa z nich wymagają restartu WSL, więc zgłaszanie
+po jednym kosztowałoby restart na każdy.
 
 ## Logi węzła, który nie wstał
 
-Gdy k3d nie doczeka się gotowości serwera, **wycofuje klaster razem
-z kontenerami węzłów, a więc i z ich logami** — jedynym dowodem przyczyny.
-Żeby je zachować, trzeba je przechwytywać od startu kontenera:
+Gdy k3d nie doczeka się gotowości węzła, **wycofuje klaster razem z kontenerami
+węzłów, a więc i z ich logami** — jedynym dowodem przyczyny. Przy ręcznym
+przechwytywaniu przyczyna ginęła dwa razy: raz, bo przechwytywany był tylko
+serwer, a padł agent; drugi raz, bo `docker logs -f` uruchomiony na kontenerze
+w stanie `Created` kończy się od razu z pustym plikiem.
 
-```bash
-( until docker ps --format '{{.Names}}' | grep -qx k3d-docfind-server-0; do sleep 0.3; done
-  docker logs -f k3d-docfind-server-0 > server.log 2>&1 ) &
-k3d cluster create --config deploy/k3d/cluster.yaml --image rancher/k3s:v1.36.4-k3s1 --timeout 180s
-grep -E 'level=(fatal|error)' server.log
-```
+Dlatego `ci/deploy-local.sh` robi to sam: od chwili startu każdego kontenera
+węzła zapisuje jego log do `~/.cache/docfind/k3d-create-<czas>/` i przy porażce
+wypisuje z nich błędy. Logi zostają na dysku niezależnie od wyniku.
 
-Tak znaleziona została przyczyna z poprzedniej sekcji. Pierwsza próba
-odczytania logów po rollbacku trafiła już na nieistniejący kontener.
+## Kubelet w przestrzeni nazw użytkownika (Docker rootless)
+
+**Sprawdzenie:** `docker info --format '{{.SecurityOptions}}'` — jeśli zawiera
+`name=rootless`, `ci/deploy-local.sh` dokłada kubeletowi bramkę
+`KubeletInUserNamespace=true`.
+
+**Dlaczego:** w rootless kubelet nie może zapisać globalnych sysctli jądra
+i kończy się `Failed to start ContainerManager: open
+/proc/sys/vm/overcommit_memory: permission denied`. Bramka każe mu ten błąd
+pominąć. W Kubernetesie 1.36 jest to funkcja **alfa** (decyzja 19) i kubelet
+ostrzega o tym przy starcie.
+
+Objaw był mylący: serwer zgłaszał `k3s is up and running`, a zaraz potem proces
+znikał, podczas gdy kontener dalej stał, bo trzyma go skrypt startowy k3d.
+Agenci widzieli wtedy `connection reset` i wyglądało to jak problem sieci
+albo DNS — a było to zapukanie do nieistniejącego procesu.
 
 ## Pamięć
 
@@ -120,14 +141,6 @@ z docelowego planu (Elasticsearch, monitoring, ArgoCD, Vault) to ~7–8 GB bez
 modelu LLM, który domyślnie stoi poza klastrem (decyzja 7). Limit pamięci WSL
 ustawia się w `.wslconfig` kluczem `memory=`; domyślnie WSL dostaje połowę RAM-u
 hosta.
-
-## Porty 80 i 443 na hoście
-
-**Sprawdzenie:** `ss -ltn | grep -E ':(80|443) '` — nic nie powinno słuchać.
-
-Mapowane na load balancer k3d od utworzenia klastra, choć ingress wchodzi
-dopiero na Etapie 3 — mapowania portów nie da się bezboleśnie dołożyć do
-istniejącego klastra.
 
 ## Narzędzia
 

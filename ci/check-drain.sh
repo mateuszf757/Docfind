@@ -3,6 +3,7 @@
 # powoduje ani jednego nieudanego żądania.
 #
 #   ci/check-drain.sh
+#   DRAIN_NODE=k3d-docfind-server-0 ci/check-drain.sh
 #
 # Pętla żądań biegnie wewnątrz klastra, na innym węźle niż drenowany, i woła
 # Service po nazwie DNS — tak jak każdy klient w klastrze. Z hosta przez
@@ -49,7 +50,12 @@ distinct_nodes=$(printf '%s\n' "${api_nodes[@]}" | sort -u | wc -l)
 (( distinct_nodes >= 2 )) \
   || fail "wszystkie repliki stoją na ${api_nodes[0]} — drain zabrałby je naraz; to błąd rozkładu podów"
 
-target="${api_nodes[0]}"
+# DRAIN_NODE pozwala wskazać węzeł — potrzebne, żeby odtworzyć konkretny
+# układ podów przy diagnozie. Wskazany węzeł musi hostować replikę API,
+# inaczej drain niczego nie sprawdza.
+target="${DRAIN_NODE:-${api_nodes[0]}}"
+printf '%s\n' "${api_nodes[@]}" | grep -qxF "$target" \
+  || fail "na węźle $target nie ma repliki API — drain niczego by nie sprawdził"
 probe_node=$(
   kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' \
     | grep -vxF "$target" | head -1
@@ -75,6 +81,10 @@ kubectl -n "$namespace" delete pod "$probe_pod" --ignore-not-found --wait=true >
 
 # Każde żądanie to nowe połączenie: klient trzymający keep-alive do umierającego
 # poda testowałby zachowanie klienta, a nie Service i endpointy.
+#
+# Poza kodem HTTP każde żądanie zapisuje kod wyjścia curl i czasy faz. Bez tego
+# "000" nie mówi, co zawiodło: exit=6 albo zawieszone dns= to rozwiązywanie
+# nazwy (CoreDNS), connect=0 przy rozwiązanej nazwie to brak endpointu.
 kubectl apply -f - >/dev/null <<EOF
 apiVersion: v1
 kind: Pod
@@ -94,7 +104,8 @@ spec:
         - -c
         - |
           while true; do
-            curl -s -o /dev/null -w '%{http_code}\n' --max-time 2 \
+            curl -s -o /dev/null --max-time 2 \
+              -w '%{http_code} exit=%{exitcode} dns=%{time_namelookup} connect=%{time_connect}\n' \
               "http://$deployment.$namespace.svc.cluster.local/search?q=drain"
             sleep 0.05
           done
@@ -102,7 +113,7 @@ EOF
 
 kubectl -n "$namespace" wait --for=condition=Ready "pod/$probe_pod" --timeout=90s >/dev/null
 sleep 5
-kubectl -n "$namespace" logs "$probe_pod" | grep -qx 200 \
+kubectl -n "$namespace" logs "$probe_pod" | grep -q '^200 ' \
   || fail "pętla żądań nie dostaje odpowiedzi 200 jeszcze przed drainem — test nie ma punktu odniesienia"
 
 # --- drain -------------------------------------------------------------------
@@ -132,8 +143,12 @@ kubectl -n "$namespace" get pods -l "$selector" -o wide --no-headers \
 
 if (( failed > 0 )); then
   echo "" >&2
-  echo "Nieudane żądania (czas, kod; 000 = brak połączenia lub DNS):" >&2
+  echo "Nieudane żądania (czas, kod HTTP, kod wyjścia curl, czasy faz w s):" >&2
   head -20 <<<"$failures" >&2
+  # curl ustawia time_connect=0, gdy do połączenia w ogóle nie doszło.
+  dns_failures=$(awk '$4 ~ /^dns=/ && $5 == "connect=0.000000"' <<<"$failures" | grep -c . || true)
+  echo "" >&2
+  echo "Z tego bez nawiązanego połączenia (DNS albo brak trasy): $dns_failures" >&2
   fail "$failed z $total żądań nie powiodło się podczas drainu"
 fi
 

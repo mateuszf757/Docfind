@@ -24,6 +24,9 @@ venv/
 version.json
 dist/
 
+# Pamięć podręczna pobranych artefaktów (charty), weryfikowanych sumą z ci/lib.sh.
+.cache/
+
 # Lokalne nadpisania
 .env
 *.local.yaml

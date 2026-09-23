@@ -17,32 +17,49 @@ df_log "shellcheck $DF_SHELLCHECK_IMAGE"
 # inaczej wywołanie spoza niego przekazałoby dosłowne "ci/*.sh".
 (cd "$repo_root" && docker run --rm -v "$repo_root:/mnt:ro" -w /mnt "$DF_SHELLCHECK_IMAGE" ci/*.sh)
 
-# --- chart Helma -------------------------------------------------------------
+# --- charty Helma ------------------------------------------------------------
 # Helm i kubeconform z przypiętych obrazów, z tego samego powodu co shellcheck.
-chart="deploy/charts/docfind"
-chart_values=(--set api.image.tag=lint)
+# Każdy chart jest renderowany raz, do pliku, i wszystkie sprawdzenia biegną
+# na tym samym renderze — czyli na tym, co faktycznie trafiłoby na klaster.
+render_dir=$(mktemp -d)
+trap 'rm -rf "$render_dir"' EXIT
 
 helm_in_docker() {
   docker run --rm -v "$repo_root:/apps:ro" -w /apps "$DF_HELM_IMAGE" "$@"
 }
 
 df_log "helm lint"
-helm_in_docker lint "$chart" "${chart_values[@]}"
+helm_in_docker lint deploy/charts/docfind --set api.image.tag=lint
 
-# -strict odrzuca pola, których nie ma w schemacie: literówka w nazwie pola
-# manifestu jest inaczej po cichu ignorowana przez API server.
-df_log "kubeconform względem Kubernetesa $DF_KUBERNETES_VERSION"
-helm_in_docker template docfind "$chart" "${chart_values[@]}" \
-  | docker run --rm -i "$DF_KUBECONFORM_IMAGE" \
-      -strict -summary -kubernetes-version "$DF_KUBERNETES_VERSION" -
+helm_in_docker template docfind deploy/charts/docfind --set api.image.tag=lint \
+  > "$render_dir/docfind.yaml"
+
+coredns_chart=$(df_fetch_verified "$DF_COREDNS_CHART_URL" "$DF_COREDNS_CHART_SHA256")
+helm_in_docker template coredns "${coredns_chart#"$repo_root"/}" --namespace kube-system \
+    --values deploy/platform/coredns/values.yaml \
+  > "$render_dir/coredns.yaml"
+
+for rendered in "$render_dir"/*.yaml; do
+  name=$(basename "$rendered" .yaml)
+
+  # -strict odrzuca pola, których nie ma w schemacie: literówka w nazwie pola
+  # manifestu jest inaczej po cichu ignorowana przez API server.
+  df_log "kubeconform $name względem Kubernetesa $DF_KUBERNETES_VERSION"
+  docker run --rm -i "$DF_KUBECONFORM_IMAGE" \
+      -strict -summary -kubernetes-version "$DF_KUBERNETES_VERSION" - < "$rendered"
+
+  # Poprawne względem schematu nie znaczy zgodne z decyzjami — domyślny
+  # limit CPU z charta CoreDNS przeszedł kubeconform bez słowa.
+  df_log "polityki $name"
+  (cd "$repo_root/services/api" && uv run --frozen python "$repo_root/ci/check_policy.py" "$name") \
+    < "$rendered"
+done
 
 # Konfiguracja z values.yaml trafia do ConfigMapy i jest walidowana dopiero
 # przy starcie poda. Sprawdzamy ją tym samym modelem już tutaj — zły config
 # ma zatrzymać pipeline, a nie skończyć jako CrashLoopBackOff na klastrze.
 df_log "konfiguracja z charta przechodzi walidację modelu"
-helm_in_docker template docfind "$chart" "${chart_values[@]}" \
-    --show-only templates/api-configmap.yaml \
-  | (cd "$repo_root/services/api" && uv run --frozen python -c '
+(cd "$repo_root/services/api" && uv run --frozen python -c '
 import sys
 import tempfile
 from pathlib import Path
@@ -51,7 +68,10 @@ import yaml
 
 from docfind_api.config import ConfigError, load_config
 
-config_map = yaml.safe_load(sys.stdin)
+config_map = next(
+    doc for doc in yaml.safe_load_all(sys.stdin)
+    if doc and doc["kind"] == "ConfigMap" and "app.yml" in doc.get("data", {})
+)
 with tempfile.TemporaryDirectory() as directory:
     path = Path(directory) / "app.yml"
     path.write_text(config_map["data"]["app.yml"], encoding="utf-8")
@@ -59,7 +79,7 @@ with tempfile.TemporaryDirectory() as directory:
         load_config(path)
     except ConfigError as exc:
         sys.exit(f"BŁĄD: konfiguracja w charcie jest nieprawidłowa\n{exc}")
-')
+') < "$render_dir/docfind.yaml"
 
 cd "$repo_root/services/api"
 
@@ -70,10 +90,10 @@ df_log "synchronizacja zależności z uv.lock"
 uv sync --extra dev --frozen
 
 df_log "ruff check"
-uv run ruff check .
+uv run ruff check . "$repo_root/ci"
 
 df_log "ruff format --check"
-uv run ruff format --check .
+uv run ruff format --check . "$repo_root/ci"
 
 df_log "pytest"
 uv run pytest -q
