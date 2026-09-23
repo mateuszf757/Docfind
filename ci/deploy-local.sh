@@ -28,27 +28,65 @@ if [[ "${1:-}" == "--down" ]]; then
 fi
 
 # --- warunki wstępne ---------------------------------------------------------
-# Kubelet od Kubernetesa 1.35 odmawia startu na cgroup v1. k3d nie widzi tego
-# błędu — widzi tylko, że serwer nie odpowiada, i czeka. Bez tej kontroli
-# skrypt wisiał ponad 10 minut bez żadnego komunikatu (docs/WYMAGANIA.md).
-cgroup_version=$(docker info --format '{{.CgroupVersion}}')
-if [[ "$cgroup_version" != "2" ]]; then
-  cat >&2 <<EOF
-BŁĄD: Docker działa na cgroup v$cgroup_version, a kubelet w Kubernetesie
-$DF_KUBERNETES_VERSION wymaga cgroup v2.
+# k3d nie diagnozuje, dlaczego węzeł nie wstaje — czeka na linię "k3s is up
+# and running", a po przekroczeniu czasu wycofuje klaster razem z logami węzła,
+# czyli z jedynym dowodem przyczyny. Dlatego warunki, na których k3s się
+# wykłada, sprawdzamy przed utworzeniem klastra, wszystkie naraz: każdy z nich
+# wymaga restartu WSL, a zgłaszanie ich po jednym kosztowałoby restart na każdy.
+preflight_failed=0
 
-WSL2: dopisz w %UserProfile%\.wslconfig w sekcji [wsl2]
-    kernelCommandLine = cgroup_no_v1=all
-i uruchom w PowerShellu: wsl --shutdown
-Szczegóły: docs/WYMAGANIA.md
-EOF
-  exit 1
-fi
+preflight_error() {
+  echo "BŁĄD: $1" >&2
+  while IFS= read -r line; do echo "    $line"; done <<<"$2" >&2
+  echo >&2
+  preflight_failed=1
+}
+
+preflight() {
+  local cgroup_version controllers port_start
+
+  cgroup_version=$(docker info --format '{{.CgroupVersion}}')
+  if [[ "$cgroup_version" != "2" ]]; then
+    preflight_error \
+      "Docker działa na cgroup v$cgroup_version, a kubelet $DF_KUBERNETES_VERSION wymaga cgroup v2." \
+      "W %UserProfile%\\.wslconfig, sekcja [wsl2]: kernelCommandLine = cgroup_no_v1=all
+Potem w PowerShellu: wsl --shutdown"
+  else
+    # Sprawdzamy z wnętrza kontenera, bo tylko tam widać, co faktycznie do
+    # niego dociera — host może mieć cpuset, a kontener i tak go nie dostać.
+    controllers=$(docker run --rm --entrypoint /bin/cat "$DF_K3S_IMAGE" /sys/fs/cgroup/cgroup.controllers)
+    if [[ " $controllers " != *" cpuset "* ]]; then
+      preflight_error \
+        "kontener nie dostaje kontrolera cgroup cpuset (widzi: $controllers) — k3s kończy się 'failed to find cpuset cgroup (v2)'." \
+        "Docker rootless: systemd deleguje do sesji użytkownika tylko cpu, memory i pids.
+sudo mkdir -p /etc/systemd/system/user@.service.d
+printf '[Service]\\nDelegate=cpu cpuset io memory pids\\n' | sudo tee /etc/systemd/system/user@.service.d/delegate.conf
+sudo systemctl daemon-reload
+Potem w PowerShellu: wsl --shutdown"
+    fi
+  fi
+
+  if docker info --format '{{.SecurityOptions}}' | grep -q 'name=rootless'; then
+    port_start=$(sysctl -n net.ipv4.ip_unprivileged_port_start)
+    if (( port_start > 80 )); then
+      preflight_error \
+        "Docker rootless nie otworzy portów 80 i 443 z deploy/k3d/cluster.yaml (ip_unprivileged_port_start=$port_start)." \
+        "echo 'net.ipv4.ip_unprivileged_port_start=80' | sudo tee /etc/sysctl.d/99-rootless-ports.conf
+sudo sysctl --system"
+    fi
+  fi
+
+  if (( preflight_failed )); then
+    echo "Szczegóły: docs/WYMAGANIA.md" >&2
+    exit 1
+  fi
+}
 
 # --- klaster -----------------------------------------------------------------
 if k3d cluster get "$cluster" >/dev/null 2>&1; then
   df_log "klaster $cluster istnieje"
 else
+  preflight
   df_log "tworzenie klastra $cluster ($DF_K3S_IMAGE)"
   # Limit czasu, bo domyślnie k3d czeka na serwer bez końca — węzeł, który
   # nigdy nie wstanie, wygląda wtedy dokładnie jak węzeł, który wstaje powoli.

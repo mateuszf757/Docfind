@@ -36,6 +36,81 @@ kernelCommandLine = cgroup_no_v1=all
 Potem w PowerShellu `wsl --shutdown` i ponowne otwarcie terminala. W
 `/etc/wsl.conf` musi być też `systemd=true` w sekcji `[boot]`.
 
+## Kontroler cpuset widoczny w kontenerze
+
+**Sprawdzenie:**
+
+```bash
+docker run --rm --entrypoint /bin/cat rancher/k3s:v1.36.4-k3s1 /sys/fs/cgroup/cgroup.controllers
+# musi zawierać cpuset
+```
+
+**Dlaczego:** k3s w kontenerze potrzebuje kontrolera `cpuset` i bez niego kończy
+się błędem `failed to find cpuset cgroup (v2)`. Samo cgroup v2 na hoście nie
+wystarcza — liczy się to, co faktycznie dociera do kontenera, i dlatego
+sprawdzenie jest robione z jego wnętrza.
+
+Na tej maszynie Docker działa w trybie **rootless**: kontenery trafiają pod
+`user.slice/user-1000.slice/user@1000.service/…`, a nie pod `system.slice`.
+systemd domyślnie deleguje do sesji użytkownika tylko `cpu memory pids`. Host
+i `system.slice` mają `cpuset`, ale na granicy `user.slice` kontroler znika.
+Rozpoznać to można po ścieżce cgroup dowolnego kontenera:
+
+```bash
+cat /proc/$(docker inspect -f '{{.State.Pid}}' <kontener>)/cgroup
+docker info --format '{{.SecurityOptions}}'   # name=rootless
+```
+
+**Naprawa:**
+
+```bash
+sudo mkdir -p /etc/systemd/system/user@.service.d
+printf '[Service]\nDelegate=cpu cpuset io memory pids\n' \
+  | sudo tee /etc/systemd/system/user@.service.d/delegate.conf
+sudo systemctl daemon-reload
+```
+
+Delegacja obejmuje sesje uruchomione po zmianie, więc potem `wsl --shutdown`.
+
+## Porty poniżej 1024 dla Dockera rootless
+
+**Sprawdzenie:** `sysctl -n net.ipv4.ip_unprivileged_port_start` — musi być ≤ 80.
+
+**Dlaczego:** demon rootless nie ma uprawnień roota, więc nie otworzy portów 80
+i 443, na które `deploy/k3d/cluster.yaml` mapuje load balancer. Domyślna granica
+w Linuksie to 1024.
+
+**Naprawa:**
+
+```bash
+echo 'net.ipv4.ip_unprivileged_port_start=80' | sudo tee /etc/sysctl.d/99-rootless-ports.conf
+sudo sysctl --system
+```
+
+To obniża granicę dla wszystkich procesów w systemie. Na jednoosobowym WSL-u
+to akceptowalne; na współdzielonej maszynie lepiej zmapować 8080 i 8443
+w `cluster.yaml` i zostawić granicę w spokoju.
+
+Wszystkie trzy powyższe warunki sprawdza `ci/deploy-local.sh` przed utworzeniem
+klastra i zgłasza je razem — każdy wymaga restartu WSL, więc zgłaszanie po
+jednym kosztowałoby restart na każdy.
+
+## Logi węzła, który nie wstał
+
+Gdy k3d nie doczeka się gotowości serwera, **wycofuje klaster razem
+z kontenerami węzłów, a więc i z ich logami** — jedynym dowodem przyczyny.
+Żeby je zachować, trzeba je przechwytywać od startu kontenera:
+
+```bash
+( until docker ps --format '{{.Names}}' | grep -qx k3d-docfind-server-0; do sleep 0.3; done
+  docker logs -f k3d-docfind-server-0 > server.log 2>&1 ) &
+k3d cluster create --config deploy/k3d/cluster.yaml --image rancher/k3s:v1.36.4-k3s1 --timeout 180s
+grep -E 'level=(fatal|error)' server.log
+```
+
+Tak znaleziona została przyczyna z poprzedniej sekcji. Pierwsza próba
+odczytania logów po rollbacku trafiła już na nieistniejący kontener.
+
 ## Pamięć
 
 **Sprawdzenie:** `free -h`
