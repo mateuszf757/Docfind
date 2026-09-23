@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Response, status
 
+from docfind_api.metrics import METRICS_PATH, render_metrics
 from docfind_api.models import (
     BuildInfo,
     LivenessResponse,
@@ -59,3 +60,18 @@ def readyz(response: Response) -> ReadinessResponse:
 def version() -> BuildInfo:
     """Tożsamość działającego builda — fundament diagnostyki całego systemu."""
     return build_info()
+
+
+@router.get(
+    METRICS_PATH,
+    response_class=Response,
+    responses={200: {"content": {"text/plain": {}}}},
+)
+def metrics() -> Response:
+    """Metryki dla Prometheusa.
+
+    Wystawione bez uwierzytelnienia, bo w klastrze ruch do tej trasy nie
+    wychodzi poza sieć podów — ingress nie kieruje tu żądań (Etap 3).
+    """
+    payload, content_type = render_metrics()
+    return Response(content=payload, media_type=content_type)

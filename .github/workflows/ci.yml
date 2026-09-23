@@ -39,6 +39,12 @@ jobs:
       - name: lint i testy
         run: ./ci/run-tests.sh
 
+      # Schemat konfiguracji jest generowany z modelu Pydantic. Gdyby wolno
+      # było go zacommitować nieaktualnego, zacząłby kłamać o tym, co
+      # aplikacja przyjmie — a to jest plik, który czyta administrator klienta.
+      - name: schemat konfiguracji aktualny
+        run: ./ci/gen-schema.sh --check
+
   build:
     needs: test
     if: github.event_name == 'push'
@@ -57,9 +63,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: build i publikacja obrazu api
+      - name: build obrazu api
         env:
           # Na tagu v* to jest build wydania: brudne drzewo przerywa pipeline.
+          RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
+        run: ./ci/build.sh api
+
+      # Warunki zakończenia Etapu 1 sprawdzane na artefakcie, nie na kodzie:
+      # rozmiar obrazu, odmowa startu bez konfiguracji, czas zamykania.
+      - name: warunki zakończenia etapu
+        run: ./ci/check-runtime.sh api
+
+      - name: publikacja obrazu api
+        env:
           RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
           PUSH: "1"
         run: ./ci/build.sh api

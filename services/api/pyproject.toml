@@ -8,7 +8,16 @@ dependencies = [
     # Importowany wprost w docfind_api.models, więc jest zależnością bezpośrednią,
     # nie przechodnią przez fastapi.
     "pydantic>=2.9",
-    "uvicorn[standard]>=0.32",
+    # Konfiguracja jest w YAML-u, bo czyta ją administrator klienta.
+    "pyyaml>=6.0",
+    "prometheus-client>=0.21",
+    # Zamiast uvicorn[standard]: bierzemy uvloop i httptools dla wydajności,
+    # ale nie websockets (nie używamy ich — strumieniowanie na Etapie 7 idzie
+    # przez chunked HTTP) ani watchfiles (przeładowanie kodu to narzędzie
+    # deweloperskie, w obrazie jest tylko martwym megabajtem).
+    "uvicorn>=0.32",
+    "uvloop>=0.21",
+    "httptools>=0.6",
 ]
 
 [project.optional-dependencies]

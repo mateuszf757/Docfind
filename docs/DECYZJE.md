@@ -203,6 +203,42 @@ publicznym interfejsem produktu: każda zmiana nazwy wartości jest zmianą łam
 **Kiedy zmieniam zdanie:** gdyby klient wymagał instalacji bez połączenia z rejestrem — wtedy
 wraca lustro rejestru i tarball airgapowy, czyli warstwa, z której tu zrezygnowałem.
 
+## 14. Obraz na Alpine zamiast Debian slim
+
+**Wybieram mniejsze kosztem wolniejszego zamykania.** Zmierzone na tym samym
+kodzie: Debian slim daje obraz 228 MB i koszt własny zamykania 0,373 s, Alpine
+daje 120 MB i 0,474 s. Limit 200 MB z Etapu 1 spełnia tylko Alpine — baza
+`python:3.12-slim` to ~196 MB przy venv ważącym 54 MB, więc na niej nie da się
+zejść niżej bez porzucenia Pythona.
+
+**Co tracę:** musl zamiast glibc. Dwie konkretne konsekwencje. Zamykanie procesu
+jest o ~0,1 s wolniejsze, co przy rolling update mnoży się przez liczbę replik.
+Groźniejsze jest to, że resolver musl historycznie inaczej obsługuje domeny
+wyszukiwania z `/etc/resolv.conf` niż glibc — a w Kubernetesie to jest dokładnie
+mechanizm, którym pody odnajdują usługi po nazwie.
+
+**Kiedy zmieniam zdanie:** przy pierwszym problemie z rozwiązywaniem nazw
+w klastrze, którego nie da się wyjaśnić inaczej. Wracam wtedy na Debiana
+i przyjmuję 228 MB — po zniknięciu paczki offline rozmiar obrazu kosztuje
+transfer z rejestru, a nie miejsce w archiwum instalacyjnym, więc jest to
+koszt, który da się znieść.
+
+## 15. Obraz bez instrukcji HEALTHCHECK
+
+**Wybieram pominięcie mechanizmu, który w docelowym środowisku nie istnieje.**
+Kubernetes ignoruje `HEALTHCHECK` z obrazu i korzysta wyłącznie
+z `livenessProbe` i `readinessProbe` z manifestu (Etap 2). Zmierzony koszt
+utrzymywania go mimo to: 0,24 s dłuższe zamykanie kontenera oraz start całego
+interpretera Pythona co 10 sekund, co pod limitem CPU w klastrze nie jest
+zerowe.
+
+**Co tracę:** `docker ps` przestaje pokazywać stan zdrowia przy lokalnym
+uruchomieniu, więc pracując poza klastrem trzeba odpytać `/healthz` samemu.
+
+**Kiedy zmieniam zdanie:** gdyby produkt miał być kiedykolwiek uruchamiany
+przez docker compose — wtedy healthcheck wraca, bo compose go czyta i używa
+do kolejności startu.
+
 ---
 
 ## Czego bym dziś nie powtórzył

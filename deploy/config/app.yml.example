@@ -1,0 +1,30 @@
+# Konfiguracja DOCFIND.
+#
+# Nieznany klucz przerywa start — literówka ma być widoczna od razu,
+# a nie objawić się jako "ustawienie nie działa" pół roku później.
+# Kształt pliku opisuje app.schema.json, generowany z modelu Pydantic.
+
+service:
+  host: 0.0.0.0
+  port: 8000
+  log_level: info
+  # Ile czekać na dokończenie żądań po SIGTERM. Dłuższy czas wydłuża
+  # rolling update; krótszy zrywa żądania w locie.
+  shutdown_grace_seconds: 3
+
+elasticsearch:
+  # API odwołuje się do aliasu, nigdy do nazwy indeksu — dzięki temu
+  # reindeks z podmianą aliasu nie wymaga zmiany konfiguracji (Etap 6).
+  url: http://elasticsearch:9200
+  alias: docfind
+  timeout_seconds: 5
+
+llm:
+  # stub | ollama | vllm. stub nie wymaga GPU i daje deterministyczne
+  # wyjście, więc na nim stoją testy e2e (docs/DECYZJE.md, decyzja 9).
+  backend: stub
+  # Wymagany dla backendów innych niż stub:
+  # endpoint: http://ollama:11434
+  # model: llama3.1:8b
+  max_context: 8192
+  max_fragments: 8
