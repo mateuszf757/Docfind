@@ -1,0 +1,101 @@
+{{- include "docfind.api.validateGracePeriod" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "docfind.api.fullname" . }}
+  labels:
+    {{- include "docfind.api.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.api.replicas }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Nowy pod wstaje i musi przejść readiness, zanim stary zostanie
+      # zabity — liczba gotowych replik nigdy nie spada poniżej zadanej.
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "docfind.api.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "docfind.api.labels" . | nindent 8 }}
+      annotations:
+        # Zmiana konfiguracji nie zmienia specyfikacji poda, więc bez tej
+        # sumy pody działałyby dalej na starym app.yml aż do restartu.
+        checksum/config: {{ include (print $.Template.BasePath "/api-configmap.yaml") . | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.api.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        # Repliki na różnych węzłach — inaczej drain jednego węzła zabiera
+        # obie naraz i PodDisruptionBudget niczego nie ratuje.
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "docfind.api.selectorLabels" . | nindent 14 }}
+          # Liczy tylko pody z bieżącego ReplicaSetu. Bez tego podczas
+          # rolling update stare pody zaburzają rozkład nowych.
+          matchLabelKeys:
+            - pod-template-hash
+      containers:
+        - name: api
+          image: "{{ .Values.api.image.repository }}:{{ required "api.image.tag jest wymagany — podaj tag obrazu, nie polegaj na latest" .Values.api.image.tag }}"
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.api.config.service.port }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          lifecycle:
+            preStop:
+              # Natywna akcja kubeleta zamiast `exec: sleep` — nie zależy od
+              # tego, czy w obrazie jest binarka sleep.
+              sleep:
+                seconds: {{ .Values.api.preStopSleepSeconds }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 2
+          livenessProbe:
+            # /healthz nie dotyka zależności, więc awaria Elasticsearcha nie
+            # restartuje zdrowych podów API.
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "docfind.api.fullname" . }}-config
+        # System plików kontenera jest tylko do odczytu; /tmp to jedyne
+        # miejsce zapisu, ograniczone rozmiarem.
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi

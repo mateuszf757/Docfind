@@ -7,6 +7,43 @@
 
 set -euo pipefail
 
+# --- Przypięte wersje narzędzi ----------------------------------------------
+#
+# Jedno miejsce dla wszystkich wersji, bo narzędzie w innej wersji lokalnie
+# i w CI zgłasza inne błędy — tak padł pipeline na shellchecku 0.9.0 z apt.
+# Wersja klastra i kubectl są te same, a kubeconform sprawdza manifesty
+# względem schematu dokładnie tej wersji Kubernetesa.
+#
+# Sumy SHA-256 są zapisane tutaj, a nie pobierane razem z plikiem. Suma
+# ściągnięta z tego samego serwera chroni tylko przed uszkodzeniem
+# w transferze, a nie przed podmianą. Każda z poniższych zgadzała się
+# z sumą opublikowaną przez autorów w dniu przypięcia.
+#
+# Zmienne są używane przez skrypty, które źródłują ten plik.
+# shellcheck disable=SC2034
+{
+  DF_KUBERNETES_VERSION="1.36.4"
+  DF_K3S_IMAGE="rancher/k3s:v1.36.4-k3s1"
+
+  DF_KUBECTL_VERSION="v1.36.4"
+  DF_KUBECTL_SHA256="8b8f088da2dab964f853b38464033b1be15ede2839eca751482357c45abdd05a"
+
+  DF_K3D_VERSION="v5.9.0"
+  DF_K3D_SHA256="06d8f25bc3a971c4eb29e0ff08429b180402db0f4dec838c9eac427e296800a0"
+
+  DF_HELM_VERSION="4.3.0"
+  DF_HELM_SHA256="86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb"
+
+  DF_KUBECONFORM_VERSION="v0.8.0"
+  DF_KUBECONFORM_SHA256="9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883"
+
+  # Obrazy narzędzi uruchamianych w run-tests.sh — dzięki nim CI nie
+  # potrzebuje niczego instalować, a wersja jest ta sama co lokalnie.
+  DF_SHELLCHECK_IMAGE="koalaman/shellcheck:v0.11.0"
+  DF_HELM_IMAGE="alpine/helm:${DF_HELM_VERSION}"
+  DF_KUBECONFORM_IMAGE="ghcr.io/yannh/kubeconform:${DF_KUBECONFORM_VERSION}"
+}
+
 # Wersja z git describe. Bez tagów spada na 0.0.0-dev.<liczba commitów>+<sha>,
 # żeby build działał od pierwszego dnia, a wersja i tak rosła monotonicznie.
 df_version() {

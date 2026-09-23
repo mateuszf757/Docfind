@@ -1,0 +1,33 @@
+# Lokalny klaster DOCFIND: 1 węzeł serwerowy i 2 robocze, każdy w osobnym
+# kontenerze Dockera. Scheduler widzi trzy osobne węzły, więc kubectl drain,
+# rozkład podów między węzłami i PodDisruptionBudget działają naprawdę.
+#
+# Obraz k3s nie jest tu wpisany — podaje go ci/deploy-local.sh z ci/lib.sh,
+# żeby wersja Kubernetesa była zapisana w jednym miejscu razem z kubectl
+# i schematem, względem którego kubeconform sprawdza manifesty.
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: docfind
+servers: 1
+agents: 2
+
+# Porty 80 i 443 mapowane od razu, choć ingress wchodzi dopiero na Etapie 3:
+# mapowania portów nie da się bezboleśnie dołożyć do istniejącego klastra.
+ports:
+  - port: 80:80
+    nodeFilters: [loadbalancer]
+  - port: 443:443
+    nodeFilters: [loadbalancer]
+
+options:
+  k3s:
+    extraArgs:
+      # Traefik jest domyślnym ingressem k3s. Wyłączony, bo wejściem będzie
+      # ingress-nginx (docs/DECYZJE.md, decyzja 11) — dwa kontrolery ingressu
+      # walczyłyby o te same porty.
+      - arg: --disable=traefik
+        nodeFilters: [server:*]
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: true

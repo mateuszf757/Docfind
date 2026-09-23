@@ -1,0 +1,17 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "docfind.api.fullname" . }}
+  labels:
+    {{- include "docfind.api.labels" . | nindent 4 }}
+spec:
+  # maxUnavailable zamiast minAvailable: przy jednej replice minAvailable: 1
+  # blokowałby drain węzła na zawsze, a maxUnavailable skaluje się razem
+  # z liczbą replik bez zmiany wartości.
+  maxUnavailable: 1
+  # Pod, który i tak nie jest zdrowy, nie może blokować drainu — bez tego
+  # jeden pod w CrashLoopBackOff zatrzymuje utrzymanie całego węzła.
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels:
+      {{- include "docfind.api.selectorLabels" . | nindent 6 }}

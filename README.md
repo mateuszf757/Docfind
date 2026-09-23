@@ -9,7 +9,11 @@ razem z ich kosztami, siedzą w [docs/DECYZJE.md](docs/DECYZJE.md).
 
 ## Stan
 
-Etap 1 z 11 — usługa w kontenerze. Zrobione:
+Etap 2 z 11 w toku — chart Helma gotowy i sprawdzony (`helm lint`, kubeconform,
+walidacja konfiguracji modelem), warunek zakończenia czeka na klaster: WSL
+musi działać na cgroup v2 (docs/WYMAGANIA.md).
+
+Zrobione w Etapach 0–1:
 
 - `/version` raportuje wersję z `git describe` i commit zgodny z HEAD
 - obraz jest samoopisujący się i waży 120 MB; buduje się z `uv.lock`, więc
@@ -28,7 +32,9 @@ Etap 1 z 11 — usługa w kontenerze. Zrobione:
 ```
 services/api/      Usługa API — Dockerfile, kod, testy
 deploy/config/     app.yml.example i generowany app.schema.json
-ci/                lib.sh, run-tests.sh, build.sh, gen-schema.sh, check-runtime.sh
+deploy/charts/     Chart Helma docfind
+deploy/k3d/        Definicja lokalnego klastra (1 serwer, 2 węzły robocze)
+ci/                Skrypty budowania, testów, wdrożenia i warunków zakończenia
 tests/corpus/      Deterministyczny korpus dla testów e2e
 docs/              DECYZJE.md i dokumentacja operacyjna
 dokumenty/         Roboczy korpus do indeksowania (poza repozytorium)
@@ -36,7 +42,9 @@ dokumenty/         Roboczy korpus do indeksowania (poza repozytorium)
 
 ## Praca lokalna
 
-Wymagania: Docker, [uv](https://docs.astral.sh/uv/), Python 3.12.
+Wymagania i sposób ich sprawdzenia: [docs/WYMAGANIA.md](docs/WYMAGANIA.md).
+Do testów wystarczą Docker i [uv](https://docs.astral.sh/uv/); do klastra
+także narzędzia z `ci/install-tools.sh`.
 
 ```bash
 ./ci/run-tests.sh            # lint, format, testy jednostkowe
@@ -44,6 +52,11 @@ Wymagania: Docker, [uv](https://docs.astral.sh/uv/), Python 3.12.
 ./ci/build.sh api            # build obrazu z wersją z gita
 RELEASE=1 ./ci/build.sh api  # build wydania — odrzuca brudne drzewo
 ./ci/check-runtime.sh api    # warunki zakończenia Etapu 1
+
+./ci/install-tools.sh        # kubectl, k3d, helm, kubeconform w przypiętych wersjach
+./ci/deploy-local.sh         # klaster k3d + build + helm upgrade --install
+./ci/check-drain.sh          # warunek zakończenia Etapu 2
+./ci/deploy-local.sh --down  # usunięcie klastra
 ```
 
 Podgląd działającej usługi. Konfiguracja jest wymagana — bez niej kontener

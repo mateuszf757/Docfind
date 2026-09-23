@@ -1,0 +1,44 @@
+api:
+  replicas: 2
+
+  image:
+    repository: ghcr.io/mateuszf757/docfind-api
+    # Wymagany. Podaje go skrypt wdrożenia — domyślny "latest" oznaczałby,
+    # że nie wiadomo, co stoi na klastrze, a /version jest bezużyteczne.
+    tag: ""
+    pullPolicy: IfNotPresent
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    # Limit pamięci tak, limit CPU nie (docs/DECYZJE.md, decyzja 16).
+    limits:
+      memory: 256Mi
+
+  # Przed SIGTERM kubelet odczekuje preStopSleepSeconds, żeby usunięcie poda
+  # z endpointów Service zdążyło dotrzeć do kube-proxy na wszystkich węzłach.
+  # Bez tego pod dostaje SIGTERM, a ruch jeszcze przez chwilę do niego płynie.
+  preStopSleepSeconds: 5
+  # Musi pokryć preStop i dokończenie żądań (config.service.shutdown_grace_seconds).
+  # Chart odmawia renderowania, gdy jest za krótki — inaczej kubelet zabiłby
+  # proces SIGKILL w trakcie dokańczania żądań.
+  terminationGracePeriodSeconds: 15
+
+  # Treść app.yml. Waliduje ją ten sam model Pydantic co przy starcie
+  # aplikacji — run-tests.sh sprawdza wyrenderowany ConfigMap, więc zły
+  # config zostaje odrzucony przed wdrożeniem, a nie w CrashLoopBackOff.
+  config:
+    service:
+      host: 0.0.0.0
+      port: 8000
+      log_level: info
+      shutdown_grace_seconds: 3
+    elasticsearch:
+      url: http://elasticsearch:9200
+      alias: docfind
+      timeout_seconds: 5
+    llm:
+      backend: stub
+      max_context: 8192
+      max_fragments: 8

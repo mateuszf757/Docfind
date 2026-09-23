@@ -1,0 +1,9 @@
+apiVersion: v2
+name: docfind
+description: DOCFIND — wyszukiwarka dokumentów z odpowiedziami generowanymi przez model
+type: application
+# Wersja charta i wersja aplikacji rozjeżdżają się celowo: chart zmienia się
+# także bez zmiany kodu. Obie zaczną iść z git describe na Etapie 10, kiedy
+# chart stanie się artefaktem OCI dostarczanym do klienta.
+version: 0.1.0
+appVersion: "0.0.0-dev"

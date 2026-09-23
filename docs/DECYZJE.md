@@ -239,6 +239,25 @@ uruchomieniu, więc pracując poza klastrem trzeba odpytać `/healthz` samemu.
 przez docker compose — wtedy healthcheck wraca, bo compose go czyta i używa
 do kolejności startu.
 
+## 16. Limit pamięci tak, limit CPU nie
+
+**Wybieram asymetrię.** Pamięć jest zasobem nieściśliwym: pod, który jej
+przekroczy, zostaje zabity przez OOM killera, a bez limitu jeden wyciek potrafi
+wypchnąć z węzła sąsiednie pody. Limit pamięci chroni więc węzeł. CPU jest
+zasobem ściśliwym: bez limitu pod po prostu korzysta z wolnych cykli, a przy
+limicie jest dławiony przez CFS nawet wtedy, gdy węzeł stoi bezczynny —
+co wygląda jak nagły wzrost opóźnień bez żadnej przyczyny widocznej w aplikacji.
+Request CPU zostaje, bo na nim opiera się scheduler i przydział cykli przy
+konkurencji.
+
+**Co tracę:** pod bez limitu CPU może przy błędzie zająć wszystkie wolne rdzenie
+węzła. Przed zagłodzeniem sąsiadów chronią ich requesty, ale nie przed spadkiem
+wydajności poniżej tego, do czego się przyzwyczaili.
+
+**Kiedy zmieniam zdanie:** w klastrze współdzielonym z cudzymi obciążeniami albo
+tam, gdzie administrator klienta wymusza limity przez LimitRange lub politykę —
+wtedy limit CPU, ale z zapasem kilkukrotnie ponad request.
+
 ---
 
 ## Czego bym dziś nie powtórzył
