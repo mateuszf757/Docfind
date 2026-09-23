@@ -33,17 +33,10 @@ jobs:
         with:
           enable-cache: true
 
-      - name: shellcheck skryptów CI
-        run: shellcheck ci/*.sh
-
-      - name: lint i testy
+      # Jeden skrypt: shellcheck, lint, testy, aktualność schematu. Osobny krok
+      # w CI, którego nie ma w run-tests.sh, to krok, który lokalnie nie biegnie.
+      - name: shellcheck, lint, testy, schemat
         run: ./ci/run-tests.sh
-
-      # Schemat konfiguracji jest generowany z modelu Pydantic. Gdyby wolno
-      # było go zacommitować nieaktualnego, zacząłby kłamać o tym, co
-      # aplikacja przyjmie — a to jest plik, który czyta administrator klienta.
-      - name: schemat konfiguracji aktualny
-        run: ./ci/gen-schema.sh --check
 
   build:
     needs: test

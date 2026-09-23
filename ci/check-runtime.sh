@@ -13,7 +13,7 @@ repo_root=$(git rev-parse --show-toplevel)
 source "$repo_root/ci/lib.sh"
 
 service="${1:-api}"
-image="$(df_image_name "$service"):$(df_docker_tag)"
+image="$(df_image_name "$service"):$(df_docker_tag "$(df_version)")"
 
 MAX_IMAGE_MB=200
 MAX_SHUTDOWN_SECONDS=1.0
