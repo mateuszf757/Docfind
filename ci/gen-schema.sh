@@ -14,6 +14,9 @@ repo_root=$(git rev-parse --show-toplevel)
 source "$repo_root/ci/lib.sh"
 
 schema_path="$repo_root/deploy/config/app.schema.json"
+# Pojedyncze cudzysłowy są celowe: "$schema" to klucz słownika w Pythonie,
+# nie zmienna powłoki, i nie może zostać rozwinięty.
+# shellcheck disable=SC2016
 generated=$(cd "$repo_root/services/api" && uv run --frozen python -c '
 import json
 from docfind_api.config import AppConfig
