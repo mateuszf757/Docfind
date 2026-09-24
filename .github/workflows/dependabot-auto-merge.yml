@@ -1,0 +1,58 @@
+name: dependabot-auto-merge
+
+# Łatki od Dependabota są scalane automatycznie, ale dopiero wtedy, gdy
+# przejdzie wymagane CI. `gh pr merge --auto` nie scala od razu — włącza
+# auto-merge, a GitHub scala PR po przejściu wymaganych sprawdzeń z reguły
+# gałęzi main. Bez tej reguły --auto scaliłby natychmiast, bez żadnej bramki,
+# dlatego jest ona warunkiem działania tego workflowu (docs/DECYZJE.md, decyzja 22).
+#
+# Zwykły pull_request, nie pull_request_target. Ten drugi uruchamia się
+# z uprawnieniami repozytorium w kontekście PR-a i jest klasycznym wektorem
+# ataku na pipeline'y; tu nie jest potrzebny, bo GitHub daje PR-om od
+# Dependabota token z uprawnieniami zadeklarowanymi poniżej.
+
+on:
+  pull_request:
+
+# Domyślnie nic — zapis tylko w jedynym zadaniu, które go potrzebuje.
+permissions: {}
+
+jobs:
+  auto-merge:
+    runs-on: ubuntu-latest
+    # Autor PR-a, a nie github.actor: actor to ten, kto wywołał zdarzenie,
+    # i przy ponownym uruchomieniu przez człowieka warunek przestałby działać.
+    # Sprawdzenie repozytorium wyklucza forki.
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]'
+      && github.repository == 'mateuszf757/Docfind'
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: metadane aktualizacji
+        id: metadata
+        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2.5.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # update-type to najwyższa zmiana w PR-ze, także grupowym — dlatego
+      # grupy w dependabot.yml są rozdzielone na patch i minor. Warunek nie
+      # zależy od nazwy ekosystemu: łatka to łatka niezależnie od tego, czy
+      # dotyczy uv.lock, obrazu bazowego czy akcji.
+      - name: włączenie auto-merge dla łatki
+        if: steps.metadata.outputs.update-type == 'version-update:semver-patch'
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEPENDENCIES: ${{ steps.metadata.outputs.dependency-names }}
+        run: |
+          echo "Łatka ($DEPENDENCIES) — auto-merge po przejściu wymaganych sprawdzeń."
+          gh pr merge --auto --squash "$PR_URL"
+
+      - name: pozostałe aktualizacje czekają na przegląd
+        if: steps.metadata.outputs.update-type != 'version-update:semver-patch'
+        env:
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+          DEPENDENCIES: ${{ steps.metadata.outputs.dependency-names }}
+        run: echo "::notice::$UPDATE_TYPE ($DEPENDENCIES) — bez auto-merge, wymaga przeglądu."

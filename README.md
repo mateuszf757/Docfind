@@ -23,6 +23,8 @@ Etap 2 z 11 — usługa na Kubernetesie. Drain każdego węzła z repliką API:
 - wszystko z zewnątrz przypięte niezmiennie: binarki i charty sumą, obrazy
   digestem, akcje GitHuba SHA commita; aktualizacje proponuje Dependabot
   (decyzja 20)
+- łatki od Dependabota scalane automatycznie po przejściu CI, z trzydniowym
+  cooldownem; minor i major czekają na przegląd (decyzja 22)
 - build powtarzalny bajt w bajt, także między lokalnym BuildKitem a tym
   z CI — ten sam commit daje ten sam obraz i nie wywołuje rolloutu
   (decyzja 21, `ci/check-reproducible.sh`)
@@ -54,6 +56,20 @@ tests/corpus/      Deterministyczny korpus dla testów e2e
 docs/              DECYZJE.md i dokumentacja operacyjna
 dokumenty/         Roboczy korpus do indeksowania (poza repozytorium)
 ```
+
+## Ustawienia repozytorium
+
+Reguła gałęzi `main` i włączenie auto-merge są zapisane jako kod
+(`.github/rulesets/main.json`) i stosowane skryptem — raz, przez osobę
+z uprawnieniami admina:
+
+```bash
+gh auth login
+./ci/apply-repo-settings.sh
+```
+
+Bez tego workflow auto-merge łatek od Dependabota nie ma bramki: `--auto`
+scaliłby PR natychmiast (decyzja 22).
 
 ## Praca lokalna
 

@@ -376,6 +376,43 @@ z tego, ale narzędzie do inwentaryzacji zależności go nie zobaczy.
 z ctime albo pozwoli to wyłączyć — wtedy wracam do instalacji koła, bo to
 zwyklejszy układ dla każdego, kto otworzy obraz.
 
+## 22. Łatki od Dependabota scalane automatycznie, za bramką CI
+
+**Wybieram automat z warunkami, nie automat bez warunków.** Przypięcia z decyzji
+20 bez aktualizacji się starzeją, a ręczne scalanie każdej łatki to praca, która
+w końcu przestaje być robiona. Łatki (`version-update:semver-patch`) są więc
+scalane automatycznie przez `dependabot/fetch-metadata` i `gh pr merge --auto`,
+a minor i major czekają na przegląd. Trzy warunki, bez których to byłoby
+niebezpieczne:
+
+- **Bramka.** `--auto` czeka tylko na sprawdzenia *wymagane* przez regułę
+  gałęzi. Reguła `main` (`.github/rulesets/main.json`, stosowana przez
+  `ci/apply-repo-settings.sh`) wymaga zadań `test` i `build`, przypiętych do
+  aplikacji GitHub Actions, żeby status nie mógł zgłosić ktoś inny.
+- **Build na PR-ach.** Wcześniej zadanie `build` biegło tylko po scaleniu — PR #7
+  od Dependabota zmienił obraz builda i wszedł do `main`, zanim ktokolwiek
+  zbudował z nim obraz. Teraz każdy PR buduje obraz, sprawdza warunki Etapu 1
+  i powtarzalność; publikacja tylko przy push.
+- **Cooldown.** Nowa wersja jest proponowana dopiero 3 dni po wydaniu łatki
+  (7 dla minor, 14 dla major). Skompromitowane wydania bywają wycofywane
+  w ciągu godzin albo dni — automat scalający świeże wydanie ufałby mu, zanim
+  ktokolwiek je obejrzał.
+
+Workflow używa `pull_request`, nie `pull_request_target`, ma zapis tylko
+w jedynym zadaniu, które go potrzebuje, i przekazuje metadane PR-a przez
+zmienne środowiskowe zamiast wstawiać je do skryptu. Workflowy sprawdza
+actionlint w `run-tests.sh`.
+
+**Co tracę:** łatka, której testy nie pokrywają, wejdzie bez ludzkiego oka —
+bramka jest tak dobra jak CI, a CI nie ćwiczy jeszcze aplikacji na klastrze
+(e2e przychodzi na Etapie 9). Reguła blokuje też bezpośredni push i force-push
+do `main`, więc przepisanie historii, jak przy poprawce tożsamości commitów,
+wymagałoby jej tymczasowego wyłączenia.
+
+**Kiedy zmieniam zdanie:** przy pierwszej automatycznie scalonej łatce, która
+zepsuła `main` — wtedy auto-merge tylko dla zależności deweloperskich, dopóki
+e2e z Etapu 9 nie domknie luki.
+
 ---
 
 ## Czego bym dziś nie powtórzył

@@ -57,6 +57,7 @@ set -euo pipefail
   DF_HELM_IMAGE="alpine/helm:${DF_HELM_VERSION}@sha256:a6cf54599ccb99d90cf0712b30f03fdb3cab062e6b94e0418cc4db7e8a1464b2"
   DF_KUBECONFORM_IMAGE="ghcr.io/yannh/kubeconform:${DF_KUBECONFORM_VERSION}@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e"
   DF_CURL_IMAGE="curlimages/curl:8.16.0@sha256:463eaf6072688fe96ac64fa623fe73e1dbe25d8ad6c34404a669ad3ce1f104b6"
+  DF_ACTIONLINT_IMAGE="rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667"
 }
 
 # Wersja z git describe. Bez tagów spada na 0.0.0-dev.<liczba commitów>+<sha>,
