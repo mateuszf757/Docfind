@@ -1,8 +1,14 @@
 name: ci
 
-# PR      → lint i testy, nic nie opuszcza pipeline'u
-# main    → dodatkowo build i publikacja obrazu otagowanego commitem
+# PR      → lint, testy, build obrazu i jego warunki; nic nie opuszcza pipeline'u
+# main    → dodatkowo publikacja obrazu otagowanego commitem
 # tag v*  → build wydania; brudne drzewo odrzucone, obraz otagowany wersją
+#
+# Build obrazu biegnie także na PR-ach, bo zmiana zależności albo obrazu
+# bazowego sprawdzona samymi testami jednostkowymi trafiłaby do main, zanim
+# ktokolwiek zbudował z nią obraz. Tak wszedł PR #7 od Dependabota. Zadania
+# test i build są wymaganymi sprawdzeniami reguły gałęzi main — na nich czeka
+# auto-merge łatek (dependabot-auto-merge.yml).
 #
 # fetch-depth: 0 jest konieczne — git describe bez pełnej historii i tagów
 # zwróci samo sha i wersja artefaktu przestanie rosnąć.
@@ -18,9 +24,10 @@ on:
 # tagi na złośliwy commit i każdy pipeline z @v… wykonał go ze swoimi sekretami.
 # Komentarz z wersją czyta Dependabot, aktualizując przypięcia (.github/dependabot.yml).
 
+# Najmniejsze uprawnienia na poziomie workflowu; zapis do rejestru dostaje
+# tylko zadanie build, i tylko ono go używa.
 permissions:
   contents: read
-  packages: write
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -33,6 +40,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          # Bez tokenu w .git/config: domyślnie zostaje tam na całe zadanie
+          # i może go odczytać każdy późniejszy krok. Skrypty nie pushują.
+          persist-credentials: false
 
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
@@ -45,16 +55,24 @@ jobs:
 
   build:
     needs: test
-    if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          # Bez tokenu w .git/config: domyślnie zostaje tam na całe zadanie
+          # i może go odczytać każdy późniejszy krok. Skrypty nie pushują.
+          persist-credentials: false
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
+      # Logowanie i publikacja tylko przy push. Na PR-ach nie ma czego
+      # publikować, a PR-y od Dependabota i tak dostają token tylko do odczytu.
       - name: logowanie do GHCR
+        if: github.event_name == 'push'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -80,6 +98,7 @@ jobs:
         run: ./ci/check-reproducible.sh api
 
       - name: publikacja obrazu api
+        if: github.event_name == 'push'
         env:
           RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
           PUSH: "1"

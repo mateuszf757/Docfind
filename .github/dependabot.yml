@@ -1,10 +1,21 @@
 # Przypięcia bez mechanizmu aktualizacji starzeją się po cichu: digest bazy
 # obrazu sprzed pół roku to baza z poprawkami bezpieczeństwa sprzed pół roku.
 # Dependabot proponuje aktualizacje jako PR-y, które przechodzą ten sam
-# pipeline co każda inna zmiana.
+# pipeline co każda inna zmiana. Łatki są scalane automatycznie
+# (.github/workflows/dependabot-auto-merge.yml), reszta czeka na przegląd.
 #
 # Poza jego zasięgiem zostają przypięcia w ci/lib.sh (k3s, narzędzia, charty,
 # obrazy narzędzi CI) — te aktualizuje się ręcznie, razem z ich sumami.
+#
+# Grupy są rozdzielone według typu zmiany, bo auto-merge patrzy na najwyższą
+# zmianę w PR-ze: grupa łącząca minor i patch dawałaby "minor" i żadna łatka
+# w niej nie zostałaby scalona automatycznie.
+#
+# Cooldown: nowa wersja jest proponowana dopiero po kilku dniach od wydania.
+# Skompromitowane wydania — jak tj-actions/changed-files w 2025 — bywają
+# wykrywane i wycofywane w ciągu godzin albo dni; automatyczne scalanie
+# świeżo wydanej łatki oznaczałoby zaufanie jej, zanim ktokolwiek ją obejrzał.
+# Aktualizacje bezpieczeństwa (z alertów Dependabota) cooldownem nie są objęte.
 version: 2
 updates:
   # Akcje przypięte SHA z komentarzem wersji — Dependabot aktualizuje oba.
@@ -12,21 +23,37 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      semver-patch-days: 3
+      semver-minor-days: 7
+      semver-major-days: 14
     groups:
-      actions:
-        patterns: ["*"]
+      actions-patch:
+        update-types: [patch]
+      actions-minor:
+        update-types: [minor]
 
   # Obrazy bazowe w FROM, razem z digestami.
   - package-ecosystem: docker
     directory: /services/api
     schedule:
       interval: weekly
+    cooldown:
+      semver-patch-days: 3
+      semver-minor-days: 7
+      semver-major-days: 14
 
   # Zależności Pythona z uv.lock.
   - package-ecosystem: uv
     directory: /services/api
     schedule:
       interval: weekly
+    cooldown:
+      semver-patch-days: 3
+      semver-minor-days: 7
+      semver-major-days: 14
     groups:
-      python:
-        update-types: [minor, patch]
+      python-patch:
+        update-types: [patch]
+      python-minor:
+        update-types: [minor]

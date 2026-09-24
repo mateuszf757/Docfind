@@ -17,6 +17,13 @@ df_log "shellcheck $DF_SHELLCHECK_IMAGE"
 # inaczej wywołanie spoza niego przekazałoby dosłowne "ci/*.sh".
 (cd "$repo_root" && docker run --rm -v "$repo_root:/mnt:ro" -w /mnt "$DF_SHELLCHECK_IMAGE" ci/*.sh)
 
+# Workflowy GitHuba sprawdzane actionlintem: składnia, wyrażenia, nazwy
+# uprawnień, a w blokach run także shellcheck. Błąd w workflowie wychodzi
+# inaczej dopiero po wypchnięciu — a workflow auto-merge z uprawnieniami do
+# scalania to ostatnie miejsce, w którym chce się to odkrywać w ten sposób.
+df_log "actionlint $DF_ACTIONLINT_IMAGE"
+(cd "$repo_root" && docker run --rm -v "$repo_root:/repo:ro" -w /repo "$DF_ACTIONLINT_IMAGE" -no-color)
+
 # --- charty Helma ------------------------------------------------------------
 # Helm i kubeconform z przypiętych obrazów, z tego samego powodu co shellcheck.
 # Każdy chart jest renderowany raz, do pliku, i wszystkie sprawdzenia biegną
