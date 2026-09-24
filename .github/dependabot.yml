@@ -16,6 +16,17 @@
 # wykrywane i wycofywane w ciągu godzin albo dni; automatyczne scalanie
 # świeżo wydanej łatki oznaczałoby zaufanie jej, zanim ktokolwiek ją obejrzał.
 # Aktualizacje bezpieczeństwa (z alertów Dependabota) cooldownem nie są objęte.
+#
+# Rozróżnienie dni według typu zmiany (semver-*-days) Dependabot przyjmuje tylko
+# dla części ekosystemów — dla github-actions i docker odrzucił je przy parsowaniu,
+# choć schemat dependabot.yml ze schemastore ich nie zabrania. Tam jest więc
+# default-days, obejmujące wszystkie typy zmian. Majory dostają przez to 3 dni
+# zamiast 14, ale i tak nie są scalane automatycznie — cooldown chroni głównie
+# łatki, które przechodzą bez przeglądu.
+#
+# Po każdej zmianie tego pliku trzeba sprawdzić, czy Dependabot go przyjął
+# (Insights → Dependency graph → Dependabot): lokalnie nie ma walidatora, który
+# zna jego rzeczywiste reguły.
 version: 2
 updates:
   # Akcje przypięte SHA z komentarzem wersji — Dependabot aktualizuje oba.
@@ -24,9 +35,7 @@ updates:
     schedule:
       interval: weekly
     cooldown:
-      semver-patch-days: 3
-      semver-minor-days: 7
-      semver-major-days: 14
+      default-days: 3
     groups:
       actions-patch:
         update-types: [patch]
@@ -39,9 +48,7 @@ updates:
     schedule:
       interval: weekly
     cooldown:
-      semver-patch-days: 3
-      semver-minor-days: 7
-      semver-major-days: 14
+      default-days: 3
 
   # Zależności Pythona z uv.lock.
   - package-ecosystem: uv

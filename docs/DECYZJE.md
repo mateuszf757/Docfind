@@ -393,8 +393,10 @@ niebezpieczne:
   od Dependabota zmienił obraz builda i wszedł do `main`, zanim ktokolwiek
   zbudował z nim obraz. Teraz każdy PR buduje obraz, sprawdza warunki Etapu 1
   i powtarzalność; publikacja tylko przy push.
-- **Cooldown.** Nowa wersja jest proponowana dopiero 3 dni po wydaniu łatki
-  (7 dla minor, 14 dla major). Skompromitowane wydania bywają wycofywane
+- **Cooldown.** Nowa wersja jest proponowana dopiero kilka dni po wydaniu.
+  Dla zależności Pythona: 3 dni dla łatki, 7 dla minor, 14 dla major. Dla akcji
+  i obrazów bazowych 3 dni dla każdego typu zmiany — Dependabot nie obsługuje
+  tam rozróżnienia według semver. Skompromitowane wydania bywają wycofywane
   w ciągu godzin albo dni — automat scalający świeże wydanie ufałby mu, zanim
   ktokolwiek je obejrzał.
 
@@ -443,6 +445,15 @@ build wziął jednak warstwy z pamięci podręcznej, więc zgodność niczego ni
 dowodziła — przy buildach od zera różniły się czasy trzech katalogów. Dziś
 test zawsze zawiera wariant, który *może* dać inny wynik: z pamięcią podręczną
 kontra od zera, sterownik kontra sterownik.
+
+**Walidator słabszy od tego, kto naprawdę decyduje.** `dependabot.yml`
+przeszedł walidację względem schematu ze schemastore i tak to opisałem — a
+Dependabot i tak go odrzucił: `semver-*-days` w cooldownie nie jest obsługiwane
+dla `github-actions` i `docker`, czego schemat nie wyraża. Przez kilka godzin
+na `main` stała konfiguracja, której Dependabot nie stosował. Zgoda słabszego
+walidatora to nie dowód; dowodem jest odpowiedź systemu, który plik wykonuje.
+Dziś po zmianie konfiguracji usługi zewnętrznej sprawdzam, czy ta usługa ją
+przyjęła, zanim napiszę, że działa.
 
 **Skrypt zakładający środowisko, w którym go napisałem.** `check-reproducible.sh`
 wołał `uv`, którego zadanie `build` w CI nie ma — lokalnie było, więc przeszło.
