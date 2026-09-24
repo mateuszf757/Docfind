@@ -354,9 +354,16 @@ użytkownik nie powstaje przez `adduser` (zapisywał dzisiejszą datę w
 `checked-hash`, zamiast instalowany przez uv — który zapisywał w dist-info
 ctime źródła, niemożliwe do ustawienia z przestrzeni użytkownika. Każdą z tych
 przyczyn znalazło porównanie warstwa po warstwie (`ci/compare_oci.py`).
-Wynik: identyczny obraz przy dwóch buildach od zera **i** przy dwóch różnych
-sterownikach BuildKit (lokalnym i tym z CI). `ci/check-reproducible.sh`
-sprawdza to w każdym pipeline'ie.
+
+Czasy modyfikacji są **ustawiane** na czas commita, a nie tylko przycinane.
+`rewrite-timestamp` w BuildKit przycina wyłącznie czasy nowsze od
+`SOURCE_DATE_EPOCH`, a starsze zostawia — te pochodzą z kontekstu budowania
+i z warstw w pamięci podręcznej, czyli od stanu buildera. Pierwsza wersja
+tej decyzji twierdziła, że dwa sterowniki BuildKit dają ten sam obraz; test,
+na którym to oparłem, brał warstwy z pamięci podręcznej. Po poprawce:
+identyczny digest przy buildzie z pamięcią podręczną, od zera, na sterowniku
+lokalnym i na tym z CI. `ci/check-reproducible.sh` porównuje build z pamięcią
+podręczną z buildem od zera w każdym pipeline'ie.
 
 **Co tracę:** trzy rzeczy. Pole `built_at` w `/version` zmieniło nazwę na
 `source_date`, bo podaje czas commita, a nie budowania — zmiana kontraktu.
@@ -392,3 +399,16 @@ działa to odwrotnie i daje fałszywe „nie”. Ten sam wzorzec siedział w sze
 miejscach w `ci/`, w tym w sondzie drainu, gdzie przy długim logu stwierdziłby,
 że nie ma żadnej odpowiedzi 200. Dziś: pełne wyjście do zmiennej, potem
 dopasowanie.
+
+**Ogłoszenie wyniku na teście, który nie mógł zawieść.** Napisałem, że lokalny
+BuildKit i ten z CI dają identyczny obraz, bo zgadzał się identyfikator. Drugi
+build wziął jednak warstwy z pamięci podręcznej, więc zgodność niczego nie
+dowodziła — przy buildach od zera różniły się czasy trzech katalogów. Dziś
+test zawsze zawiera wariant, który *może* dać inny wynik: z pamięcią podręczną
+kontra od zera, sterownik kontra sterownik.
+
+**Skrypt zakładający środowisko, w którym go napisałem.** `check-reproducible.sh`
+wołał `uv`, którego zadanie `build` w CI nie ma — lokalnie było, więc przeszło.
+Gorzej, że brak narzędzia skończył się komunikatem „build nie jest powtarzalny”:
+awaria narzędzia wyglądała jak wynik. Dziś skrypt sprawdza swoje wymagania na
+starcie, a kod wyjścia rozdziela wynik negatywny od awarii.

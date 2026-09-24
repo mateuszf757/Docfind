@@ -1,6 +1,11 @@
 """Porównanie dwóch obrazów zapisanych przez `docker save` jako układ OCI.
 
-    python ci/compare_oci.py <katalog-a> <katalog-b>
+    python3 ci/compare_oci.py <katalog-a> <katalog-b>
+
+Kody wyjścia: 0 — obrazy identyczne, 1 — obrazy się różnią, 2 — porównanie
+się nie wykonało (zły układ katalogu, brak pliku). Rozdzielone, bo awaria
+narzędzia nie może wyglądać jak wynik. Tylko biblioteka standardowa, żeby
+działał wszędzie tam, gdzie jest python3.
 
 Porównywane są manifesty platform, czyli to, co faktycznie trafia do
 kontenera: konfiguracja i warstwy. Manifesty atestacji (provenance) są
@@ -82,14 +87,32 @@ def explain_layer(a: Path, b: Path, digest_a: str, digest_b: str) -> list[str]:
     return lines
 
 
+EXIT_IDENTICAL, EXIT_DIFFERENT, EXIT_ERROR = 0, 1, 2
+
+
 def main() -> int:
-    a, b = Path(sys.argv[1]), Path(sys.argv[2])
+    if len(sys.argv) != 3:
+        print("użycie: compare_oci.py <katalog-a> <katalog-b>", file=sys.stderr)
+        return EXIT_ERROR
+    try:
+        return compare(Path(sys.argv[1]), Path(sys.argv[2]))
+    except (OSError, KeyError, IndexError, ValueError, tarfile.TarError) as exc:
+        print(f"BŁĄD porównania: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return EXIT_ERROR
+
+
+def compare(a: Path, b: Path) -> int:
     ours, theirs = manifests(a), manifests(b)
     identical = True
 
     for key in sorted(ours.keys() | theirs.keys()):
         left, right = ours.get(key), theirs.get(key)
         if left is None or right is None:
+            # Atestacja obecna tylko po jednej stronie to różnica w sposobie
+            # budowania (lokalnie jej nie ma, w rejestrze jest), nie w zawartości.
+            if key == ATTESTATION:
+                print(f"         {key}: obecna tylko w jednym obrazie — nie wpływa na werdykt")
+                continue
             print(f"RÓŻNICA  {key}: obecny tylko w jednym obrazie")
             identical = False
             continue
@@ -117,7 +140,7 @@ def main() -> int:
         if left["manifest"]["config"]["digest"] != right["manifest"]["config"]["digest"]:
             print("   konfiguracja obrazu różna (także wtedy, gdy różni się tylko lista warstw)")
 
-    return 0 if identical else 1
+    return EXIT_IDENTICAL if identical else EXIT_DIFFERENT
 
 
 if __name__ == "__main__":

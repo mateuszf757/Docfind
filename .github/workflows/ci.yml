@@ -72,9 +72,10 @@ jobs:
       - name: warunki zakończenia etapu
         run: ./ci/check-runtime.sh api
 
-      # Dwa buildy od zera muszą dać identyczny obraz. Publikowany digest da
-      # się wtedy niezależnie odtworzyć z commita, a zmiana digestu zawsze
-      # oznacza zmianę zawartości.
+      # Build z pamięcią podręczną i build od zera muszą dać identyczny obraz.
+      # Publikowany digest da się wtedy niezależnie odtworzyć z commita, a zmiana
+      # digestu zawsze oznacza zmianę zawartości. Skrypt potrzebuje tylko
+      # docker i python3 — zadanie build nie ma uv.
       - name: powtarzalność builda
         run: ./ci/check-reproducible.sh api
 

@@ -55,6 +55,16 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY src /opt/app/src
 RUN python -m compileall -q --invalidation-mode checked-hash /opt/app/src
 
+# Czasy modyfikacji wszystkiego, co trafia do obrazu, ustawione na czas commita.
+# Nie wystarcza rewrite-timestamp w BuildKit: on tylko przycina czasy nowsze od
+# SOURCE_DATE_EPOCH, a starsze zostawia. Starsze pochodzą z kontekstu budowania
+# i z warstw w pamięci podręcznej — czyli od stanu buildera, nie od commita.
+# Tak dwa sterowniki BuildKit dawały różne warstwy przy identycznych plikach.
+# Bytecode jest w trybie checked-hash, więc zmiana czasów go nie unieważnia.
+RUN if [ -n "${SOURCE_DATE_EPOCH}" ]; then \
+      find /opt/app /opt/venv -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} + ; \
+    fi
+
 
 FROM python:3.12-alpine@sha256:4c47124a8391cb7a9f571164147d154777cf012a4ece5f86097130d7a4478111 AS runtime
 
