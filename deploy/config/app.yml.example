@@ -8,9 +8,16 @@ service:
   host: 0.0.0.0
   port: 8000
   log_level: info
-  # Ile czekać na dokończenie żądań po SIGTERM. Dłuższy czas wydłuża
-  # rolling update; krótszy zrywa żądania w locie.
+  # Ile sekund czekać na dokończenie żądań po SIGTERM (liczba całkowita).
+  # Dłuższy czas wydłuża rolling update; krótszy zrywa żądania w locie.
   shutdown_grace_seconds: 3
+  # Ile sekund trzymać bezczynne połączenie keep-alive. Za proxy musi być
+  # dłuższy niż limit bezczynności puli połączeń do backendu w proxy —
+  # inaczej proxy trafia w zamykane właśnie połączenie i zwraca 502.
+  keep_alive_seconds: 5
+  # Swagger UI pod /docs ładuje JS i CSS z cdn.jsdelivr.net — domyślnie
+  # wyłączony. /openapi.json działa niezależnie od tego ustawienia.
+  docs: false
 
 elasticsearch:
   # API odwołuje się do aliasu, nigdy do nazwy indeksu — dzięki temu

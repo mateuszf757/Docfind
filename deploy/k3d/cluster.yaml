@@ -49,6 +49,10 @@ options:
       # i wartości w deploy/platform/coredns.
       - arg: --disable=coredns
         nodeFilters: [server:*]
+  # Bez dopisywania do globalnego ~/.kube/config i bez przełączania bieżącego
+  # kontekstu — lokalny klaster nie może przejąć kubectl, którym obsługuje się
+  # inne klastry. deploy-local.sh zapisuje dane dostępowe do kubeconfigu
+  # projektu (.cache/kubeconfig), który ustawiają ci/lib.sh i mise.toml.
   kubeconfig:
-    updateDefaultKubeconfig: true
-    switchCurrentContext: true
+    updateDefaultKubeconfig: false
+    switchCurrentContext: false

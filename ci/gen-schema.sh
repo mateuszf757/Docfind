@@ -16,8 +16,12 @@ source "$repo_root/ci/lib.sh"
 schema_path="$repo_root/deploy/config/app.schema.json"
 # Pojedyncze cudzysłowy są celowe: "$schema" to klucz słownika w Pythonie,
 # nie zmienna powłoki, i nie może zostać rozwinięty.
+#
+# PYTHONPATH=src, bo projekt nie jest instalowany do środowiska
+# (tool.uv.package = false) — tak samo jak w obrazie, gdzie PYTHONPATH
+# wskazuje /opt/app/src.
 # shellcheck disable=SC2016
-generated=$(cd "$repo_root/services/api" && uv run --frozen python -c '
+generated=$(cd "$repo_root/services/api" && PYTHONPATH=src uv run --frozen python -c '
 import json
 from docfind_api.config import AppConfig
 

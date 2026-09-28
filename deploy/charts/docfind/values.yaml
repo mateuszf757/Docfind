@@ -34,6 +34,9 @@ api:
       port: 8000
       log_level: info
       shutdown_grace_seconds: 3
+      # Do ustalenia na Etapie 3 razem z proxy: musi przekraczać limit
+      # bezczynności puli połączeń proxy do backendu.
+      keep_alive_seconds: 5
     elasticsearch:
       url: http://elasticsearch:9200
       alias: docfind

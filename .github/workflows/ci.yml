@@ -8,7 +8,8 @@ name: ci
 # bazowego sprawdzona samymi testami jednostkowymi trafiłaby do main, zanim
 # ktokolwiek zbudował z nią obraz. Tak wszedł PR #7 od Dependabota. Zadania
 # test i build są wymaganymi sprawdzeniami reguły gałęzi main — na nich czeka
-# auto-merge łatek (dependabot-auto-merge.yml).
+# auto-merge łatek (dependabot-auto-merge.yml). Dlatego zadania nie mają pola
+# name: nazwa zadania to nazwa statusu, którego wymaga reguła.
 #
 # fetch-depth: 0 jest konieczne — git describe bez pełnej historii i tagów
 # zwróci samo sha i wersja artefaktu przestanie rosnąć.
@@ -23,6 +24,9 @@ on:
 # tak w 2025 roku skompromitowano tj-actions/changed-files: napastnik przesunął
 # tagi na złośliwy commit i każdy pipeline z @v… wykonał go ze swoimi sekretami.
 # Komentarz z wersją czyta Dependabot, aktualizując przypięcia (.github/dependabot.yml).
+#
+# Runner też jest przypięty: ubuntu-latest przechodzi na Ubuntu 26.04 od
+# 19.10.2026, z innym python3 i innymi wersjami narzędzi na obrazie.
 
 # Najmniejsze uprawnienia na poziomie workflowu; zapis do rejestru dostaje
 # tylko zadanie build, i tylko ono go używa.
@@ -31,11 +35,13 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Na PR-ach nowy push unieważnia poprzedni bieg. Na main i tagach nie:
+  # anulowanie w trakcie publikacji zostawiłoby commit bez obrazu w rejestrze.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -44,20 +50,40 @@ jobs:
           # i może go odczytać każdy późniejszy krok. Skrypty nie pushują.
           persist-credentials: false
 
+      # Wersja uv z Dockerfile — jedynego miejsca, w którym uv jest przypięty
+      # i które aktualizuje Dependabot. Bez tego setup-uv bierze najnowszego.
+      - name: przypięte wersje
+        id: pins
+        run: echo "uv=$(bash -c 'source ci/lib.sh && df_uv_version')" >> "$GITHUB_OUTPUT"
+
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          enable-cache: true
+          version: ${{ steps.pins.outputs.uv }}
+          # Bez cache: workflow publikuje obrazy, a cache zapisany przez jeden
+          # bieg jest odtwarzany w kolejnych (zizmor: cache-poisoning).
+          # uv sync ze świeżego pobrania to kilka sekund.
+          enable-cache: false
 
-      # Jeden skrypt: shellcheck, lint, testy, aktualność schematu. Osobny krok
-      # w CI, którego nie ma w run-tests.sh, to krok, który lokalnie nie biegnie.
-      - name: shellcheck, lint, testy, schemat
-        run: ./ci/run-tests.sh
+      # Narzędzia z mise.lock, z sumami — te same wersje co lokalnie.
+      - name: narzędzia (mise)
+        env:
+          # Tylko w tym kroku: mise sprawdza atestacje GitHuba przez API,
+          # a bez tokenu limit to 60 żądań na godzinę na adres runnera.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./bin/mise install
+
+      # Jeden skrypt: spójność wersji, shellcheck, actionlint, zizmor, charty,
+      # polityki, ruff, mypy, pytest, schemat. Osobny krok w CI, którego nie ma
+      # w run-tests.sh, to krok, który lokalnie nie biegnie.
+      - name: lint, typy, testy, polityki, schemat
+        run: ./bin/mise run test
 
   build:
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
+      # Publikacja obrazu do GHCR — tylko przy push, ale zadanie jest jedno.
       packages: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -67,7 +93,17 @@ jobs:
           # i może go odczytać każdy późniejszy krok. Skrypty nie pushują.
           persist-credentials: false
 
+      # Obraz BuildKit z ci/lib.sh. Bez przypięcia sterownik docker-container
+      # bierze przesuwalny tag, a od wersji BuildKit (i wbudowanego w nią
+      # frontendu Dockerfile) zależy, czy obraz z CI jest bajt w bajt taki
+      # jak lokalny (decyzja 21).
+      - name: przypięte wersje
+        id: pins
+        run: echo "buildkit=$(bash -c 'source ci/lib.sh && printf %s "$DF_BUILDKIT_IMAGE"')" >> "$GITHUB_OUTPUT"
+
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=${{ steps.pins.outputs.buildkit }}
 
       # Logowanie i publikacja tylko przy push. Na PR-ach nie ma czego
       # publikować, a PR-y od Dependabota i tak dostają token tylko do odczytu.
@@ -84,6 +120,17 @@ jobs:
           # Na tagu v* to jest build wydania: brudne drzewo przerywa pipeline.
           RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
         run: ./ci/build.sh api
+
+      # Odświeżenie digestu python:3.12-alpine od Dependabota jest scalane
+      # automatycznie, ale może przynieść nowe wydanie Alpine. Tu zamienia się
+      # to w czerwony build, dopóki człowiek nie podbije DF_BASE_ALPINE.
+      - name: baza obrazu zgodna z zapisaną
+        run: ./ci/check-image-base.sh api
+
+      # Testy jednostkowe na tej samej bazie co produkcja: musl i ta sama łatka
+      # Pythona. Zadanie test uruchamia je na glibc runnera.
+      - name: testy na obrazie (musl)
+        run: ./ci/test-image.sh api
 
       # Warunki zakończenia Etapu 1 sprawdzane na artefakcie, nie na kodzie:
       # rozmiar obrazu, odmowa startu bez konfiguracji, czas zamykania.

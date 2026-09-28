@@ -1,0 +1,126 @@
+# Narzędzia i zadania DOCFIND.
+#
+# Wejściem jest ./bin/mise — skrypt z `mise generate install-script`, który
+# pobiera mise w przypiętej wersji, sprawdza sumę z pliku podpisanego przez
+# autorów i trzyma wszystko w .mise/ w repozytorium. Nie trzeba instalować mise
+# globalnie ani aktywować go w powłoce; lokalnie i w CI to te same polecenia:
+#
+#   ./bin/mise install         narzędzia z mise.lock, z weryfikacją sum
+#   ./bin/mise run test        to samo, co zadanie test w CI
+#   ./bin/mise run ci          cały pipeline po kolei, jak w CI
+#   ./bin/mise tasks           lista zadań
+#   ./bin/mise exec -- kubectl get pods    narzędzie z przypiętej wersji
+#
+# Logika zostaje w skryptach ci/*.sh, a zadania tylko je wołają — każdy skrypt
+# działa także bez mise, jeśli narzędzia są w PATH. Zadania TOML biegną w
+# `sh -o errexit -c` (dash, bez pipefail), więc nie ma w nich nic poza
+# wywołaniem skryptu.
+#
+# Czego mise tu nie zarządza:
+# - uv — jedynym źródłem wersji jest Dockerfile, gdzie przypięcie digestem
+#   aktualizuje Dependabot. Dependabot nie obsługuje mise, więc druga kopia
+#   wersji tutaj rozjeżdżałaby się z Dockerfile przy każdej jego aktualizacji.
+#   CI instaluje wersję z Dockerfile, run-tests.sh ostrzega o innej lokalnie.
+# - Python — wersję do testów wybiera uv z services/api/.python-version,
+#   w produkcji decyduje obraz bazowy. Trzeci menedżer interpretera byłby
+#   trzecim miejscem, w którym wersja może się rozjechać.
+# - obrazy (k3s, BuildKit, curl) i chart CoreDNS — przypięte w ci/lib.sh.
+#
+# Aktualizacja narzędzia: zmień wersję poniżej, potem `./bin/mise lock`
+# i `./bin/mise install`. mise sam odrzuca wydania młodsze niż 24 h
+# (minimum_release_age), ale cooldown projektu to 7 dni — wybieraj wersję
+# co najmniej tydzień po wydaniu. Aktualizacja samego mise:
+#   mise generate install-script -V <wersja> -l -w bin/mise
+# z mise w nowej wersji, zweryfikowanego jak przy pierwszym przypięciu
+# (docs/DECYZJE.md, decyzja 23).
+
+min_version = "2026.9.10"
+
+[settings]
+# mise.lock trzyma dla każdej platformy URL i sumę artefaktu. locked = true
+# odmawia instalacji czegokolwiek, czego nie ma w lockfile — narzędzie nie
+# trafi do PATH bez sumy zapisanej w repozytorium (decyzja 20).
+lockfile = true
+locked = true
+
+[tools]
+# W tej samej wersji co klaster (DF_KUBERNETES_VERSION w ci/lib.sh) —
+# run-tests.sh pilnuje zgodności.
+kubectl = "1.36.4"
+k3d = "5.9.0"
+helm = "4.3.0"
+kubeconform = "0.8.0"
+shellcheck = "0.11.0"
+actionlint = "1.7.12"
+# Audyt bezpieczeństwa workflowów: wstrzyknięcia w wyrażeniach, nadmiarowe
+# uprawnienia, zatruwanie cache, zbyt krótki cooldown Dependabota.
+zizmor = "1.30.1"
+# Do ci/apply-repo-settings.sh; gh z apt w Ubuntu 24.04 jest sprzed
+# `gh attestation verify`.
+gh = "2.101.0"
+
+[env]
+# Kubeconfig projektu zamiast globalnego ~/.kube/config. Lokalny klaster nie
+# dopisuje się do cudzych kontekstów i nie przełącza bieżącego, a kubectl
+# uruchomiony przez mise widzi tylko ten klaster. Tę samą ścieżkę ustawia
+# ci/lib.sh dla skryptów uruchamianych bez mise.
+KUBECONFIG = "{{config_root}}/.cache/kubeconfig"
+
+[tasks.test]
+description = "Lint, typy, testy, polityki, schemat — to samo co zadanie test w CI"
+run = "ci/run-tests.sh"
+
+[tasks.schema]
+description = "Regeneracja deploy/config/app.schema.json z modelu Pydantic"
+run = "ci/gen-schema.sh"
+
+[tasks.build]
+description = "Build obrazu z wersją z gita; RELEASE=1 odrzuca brudne drzewo"
+usage = 'arg "[service]" default="api" help="Usługa z services/"'
+run = 'ci/build.sh "${usage_service}"'
+
+[tasks."check:base"]
+description = "Baza obrazu zgodna z zapisaną: Alpine z ci/lib.sh, Python z .python-version"
+usage = 'arg "[service]" default="api" help="Usługa z services/"'
+run = 'ci/check-image-base.sh "${usage_service}"'
+
+[tasks."test:image"]
+description = "Testy jednostkowe w obrazie na musl — ta sama baza co produkcja"
+usage = 'arg "[service]" default="api" help="Usługa z services/"'
+run = 'ci/test-image.sh "${usage_service}"'
+
+[tasks."check:runtime"]
+description = "Warunki zakończenia Etapu 1 na zbudowanym obrazie"
+usage = 'arg "[service]" default="api" help="Usługa z services/"'
+run = 'ci/check-runtime.sh "${usage_service}"'
+
+[tasks."check:reproducible"]
+description = "Build z pamięcią podręczną i od zera muszą dać identyczny obraz"
+usage = 'arg "[service]" default="api" help="Usługa z services/"'
+run = 'ci/check-reproducible.sh "${usage_service}"'
+
+[tasks.ci]
+description = "Cały pipeline po kolei, jak w CI (bez publikacji)"
+# Tablica biegnie sekwencyjnie i zatrzymuje się na pierwszym błędzie. Nie
+# `depends`: zależności mise uruchamia równolegle (jobs = 8), a te kroki
+# dzielą obraz o tym samym tagu i pamięć podręczną BuildKitu.
+run = [
+    "ci/run-tests.sh",
+    "ci/build.sh api",
+    "ci/check-image-base.sh api",
+    "ci/test-image.sh api",
+    "ci/check-runtime.sh api",
+    "ci/check-reproducible.sh api",
+]
+
+[tasks."cluster:up"]
+description = "Klaster k3d (jeśli go nie ma) + build + helm upgrade --install"
+run = "ci/deploy-local.sh"
+
+[tasks."cluster:down"]
+description = "Usunięcie lokalnego klastra"
+run = "ci/deploy-local.sh --down"
+
+[tasks."cluster:drain"]
+description = "Warunek zakończenia Etapu 2: drain węzła bez utraty żądania"
+run = "ci/check-drain.sh"

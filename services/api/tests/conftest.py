@@ -2,6 +2,9 @@
 
 Dane testowe siedzą w tests/data.py — asercje mają mówić o zachowaniu,
 nie o literałach.
+
+Każdy test dostaje własną aplikację z create_app(), a z nią własny rejestr
+metryk — liczniki startują od zera i nic nie przecieka między testami.
 """
 
 from __future__ import annotations
@@ -12,12 +15,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from docfind_api import config as config_module
 from docfind_api import secrets as secrets_module
 from docfind_api import version as version_module
-from docfind_api.main import app
+from docfind_api.config import AppConfig
+from docfind_api.main import create_app
+from tests.data import MINIMAL_CONFIG_YAML
 
 WriteRawVersionFile = Callable[[str], Path]
 WriteBuildInfo = Callable[[dict[str, Any]], Path]
@@ -37,8 +44,28 @@ def _isolated_build_info_cache() -> Iterator[None]:
 
 
 @pytest.fixture
-def client() -> TestClient:
-    return TestClient(app)
+def anyio_backend() -> str:
+    """Testy asynchroniczne na asyncio — tej samej pętli, na której biegnie uvicorn."""
+    return "asyncio"
+
+
+@pytest.fixture
+def app_config() -> AppConfig:
+    """Najmniejsza poprawna konfiguracja; reszta pól ma wartości domyślne."""
+    return AppConfig.model_validate(yaml.safe_load(MINIMAL_CONFIG_YAML))
+
+
+@pytest.fixture
+def app(app_config: AppConfig) -> FastAPI:
+    return create_app(app_config)
+
+
+@pytest.fixture
+def client(app: FastAPI) -> Iterator[TestClient]:
+    # Z `with`, bo tylko wtedy TestClient uruchamia lifespan. Gdy zamieszka
+    # w nim klient Elasticsearcha, testy bez `with` po cichu by go pominęły.
+    with TestClient(app) as test_client:
+        yield test_client
 
 
 @pytest.fixture
@@ -70,14 +97,6 @@ def given_no_version_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pa
     path = tmp_path / "nie-istnieje.json"
     monkeypatch.setenv(version_module.VERSION_FILE_ENV, str(path))
     return path
-
-
-@pytest.fixture(autouse=True)
-def _isolated_config_cache() -> Iterator[None]:
-    """Izoluje cache get_config() — jak przy build_info()."""
-    config_module.get_config.cache_clear()
-    yield
-    config_module.get_config.cache_clear()
 
 
 @pytest.fixture

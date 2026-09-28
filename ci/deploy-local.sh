@@ -19,11 +19,12 @@ namespace="docfind"
 release="docfind"
 
 for tool in k3d kubectl helm docker; do
-  command -v "$tool" >/dev/null || { echo "BŁĄD: brak $tool — uruchom ci/install-tools.sh" >&2; exit 1; }
+  command -v "$tool" >/dev/null || { echo "BŁĄD: brak $tool — uruchom przez ./bin/mise run cluster:up" >&2; exit 1; }
 done
 
 if [[ "${1:-}" == "--down" ]]; then
   k3d cluster delete "$cluster"
+  rm -f "$KUBECONFIG"
   exit 0
 fi
 
@@ -159,6 +160,12 @@ else
   create_cluster
 fi
 
+# Dane dostępowe prosto z k3d do kubeconfigu projektu (KUBECONFIG z ci/lib.sh),
+# przy każdym uruchomieniu — także dla klastra utworzonego wcześniej, więc plik
+# nigdy nie wskazuje na klaster, którego już nie ma. Globalny ~/.kube/config
+# zostaje nietknięty (cluster.yaml: updateDefaultKubeconfig: false).
+mkdir -p "$(dirname "$KUBECONFIG")"
+(umask 077 && k3d kubeconfig get "$cluster" > "$KUBECONFIG")
 kubectl config use-context "k3d-$cluster" >/dev/null
 kubectl wait --for=condition=Ready nodes --all --timeout=120s >/dev/null
 df_log "węzły gotowe: $(kubectl get nodes --no-headers | wc -l)"

@@ -40,9 +40,14 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
     SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}
 
 # Zależności, w osobnej warstwie: zmiana kodu aplikacji nie unieważnia jej,
-# więc nie przeinstalowuje całego venv przy każdym buildzie. --no-dev pomija
-# ruff i pytest; uv nie instaluje pipa do venv — obraz bez pipa to obraz,
-# w którym nie da się doinstalować pakietu niewidocznego w gicie.
+# więc nie przeinstalowuje całego venv przy każdym buildzie.
+#
+# --frozen instaluje dokładnie uv.lock, bez rozwiązywania zależności od nowa.
+# Nie sprawdza przy tym, czy lock odpowiada pyproject.toml — to robi
+# `uv sync --locked` w ci/run-tests.sh, zanim obraz zostanie zbudowany.
+# --no-dev pomija grupę dev (ruff, mypy, pytest). uv nie instaluje pipa do
+# venv — obraz bez pipa to obraz, w którym nie da się doinstalować pakietu
+# niewidocznego w gicie.
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 
@@ -64,6 +69,27 @@ RUN python -m compileall -q --invalidation-mode checked-hash /opt/app/src
 RUN if [ -n "${SOURCE_DATE_EPOCH}" ]; then \
       find /opt/app /opt/venv -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} + ; \
     fi
+
+
+# Testy jednostkowe na bazie produkcyjnej: musl i ta sama łatka Pythona co
+# runtime. Zadanie test w CI i lokalny .venv biegną na glibc, z kołami
+# manylinux; obraz biegnie na musl, z kołami musllinux — to inne binaria
+# pydantic-core, uvloop i httptools. Etap nie trafia do obrazu: runtime kopiuje
+# z buildera, nie stąd, a BuildKit buduje go tylko na żądanie
+# (--target test, ci/test-image.sh).
+#
+# Układ katalogów jak w repozytorium, bo testy sięgają po
+# deploy/config/app.yml.example ścieżką względną; ci/test-image.sh podaje ten
+# katalog jako nazwany kontekst "config".
+FROM builder AS test
+
+WORKDIR /repo/services/api
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --group test --no-install-project
+COPY src ./src
+COPY tests ./tests
+COPY --from=config app.yml.example /repo/deploy/config/app.yml.example
+RUN /opt/venv/bin/python -m pytest -q -p no:cacheprovider
 
 
 FROM python:3.12-alpine@sha256:4c47124a8391cb7a9f571164147d154777cf012a4ece5f86097130d7a4478111 AS runtime

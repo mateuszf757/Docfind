@@ -7,6 +7,8 @@ jest gorszy niż jego brak.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 from docfind_api.models import UNKNOWN, UNKNOWN_BUILD
@@ -20,7 +22,9 @@ def test_reports_build_identity(client: TestClient, given_build_info: WriteBuild
     assert client.get("/version").json() == RELEASE_BUILD.model_dump()
 
 
-def test_unknown_when_build_file_is_missing(client: TestClient, given_no_version_file) -> None:
+def test_unknown_when_build_file_is_missing(
+    client: TestClient, given_no_version_file: Path
+) -> None:
     assert client.get("/version").json() == UNKNOWN_BUILD.model_dump()
 
 

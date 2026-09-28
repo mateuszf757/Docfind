@@ -121,11 +121,24 @@
           "default": "info"
         },
         "shutdown_grace_seconds": {
-          "default": 3.0,
-          "description": "Ile czekać na dokończenie żądań przy SIGTERM",
-          "exclusiveMinimum": 0,
+          "default": 3,
+          "description": "Ile sekund czekać na dokończenie żądań przy SIGTERM",
+          "minimum": 1,
           "title": "Shutdown Grace Seconds",
-          "type": "number"
+          "type": "integer"
+        },
+        "keep_alive_seconds": {
+          "default": 5,
+          "description": "Ile sekund uvicorn trzyma bezczynne połączenie. Za proxy musi być dłuższy niż limit bezczynności puli połączeń do backendu w proxy — inaczej proxy trafia w połączenie, które uvicorn właśnie zamyka, i zwraca 502.",
+          "minimum": 1,
+          "title": "Keep Alive Seconds",
+          "type": "integer"
+        },
+        "docs": {
+          "default": false,
+          "description": "Swagger UI pod /docs. Strona ładuje JS i CSS z cdn.jsdelivr.net, więc domyślnie jest wyłączona; /openapi.json działa zawsze.",
+          "title": "Docs",
+          "type": "boolean"
         }
       },
       "title": "ServiceConfig",

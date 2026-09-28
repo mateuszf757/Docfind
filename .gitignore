@@ -18,6 +18,7 @@ __pycache__/
 venv/
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
 *.egg-info/
 
 # Generowane przy budowaniu — źródłem prawdy jest git, nie plik w drzewie.
@@ -27,7 +28,15 @@ dist/
 # Pamięć podręczna pobranych artefaktów (charty), weryfikowanych sumą z ci/lib.sh.
 .cache/
 
+# mise: pobrany mise i narzędzia (./bin/mise trzyma je w projekcie).
+.mise/
+
 # Lokalne nadpisania
 .env
 *.local.yaml
 kubeconfig*
+# mise ładuje mise.local.toml obok mise.toml — osobiste ustawienia i sekrety,
+# które nie mogą trafić do repozytorium.
+mise.local.toml
+mise.*.local.toml
+mise.local.lock

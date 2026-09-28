@@ -113,7 +113,9 @@ baseline = statistics.median(
 total = statistics.median(
     stop_after(
         f"df-stop-{i}",
-        ["-p", "18099:8000", "-v", f"{config_dir}:/app/config:ro", image],
+        # Tylko loopback: samo "18099:8000" publikuje port na wszystkich
+        # interfejsach hosta, także na czas testu.
+        ["-p", "127.0.0.1:18099:8000", "-v", f"{config_dir}:/app/config:ro", image],
         True,
     )
     for i in range(REPEATS)

@@ -144,15 +144,24 @@ hosta.
 
 ## Narzędzia
 
-**Instalacja i sprawdzenie:** `ci/install-tools.sh`
+**Instalacja i sprawdzenie:** `./bin/mise install`
 
-`kubectl`, `k3d`, `helm` i `kubeconform` w wersjach przypiętych w `ci/lib.sh`,
-weryfikowane względem sum SHA-256 zapisanych w repozytorium. Skrypt nie używa
-sudo ani menedżera pakietów systemu i jest idempotentny — drugi bieg niczego nie
-pobiera.
+`kubectl`, `k3d`, `helm`, `kubeconform`, `shellcheck`, `actionlint`, `zizmor`
+i `gh` w wersjach z `mise.toml`, weryfikowane względem sum SHA-256 dla każdej
+platformy zapisanych w `mise.lock` (`locked = true` odmawia instalacji
+czegokolwiek spoza lockfile'a). `bin/mise` pobiera samo mise w przypiętej
+wersji i sprawdza jego sumę; wszystko ląduje w `.mise/` w repozytorium — bez
+sudo, bez menedżera pakietów systemu i bez zmian w konfiguracji powłoki.
+Drugi bieg niczego nie pobiera.
 
-`ci/run-tests.sh` potrzebuje tylko Dockera i `uv`: shellcheck, helm i kubeconform
-biegną w nim z przypiętych obrazów, tak samo lokalnie i w CI.
+Poza mise zostają: Docker, `uv` (wersja z Dockerfile — `run-tests.sh`
+ostrzega, gdy lokalna jest inna) i `python3` do skryptów w `ci/`.
+
+**Kubeconfig:** klaster zapisuje dane dostępowe do `.cache/kubeconfig`
+w repozytorium, nie do `~/.kube/config` — ustawiają to `ci/lib.sh` dla skryptów
+i `mise.toml` dla `./bin/mise exec`. Kontekst `k3d-docfind` dopisany wcześniej do
+globalnego kubeconfigu można usunąć:
+`kubectl config delete-context k3d-docfind && kubectl config delete-cluster k3d-docfind && kubectl config delete-user admin@k3d-docfind`.
 
 ## Zegar
 

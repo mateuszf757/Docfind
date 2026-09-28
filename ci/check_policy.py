@@ -28,7 +28,9 @@ def pod_spec(manifest: dict[str, Any]) -> dict[str, Any] | None:
     spec = manifest.get("spec", {})
     if manifest["kind"] == "CronJob":
         spec = spec.get("jobTemplate", {}).get("spec", {})
-    return spec.get("template", {}).get("spec")
+    template = spec.get("template", {}).get("spec")
+    # Manifest pochodzi z YAML-a, więc typ trzeba sprawdzić, a nie założyć.
+    return template if isinstance(template, dict) else None
 
 
 def violations(manifest: dict[str, Any], *, require_digest: bool) -> Iterator[str]:

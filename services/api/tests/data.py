@@ -60,6 +60,15 @@ llm:
 
 MALFORMED_CONFIG_YAML: Final = "service:\n  port: [nie\n"
 
+CONFIG_WITH_FRACTIONAL_GRACE_YAML: Final = """
+elasticsearch:
+  url: http://elasticsearch:9200
+  alias: docfind
+service:
+  shutdown_grace_seconds: 0.5
+"""
+"""Ułamek sekundy — uvicorn przyjmuje liczbę całkowitą i int() zrobiłby z tego zero."""
+
 SECRET_NAME: Final = "elasticsearch_password"
 SECRET_VALUE: Final = "tajne-haslo"
 
