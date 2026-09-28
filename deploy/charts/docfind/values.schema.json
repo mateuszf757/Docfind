@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Wartości charta docfind",
+  "description": "Chart jest publicznym interfejsem produktu (docs/DECYZJE.md, decyzja 13). Bez schematu Helm po cichu ignoruje nieznany klucz — literówka `api.replica: 3` dawałaby dwie repliki bez żadnego sygnału. Draft-07, żeby schemat działał także w Helmie 3 u klienta.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "global": {
+      "description": "Helm dokłada `global` do wartości każdego charta.",
+      "type": "object"
+    },
+    "api": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "replicas",
+        "image",
+        "resources",
+        "preStopSleepSeconds",
+        "terminationGracePeriodSeconds",
+        "config"
+      ],
+      "properties": {
+        "replicas": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["repository", "tag", "pullPolicy"],
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tag": {
+              "description": "Wymagany przy renderze (szablon odmawia pustego) — bez domyślnego latest.",
+              "type": "string"
+            },
+            "pullPolicy": {
+              "enum": ["Always", "IfNotPresent", "Never"]
+            }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["requests", "limits"],
+          "properties": {
+            "requests": {
+              "$ref": "#/definitions/quantities"
+            },
+            "limits": {
+              "$ref": "#/definitions/quantities"
+            }
+          }
+        },
+        "preStopSleepSeconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "terminationGracePeriodSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "config": {
+          "description": "Treść app.yml. Waliduje ją model Pydantic — w CI na wyrenderowanej ConfigMapie i przy starcie poda (deploy/config/app.schema.json).",
+          "type": "object"
+        }
+      }
+    }
+  },
+  "definitions": {
+    "quantities": {
+      "type": "object",
+      "propertyNames": {
+        "enum": ["cpu", "memory", "ephemeral-storage"]
+      },
+      "additionalProperties": {
+        "type": ["string", "number"]
+      }
+    }
+  }
+}

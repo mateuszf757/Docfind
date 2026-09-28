@@ -27,6 +27,18 @@ done
 # więc z definicji nie jest powtarzalne — sprawdzanie go nic by nie dowiodło.
 df_require_clean_tree
 
+# Oba buildy biegną na tym samym builderze, więc wersja BuildKit nie wpływa na
+# werdykt tego skryptu. Wpływa za to na twierdzenie, że lokalny obraz jest
+# bajt w bajt taki jak z CI: frontend Dockerfile jest wbudowany w BuildKit.
+# CI używa DF_BUILDKIT_IMAGE, lokalny BuildKit przychodzi z Dockera.
+builder_info=$(docker buildx inspect)
+buildkit_local=$(awk '/^BuildKit version:/ && !seen {print $3; seen = 1}' <<<"$builder_info")
+buildkit_ci=${DF_BUILDKIT_IMAGE#*:}
+buildkit_ci=${buildkit_ci%@*}
+if [[ -n "$buildkit_local" && "$buildkit_local" != "$buildkit_ci" ]]; then
+  echo "UWAGA: lokalny BuildKit $buildkit_local, CI używa $buildkit_ci — lokalny digest może różnić się od tego z CI" >&2
+fi
+
 image="$(df_image_name "$service"):$(df_docker_tag "$(df_version)")"
 work_dir=$(mktemp -d)
 trap 'rm -rf "$work_dir"' EXIT

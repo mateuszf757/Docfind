@@ -15,7 +15,8 @@ import os
 from pathlib import Path
 from typing import Final
 
-SECRET_ENV_PREFIX: Final = "DOCFIND_SECRET_"
+# Prefiks nazwy zmiennej, nie wartość — bandit (S105) myli nazwę z hasłem.
+SECRET_ENV_PREFIX: Final = "DOCFIND_SECRET_"  # noqa: S105
 SECRETS_DIR_ENV: Final = "DOCFIND_SECRETS_DIR"
 DEFAULT_SECRETS_DIR: Final = Path("/run/secrets")
 

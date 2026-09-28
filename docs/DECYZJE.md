@@ -334,14 +334,27 @@ w Dockerfile i obraz CoreDNS mają digest indeksu (działa na każdej
 architekturze), akcje pełne SHA z komentarzem wersji. Polityka w
 `ci/check_policy.py` odrzuca obraz komponentu platformy bez digestu.
 
+**Luki znalezione po wprowadzeniu.** Przypięcie objęło to, co projekt pobiera
+sam, ale nie to, co w trakcie biegu pobierały za niego narzędzia:
+`setup-uv` bez wersji instalował najnowszego uv, `setup-buildx-action` brał
+przesuwalny tag BuildKitu, `ubuntu-latest` zmienia system i jego `python3`,
+kubeconform przy każdym biegu pobierał schematy z gałęzi `master`, a `uv sync`
+instalował projekt w trybie edytowalnym i przy tym najnowszego hatchlinga,
+którego nie ma w `uv.lock`. Teraz uv w CI ma wersję z Dockerfile, BuildKit
+digest z `ci/lib.sh`, runner to `ubuntu-24.04`, schematy pochodzą z
+przypiętego commita, a projekt nie jest budowany (`tool.uv.package = false`).
+Dowodem był bieg kubeconform bez sieci — z domyślnymi ustawieniami padał.
+Przypięcie sprawdza się pytaniem „co jeszcze to pobiera, kiedy biegnie", a nie
+„co wpisałem do pliku".
+
 **Co tracę:** czytelność — `@sha256:edad48e1…` nic nie mówi bez komentarza —
 i darmowe łatki bezpieczeństwa, które przy tagu przychodziły same. Tę drugą
 stratę pokrywa Dependabot (akcje, bazy w Dockerfile, uv.lock), ale **nie**
-przypięcia w `ci/lib.sh`: k3s, narzędzia, charty i obrazy narzędzi CI
-aktualizuję ręcznie, razem z sumami.
+przypięcia w `ci/lib.sh` ani narzędzia w `mise.toml` (decyzja 23): k3s,
+BuildKit, charty, schematy i binarki aktualizuję ręcznie, razem z sumami.
 
 **Kiedy zmieniam zdanie:** nigdy dla samego przypinania. Ręczne aktualizacje
-z `ci/lib.sh` przeniosę do Renovate z regułami regex, gdy zaczną zalegać.
+z `ci/lib.sh` i `mise.toml` przeniosę do Renovate, gdy zaczną zalegać.
 
 ## 21. Build powtarzalny bajt w bajt
 
@@ -365,6 +378,12 @@ identyczny digest przy buildzie z pamięcią podręczną, od zera, na sterowniku
 lokalnym i na tym z CI. `ci/check-reproducible.sh` porównuje build z pamięcią
 podręczną z buildem od zera w każdym pipeline'ie.
 
+Zgodność z CI zależy od wersji BuildKit, bo frontend Dockerfile jest w nią
+wbudowany — a `setup-buildx-action` brał przesuwalny tag. CI używa teraz
+BuildKitu przypiętego digestem (`DF_BUILDKIT_IMAGE` w `ci/lib.sh`), w tej samej
+wersji co lokalny Docker; `check-reproducible.sh` ostrzega, gdy lokalna wersja
+się rozjedzie.
+
 **Co tracę:** trzy rzeczy. Pole `built_at` w `/version` zmieniło nazwę na
 `source_date`, bo podaje czas commita, a nie budowania — zmiana kontraktu.
 Lokalne obrazy nie mają atestacji pochodzenia, bo ta z natury zmienia digest
@@ -380,10 +399,10 @@ zwyklejszy układ dla każdego, kto otworzy obraz.
 
 **Wybieram automat z warunkami, nie automat bez warunków.** Przypięcia z decyzji
 20 bez aktualizacji się starzeją, a ręczne scalanie każdej łatki to praca, która
-w końcu przestaje być robiona. Łatki (`version-update:semver-patch`) są więc
-scalane automatycznie przez `dependabot/fetch-metadata` i `gh pr merge --auto`,
-a minor i major czekają na przegląd. Trzy warunki, bez których to byłoby
-niebezpieczne:
+w końcu przestaje być robiona. Łatki (`version-update:semver-patch`) i
+odświeżenia digestu obrazu bazowego są więc scalane automatycznie przez
+`dependabot/fetch-metadata` i `gh pr merge --auto`, a minor i major czekają na
+przegląd. Warunki, bez których to byłoby niebezpieczne albo nie działało:
 
 - **Bramka.** `--auto` czeka tylko na sprawdzenia *wymagane* przez regułę
   gałęzi. Reguła `main` (`.github/rulesets/main.json`, stosowana przez
@@ -391,29 +410,145 @@ niebezpieczne:
   aplikacji GitHub Actions, żeby status nie mógł zgłosić ktoś inny.
 - **Build na PR-ach.** Wcześniej zadanie `build` biegło tylko po scaleniu — PR #7
   od Dependabota zmienił obraz builda i wszedł do `main`, zanim ktokolwiek
-  zbudował z nim obraz. Teraz każdy PR buduje obraz, sprawdza warunki Etapu 1
-  i powtarzalność; publikacja tylko przy push.
-- **Cooldown.** Nowa wersja jest proponowana dopiero kilka dni po wydaniu.
-  Dla zależności Pythona: 3 dni dla łatki, 7 dla minor, 14 dla major. Dla akcji
-  i obrazów bazowych 3 dni dla każdego typu zmiany — Dependabot nie obsługuje
-  tam rozróżnienia według semver. Skompromitowane wydania bywają wycofywane
-  w ciągu godzin albo dni — automat scalający świeże wydanie ufałby mu, zanim
-  ktokolwiek je obejrzał.
+  zbudował z nim obraz. Teraz każdy PR buduje obraz, sprawdza bazę, testy na
+  musl, warunki Etapu 1 i powtarzalność; publikacja tylko przy push.
+- **Scalanie tokenem aplikacji.** Zdarzenia wywołane przez `GITHUB_TOKEN` nie
+  uruchamiają workflowów, więc PR scalony w jego imieniu wchodził do `main` bez
+  biegu `ci.yml` na push — bez builda i bez publikacji obrazu. Auto-merge włącza
+  teraz token aplikacji GitHuba (sekrety Dependabota
+  `DOCFIND_AUTOMERGE_CLIENT_ID` i `DOCFIND_AUTOMERGE_PRIVATE_KEY`), ograniczony
+  do tego repozytorium i do dwóch uprawnień. Bez skonfigurowanej aplikacji
+  workflow niczego nie scala i zostawia ostrzeżenie — PR czeka na człowieka,
+  zamiast wejść bez obrazu.
+- **Typ aktualizacji, który naprawdę przychodzi.** `fetch-metadata` 2.5.0
+  zwracał pusty `update-type` dla PR-ów Pythona, więc łatki z `uv.lock` nigdy
+  nie scalały się same (poprawione w 3.1.0). Odświeżenie digestu bez zmiany tagu
+  (`python:3.12-alpine@sha256:A` → `B`) fetch-metadata klasyfikuje błędnie jako
+  major (dependabot/fetch-metadata#726), więc takie PR-y — większość łatek
+  bezpieczeństwa bazy — też czekały na człowieka. Workflow rozpoznaje je teraz
+  po poprzedniej wersji w postaci digestu i traktuje jak łatkę.
+- **Nowe wydanie Alpine to nie łatka.** Pod tym samym tagiem `3.12-alpine`
+  pojawia się też nowe wydanie Alpine — nowy musl i OpenSSL. `ci/check-image-base.sh`
+  porównuje zbudowany obraz z `DF_BASE_ALPINE` w `ci/lib.sh` i zatrzymuje build,
+  dopóki człowiek nie podbije tej wartości w tym samym PR-ze.
+- **Cooldown.** Nowa wersja jest proponowana dopiero 7 dni po wydaniu, major po
+  14. Pierwotnie łatki czekały 3 dni; zizmor w `run-tests.sh` wymaga co
+  najmniej 7, a koszt jest mały — aktualizacje bezpieczeństwa z alertów
+  Dependabota cooldownem nie są objęte. Skompromitowane wydania bywają
+  wycofywane w ciągu godzin albo dni — automat scalający świeże wydanie ufałby
+  mu, zanim ktokolwiek je obejrzał.
 
-Workflow używa `pull_request`, nie `pull_request_target`, ma zapis tylko
-w jedynym zadaniu, które go potrzebuje, i przekazuje metadane PR-a przez
-zmienne środowiskowe zamiast wstawiać je do skryptu. Workflowy sprawdza
-actionlint w `run-tests.sh`.
+Workflow używa `pull_request`, nie `pull_request_target`, `GITHUB_TOKEN` ma
+w nim tylko odczyt, a metadane PR-a idą przez zmienne środowiskowe zamiast do
+skryptu. Workflowy sprawdzają actionlint i zizmor w `run-tests.sh`.
 
 **Co tracę:** łatka, której testy nie pokrywają, wejdzie bez ludzkiego oka —
 bramka jest tak dobra jak CI, a CI nie ćwiczy jeszcze aplikacji na klastrze
-(e2e przychodzi na Etapie 9). Reguła blokuje też bezpośredni push i force-push
-do `main`, więc przepisanie historii, jak przy poprawce tożsamości commitów,
-wymagałoby jej tymczasowego wyłączenia.
+(e2e przychodzi na Etapie 9). Aplikacja GitHuba to nowy sekret z prawem zapisu:
+klucz prywatny trzeba chronić i rotować. Reguła blokuje też bezpośredni push
+i force-push do `main`, więc przepisanie historii, jak przy poprawce tożsamości
+commitów, wymagałoby jej tymczasowego wyłączenia. `strict` w regule jest
+wyłączone, więc dwie łatki zielone osobno mogą wejść po sobie bez testu
+kombinacji; kolejka scalania (merge queue), która to rozwiązuje, nie jest
+dostępna dla repozytoriów na koncie osobistym.
 
 **Kiedy zmieniam zdanie:** przy pierwszej automatycznie scalonej łatce, która
 zepsuła `main` — wtedy auto-merge tylko dla zależności deweloperskich, dopóki
-e2e z Etapu 9 nie domknie luki.
+e2e z Etapu 9 nie domknie luki. Przy przejściu na Renovate (decyzja 20) ten
+workflow znika: Renovate scala sam, własnym tokenem aplikacji, i rozróżnia
+odświeżenie digestu od zmiany wersji.
+
+## 23. mise jako jedno wejście do narzędzi i zadań
+
+**Wybieram jedno narzędzie zamiast skryptu instalacyjnego i luźnych poleceń.**
+Wcześniej binarki instalował `ci/install-tools.sh` — tylko dla linux/amd64, do
+globalnego `~/.local/bin` wspólnego dla wszystkich projektów — a shellcheck,
+actionlint, helm i kubeconform biegły w przypiętych kontenerach. Teraz
+`mise.toml` przypina wersje, `mise.lock` trzyma URL i sumę dla każdej platformy
+(także macOS i arm64), a `locked = true` odmawia instalacji czegokolwiek spoza
+lockfile'a. Sumy kubectl, k3d, helm i kubeconform w `mise.lock` są bajt w bajt
+tymi, które były w `ci/lib.sh` — te same artefakty z tych samych adresów.
+Samo mise wchodzi do repozytorium jako `bin/mise`: skrypt z przypiętą wersją
+i sumami, które przy przypięciu zgadzały się z plikiem sum podpisanym kluczem
+GPG autorów (odcisk z dokumentacji mise). Wszystko ląduje w `.mise/` w
+repozytorium — bez globalnej instalacji i bez aktywacji w powłoce, tak samo
+lokalnie i w CI. Zadania w `mise.toml` tylko wołają skrypty z `ci/`, więc
+skrypty działają też bez mise. `run-tests.sh` nie potrzebuje już Dockera i jest
+szybszy (5,6 s zamiast 8,6 s lokalnie).
+
+**Co tracę:** Dependabot nie obsługuje mise — narzędzia z `mise.toml` aktualizuję
+ręcznie (`./bin/mise lock`), tak jak wcześniej przypięcia z `ci/lib.sh`. Jest
+jedno narzędzie więcej do zrozumienia, z własnymi pułapkami: zadania TOML biegną
+w `sh` bez `pipefail`, a zależności zadań (`depends`) równolegle. uv zostaje
+poza mise: jego wersja jest w Dockerfile, bo tam aktualizuje ją Dependabot —
+druga kopia w `mise.toml` rozjeżdżałaby się przy każdej jego łatce.
+
+**Kiedy zmieniam zdanie:** gdy ręczne aktualizacje `mise.toml` i `ci/lib.sh`
+zaczną zalegać — wtedy Renovate, który obsługuje mise, Dockerfile, akcje i uv
+naraz; uv przejdzie wtedy do `mise.toml`, bo jedna grupa aktualizacji podbije
+obie kopie jednocześnie.
+
+## 24. Testy jednostkowe także w obrazie, na musl
+
+**Wybieram dłuższy pipeline zamiast założenia, że Python to Python.** Testy
+biegły na interpreterze hosta: lokalnie systemowy Python 3.12.3 z glibc, w CI
+`python3` runnera, a `requires-python = ">=3.12"` przyjąłby tam każdą nowszą
+wersję. Obraz biegnie na Pythonie 3.12.14 i musl, z innymi binariami
+pydantic-core, uvloop i httptools (koła musllinux zamiast manylinux). Teraz etap
+`test` w Dockerfile, zbudowany na bazie buildera, uruchamia pytest w obrazie
+(`ci/test-image.sh`, zadanie build w CI). `.python-version` przypina wersję
+testów na hoście, a `run-tests.sh` i `check-image-base.sh` pilnują, żeby Python
+testów, tag bazy i zbudowany obraz miały tę samą wersję.
+
+**Co tracę:** ~20 s pierwszego biegu na każdym PR-ze i testy w kontekście
+builda — `.dockerignore` przepuszcza `tests/`, choć runtime ich nie kopiuje.
+Etap `test` potrzebuje też `deploy/config/app.yml.example` spoza kontekstu
+usługi, więc bez `ci/test-image.sh` (nazwany kontekst `config`) się nie zbuduje.
+
+**Kiedy zmieniam zdanie:** gdy baza zejdzie z musl (odwrócona decyzja 14) —
+wtedy testy na hoście z przypiętą wersją Pythona dają prawie to samo
+mniejszym kosztem.
+
+## 25. Diagnostyka asynchroniczna, wyszukiwanie synchroniczne
+
+**Wybieram dwa modele wykonania w jednej aplikacji.** Handler `def` Starlette
+wykonuje w puli wątków anyio, wspólnej dla procesu i ograniczonej do 40 wątków.
+Gdy zajmą ją wolne wywołania do Elasticsearcha albo modelu, synchroniczne
+`/healthz` czeka na wolny wątek, przekracza timeout sondy i kubelet restartuje
+zdrowy pod pod obciążeniem — wolna zależność zamienia się w restarty API.
+Endpointy diagnostyczne są więc `async def` i nie blokują; test z pulą
+ograniczoną do jednego zajętego wątku pada, gdy `/healthz` wraca do `def`.
+`/search` zostaje `def`, dopóki klient ES i modelu nie jest asynchroniczny —
+blokujące wywołanie w `async def` zatrzymałoby pętlę zdarzeń razem z sondami.
+Przy okazji `/docs` jest domyślnie wyłączone: Swagger UI ładuje JS i CSS
+z cdn.jsdelivr.net, czyli w przeglądarce użytkownika klienta wykonywałby się
+kod z obcego serwera.
+
+**Co tracę:** regułę, której nie widać w typach — w `async def` nie wolno
+blokować; ruff `ASYNC` łapie część przypadków, ale nie synchronicznego klienta
+biblioteki. `def` w `Depends` też trafia do puli wątków, więc zależności
+diagnostyki muszą być `async def`. Swagger UI trzeba włączyć w konfiguracji
+(`service.docs: true`).
+
+**Kiedy zmieniam zdanie:** przy asynchronicznym kliencie ES i modelu
+(Etapy 6–7) — wtedy `/search` przechodzi na `async def` i podział znika.
+
+## 26. Kubeconfig projektu zamiast globalnego
+
+**Wybieram mniej wygodne, bo bezpieczniejsze.** k3d dopisywał klaster do
+`~/.kube/config` i przełączał bieżący kontekst — każdy `kubectl` w dowolnym
+terminalu wskazywał nagle na lokalny klaster, a skrypty dziedziczyły kontekst
+z powłoki. `check-drain.sh` sprawdzał kontekst przed drainem, reszta skryptów
+nie. Teraz dane dostępowe trafiają do `.cache/kubeconfig`, który ustawia
+`ci/lib.sh` dla każdego skryptu i `mise.toml` dla `./bin/mise exec`, a
+`deploy-local.sh` odtwarza ten plik z k3d przy każdym uruchomieniu.
+
+**Co tracę:** zwykłe `kubectl` w terminalu nie widzi lokalnego klastra —
+trzeba `./bin/mise exec -- kubectl …` albo `export KUBECONFIG=$PWD/.cache/kubeconfig`.
+
+**Kiedy zmieniam zdanie:** nigdy dla skryptów. Dla pracy interaktywnej wygoda
+wraca bez zmiany zasady, gdy mise jest aktywowane w powłoce — wtedy ustawia
+`KUBECONFIG` samo po wejściu do katalogu projektu.
 
 ---
 

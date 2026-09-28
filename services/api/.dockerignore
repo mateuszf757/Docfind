@@ -1,11 +1,12 @@
-# Kontekst builda ma zawierać wyłącznie źródła i manifest zależności.
+# Kontekst builda: źródła, testy i manifest zależności. Testy trafiają tylko do
+# etapu test (--target test); runtime kopiuje wyłącznie z buildera.
 .venv/
 venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
 *.egg-info/
-tests/
 Dockerfile
 .dockerignore

@@ -19,6 +19,7 @@ from docfind_api.config import (
 )
 from tests.conftest import WriteConfigFile
 from tests.data import (
+    CONFIG_WITH_FRACTIONAL_GRACE_YAML,
     CONFIG_WITH_REAL_BACKEND_YAML,
     CONFIG_WITH_UNKNOWN_KEY_YAML,
     EXAMPLE_CONFIG_PATH,
@@ -43,11 +44,14 @@ def test_minimal_config_fills_defaults(given_config_file: WriteConfigFile) -> No
 
     assert config.service.port == 8000
     assert config.service.log_level is LogLevel.INFO
+    assert config.service.shutdown_grace_seconds == 3
+    assert config.service.keep_alive_seconds == 5
+    assert config.service.docs is False
     assert config.llm.backend is LlmBackend.STUB
     assert config.elasticsearch.alias == "docfind"
 
 
-def test_missing_file_names_the_path(given_config_file: WriteConfigFile, tmp_path) -> None:
+def test_missing_file_names_the_path(given_config_file: WriteConfigFile) -> None:
     path = given_config_file(MINIMAL_CONFIG_YAML)
     path.unlink()
 
@@ -113,4 +117,20 @@ def test_config_is_immutable(given_config_file: WriteConfigFile) -> None:
     config = load_config()
 
     with pytest.raises(ValidationError):
-        config.service.port = 9999
+        # Naruszenie typu jest celowe: test sprawdza, że frozen działa w runtime,
+        # a nie tylko w type checkerze.
+        config.service.port = 9999  # type: ignore[misc]
+
+
+def test_fractional_grace_period_is_rejected(given_config_file: WriteConfigFile) -> None:
+    """0,5 s przechodziło walidację jako float, a int() robił z tego zero.
+
+    uvicorn z zerowym limitem anuluje żądania w locie po 0,1 s — dokładne
+    przeciwieństwo tego, o co prosił administrator.
+    """
+    given_config_file(CONFIG_WITH_FRACTIONAL_GRACE_YAML)
+
+    with pytest.raises(ConfigError) as caught:
+        load_config()
+
+    assert "service.shutdown_grace_seconds" in str(caught.value)

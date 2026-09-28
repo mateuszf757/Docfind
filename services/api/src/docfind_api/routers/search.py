@@ -2,6 +2,12 @@
 
 Zaślepka do Etapu 6, który podpina Elasticsearch, i Etapu 7, który dokłada
 strumieniowaną odpowiedź modelu.
+
+Handler jest `def` celowo, w przeciwieństwie do diagnostyki. Dopóki klient
+Elasticsearcha i modelu nie jest asynchroniczny, blokujące wywołanie w
+`async def` zatrzymałoby pętlę zdarzeń całego procesu, razem z sondami;
+w `def` zajmuje tylko jeden z wątków puli. Przejście na `async def` idzie
+w parze z asynchronicznym klientem, nie wcześniej.
 """
 
 from __future__ import annotations

@@ -7,14 +7,15 @@
 
 set -euo pipefail
 
-# --- Przypięte wersje narzędzi ----------------------------------------------
+# --- Przypięte wersje ---------------------------------------------------------
 #
-# Jedno miejsce dla wszystkich wersji, bo narzędzie w innej wersji lokalnie
-# i w CI zgłasza inne błędy — tak padł pipeline na shellchecku 0.9.0 z apt.
-# Wersja klastra i kubectl są te same, a kubeconform sprawdza manifesty
-# względem schematu dokładnie tej wersji Kubernetesa.
+# Binarki narzędzi (kubectl, k3d, helm, kubeconform, shellcheck, actionlint,
+# zizmor, gh) są w mise.toml, a ich sumy dla każdej platformy w mise.lock —
+# instaluje je ./bin/mise install z weryfikacją, tak jak wcześniej
+# install-tools.sh. Tutaj zostaje to, czego mise nie obsługuje: wersja
+# Kubernetesa, obrazy, chart i źródła, z których korzysta CI.
 #
-# Sumy SHA-256 są zapisane tutaj, a nie pobierane razem z plikiem. Suma
+# Sumy i digesty są zapisane tutaj, a nie pobierane razem z plikiem. Suma
 # ściągnięta z tego samego serwera chroni tylko przed uszkodzeniem
 # w transferze, a nie przed podmianą. Każda z poniższych zgadzała się
 # z sumą opublikowaną przez autorów w dniu przypięcia.
@@ -22,20 +23,11 @@ set -euo pipefail
 # Zmienne są używane przez skrypty, które źródłują ten plik.
 # shellcheck disable=SC2034
 {
+  # Wersja klastra. kubectl z mise.toml musi być tą samą wersją (pilnuje
+  # run-tests.sh), a kubeconform sprawdza manifesty względem schematu
+  # dokładnie tej wersji Kubernetesa.
   DF_KUBERNETES_VERSION="1.36.4"
   DF_K3S_IMAGE="rancher/k3s:v1.36.4-k3s1@sha256:edad48e12bf81c3a09ac1c05c0c0ffaaa22145980b989d6fae84543a76b83657"
-
-  DF_KUBECTL_VERSION="v1.36.4"
-  DF_KUBECTL_SHA256="8b8f088da2dab964f853b38464033b1be15ede2839eca751482357c45abdd05a"
-
-  DF_K3D_VERSION="v5.9.0"
-  DF_K3D_SHA256="06d8f25bc3a971c4eb29e0ff08429b180402db0f4dec838c9eac427e296800a0"
-
-  DF_HELM_VERSION="4.3.0"
-  DF_HELM_SHA256="86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb"
-
-  DF_KUBECONFORM_VERSION="v0.8.0"
-  DF_KUBECONFORM_SHA256="9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883"
 
   # Charty komponentów platformy. Pobierane jako plik i weryfikowane sumą,
   # a nie instalowane wprost z repozytorium Helma — `helm install --repo`
@@ -44,20 +36,71 @@ set -euo pipefail
   DF_COREDNS_CHART_URL="https://github.com/coredns/helm/releases/download/coredns-${DF_COREDNS_CHART_VERSION}/coredns-${DF_COREDNS_CHART_VERSION}.tgz"
   DF_COREDNS_CHART_SHA256="1587165a85ec63dec4603e2889a8a6f5af9222a63893b8ecc254dfeb80c0e1e0"
 
-  # Obrazy narzędzi uruchamianych w run-tests.sh — dzięki nim CI nie
-  # potrzebuje niczego instalować, a wersja jest ta sama co lokalnie.
-  #
-  # Każdy obraz jest przypięty digestem, nie tylko tagiem. Tag jest
-  # przesuwalny: właściciel repozytorium obrazów może pod tą samą nazwą
-  # opublikować inną zawartość, a my pobralibyśmy ją bez żadnego sygnału.
-  # Tag zostaje obok dla czytelności — przy obu Docker używa digestu.
-  # Digesty indeksów wieloarchitekturowych, nie manifestów dla amd64, żeby
-  # przypięcie działało też na runnerze arm64.
-  DF_SHELLCHECK_IMAGE="koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d"
-  DF_HELM_IMAGE="alpine/helm:${DF_HELM_VERSION}@sha256:a6cf54599ccb99d90cf0712b30f03fdb3cab062e6b94e0418cc4db7e8a1464b2"
-  DF_KUBECONFORM_IMAGE="ghcr.io/yannh/kubeconform:${DF_KUBECONFORM_VERSION}@sha256:faffaf43f95aa6425306e1ab8d6fcad72acb9049158f38e574c085ea1ec0f64e"
+  # Obraz sondy uruchamianej w klastrze przez check-drain.sh. Digest indeksu
+  # wieloarchitekturowego, nie manifestu dla amd64 — tag jest przesuwalny,
+  # a przypięcie ma działać na każdej architekturze węzła.
   DF_CURL_IMAGE="curlimages/curl:8.16.0@sha256:463eaf6072688fe96ac64fa623fe73e1dbe25d8ad6c34404a669ad3ce1f104b6"
-  DF_ACTIONLINT_IMAGE="rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667"
+
+  # BuildKit dla sterownika docker-container w CI (docker/setup-buildx-action).
+  # Bez przypięcia akcja bierze przesuwalny tag moby/buildkit, a decyzja 21
+  # obiecuje ten sam obraz z lokalnego BuildKitu i z CI — to zależy od wersji,
+  # bo frontend Dockerfile jest wbudowany w BuildKit. Lokalny BuildKit
+  # przychodzi z Dockera; check-reproducible.sh ostrzega, gdy wersje się różnią.
+  DF_BUILDKIT_IMAGE="moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3"
+
+  # Schematy dla kubeconform z konkretnego commita yannh/kubernetes-json-schema.
+  # Domyślnie kubeconform pobiera je przy każdym biegu z gałęzi master — bez
+  # sumy i z treścią, która może się zmienić między dwoma biegami tego samego
+  # commita projektu. SHA commita adresuje treść, więc pliki pod nim są
+  # niezmienne; sieć jest potrzebna przy pierwszym biegu, potem schematy leżą
+  # w .cache/kubeconform.
+  DF_KUBECONFORM_SCHEMA_COMMIT="c9452fcf5ef03628ab8b07e5b3a6b6f989e543bf"
+
+  # Wydanie Alpine pod pływającym tagiem python:3.12-alpine w Dockerfile.
+  # Dependabot odświeża digest tego tagu i takie odświeżenie jest scalane
+  # automatycznie jak łatka (decyzja 22) — ale pod tym samym tagiem pojawia się
+  # też nowe wydanie Alpine, czyli nowy musl i OpenSSL. check-image-base.sh
+  # porównuje obraz z tą wartością: nowe wydanie Alpine daje czerwony build,
+  # dopóki człowiek nie podbije jej tutaj, w tym samym PR-ze.
+  DF_BASE_ALPINE="3.24"
+}
+
+# Kubeconfig projektu zamiast globalnego ~/.kube/config — ta sama ścieżka co
+# [env] w mise.toml. Skrypty, które tworzą klaster i drenują węzły, nie mogą
+# dziedziczyć kontekstu z powłoki: KUBECONFIG ustawiony na firmowy klaster albo
+# kontekst przełączony ręcznie wskazałby im cudzy klaster. deploy-local.sh
+# zapisuje tu dane dostępowe klastra prosto z k3d.
+DF_KUBECONFIG="$(git rev-parse --show-toplevel)/.cache/kubeconfig"
+export KUBECONFIG="$DF_KUBECONFIG"
+
+# Wersja uv przypięta w Dockerfile (FROM ghcr.io/astral-sh/uv:X.Y.Z@sha256:…).
+# To jedyne źródło prawdy o uv: przypięcie digestem aktualizuje Dependabot,
+# CI instaluje tę samą wersję (ci.yml), a run-tests.sh ostrzega, gdy lokalny
+# uv jest inny. Druga kopia wersji, której Dependabot nie widzi, rozjeżdżałaby
+# się z pierwszą przy każdej jego aktualizacji.
+df_uv_version() {
+  local dockerfile pinned
+  dockerfile="$(git rev-parse --show-toplevel)/services/api/Dockerfile"
+  pinned=$(grep -oE '^FROM ghcr\.io/astral-sh/uv:[0-9]+\.[0-9]+\.[0-9]+@' "$dockerfile") || {
+    echo "BŁĄD: nie znaleziono przypięcia uv w $dockerfile" >&2
+    return 1
+  }
+  pinned=${pinned#FROM ghcr.io/astral-sh/uv:}
+  printf '%s' "${pinned%@}"
+}
+
+# Wersja Pythona (major.minor), na której biegną testy: services/api/.python-version.
+# Obraz bierze ją z tagu bazy w Dockerfile; spójność pilnują run-tests.sh
+# (plik ↔ Dockerfile) i check-image-base.sh (plik ↔ zbudowany obraz).
+df_python_minor() {
+  local file version
+  file="$(git rev-parse --show-toplevel)/services/api/.python-version"
+  version=$(<"$file")
+  if [[ ! "$version" =~ ^[0-9]+\.[0-9]+$ ]]; then
+    echo "BŁĄD: $file ma zawierać wersję w postaci major.minor, a zawiera '$version'" >&2
+    return 1
+  fi
+  printf '%s' "$version"
 }
 
 # Wersja z git describe. Bez tagów spada na 0.0.0-dev.<liczba commitów>+<sha>,
@@ -193,8 +236,13 @@ df_fetch_verified() {
   mkdir -p "$(dirname "$file")"
 
   if [[ ! -f "$file" ]]; then
-    curl -fsSL -o "$file.part" "$url"
-    mv "$file.part" "$file"
+    # Plik tymczasowy unikalny dla wywołania. Dwa równoległe pobrania (mise
+    # uruchamia zależności zadań równolegle) pisały wcześniej do tego samego
+    # plik.part, a mv jednego z nich podmieniał plik w trakcie zapisu drugiego.
+    local partial
+    partial=$(mktemp "$file.part.XXXXXX")
+    curl -fsSL -o "$partial" "$url" || { rm -f "$partial"; return 1; }
+    mv "$partial" "$file"
   fi
 
   actual=$(sha256sum "$file" | cut -d' ' -f1)

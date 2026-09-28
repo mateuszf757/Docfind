@@ -1,28 +1,30 @@
 # Przypięcia bez mechanizmu aktualizacji starzeją się po cichu: digest bazy
 # obrazu sprzed pół roku to baza z poprawkami bezpieczeństwa sprzed pół roku.
 # Dependabot proponuje aktualizacje jako PR-y, które przechodzą ten sam
-# pipeline co każda inna zmiana. Łatki są scalane automatycznie
-# (.github/workflows/dependabot-auto-merge.yml), reszta czeka na przegląd.
+# pipeline co każda inna zmiana. Łatki — także odświeżenia digestu obrazu
+# bazowego — są scalane automatycznie (.github/workflows/dependabot-auto-merge.yml),
+# reszta czeka na przegląd.
 #
-# Poza jego zasięgiem zostają przypięcia w ci/lib.sh (k3s, narzędzia, charty,
-# obrazy narzędzi CI) — te aktualizuje się ręcznie, razem z ich sumami.
+# Poza jego zasięgiem zostają przypięcia w ci/lib.sh (k3s, BuildKit, obraz
+# sondy, chart CoreDNS, commit schematów kubeconform) i narzędzia w mise.toml
+# — Dependabot nie obsługuje mise. Te aktualizuje się ręcznie, razem z sumami.
 #
 # Grupy są rozdzielone według typu zmiany, bo auto-merge patrzy na najwyższą
 # zmianę w PR-ze: grupa łącząca minor i patch dawałaby "minor" i żadna łatka
 # w niej nie zostałaby scalona automatycznie.
 #
-# Cooldown: nowa wersja jest proponowana dopiero po kilku dniach od wydania.
-# Skompromitowane wydania — jak tj-actions/changed-files w 2025 — bywają
-# wykrywane i wycofywane w ciągu godzin albo dni; automatyczne scalanie
-# świeżo wydanej łatki oznaczałoby zaufanie jej, zanim ktokolwiek ją obejrzał.
-# Aktualizacje bezpieczeństwa (z alertów Dependabota) cooldownem nie są objęte.
+# Cooldown: nowa wersja jest proponowana dopiero 7 dni po wydaniu, a major
+# po 14. Skompromitowane wydania — jak tj-actions/changed-files w 2025 — bywają
+# wykrywane i wycofywane w ciągu godzin albo dni; automatyczne scalanie świeżo
+# wydanej łatki oznaczałoby zaufanie jej, zanim ktokolwiek ją obejrzał.
+# Wcześniej łatki czekały 3 dni; zizmor (run-tests.sh) wymaga co najmniej 7,
+# a koszt jest mały, bo aktualizacje bezpieczeństwa (z alertów Dependabota)
+# cooldownem nie są objęte.
 #
 # Rozróżnienie dni według typu zmiany (semver-*-days) Dependabot przyjmuje tylko
 # dla części ekosystemów — dla github-actions i docker odrzucił je przy parsowaniu,
 # choć schemat dependabot.yml ze schemastore ich nie zabrania. Tam jest więc
-# default-days, obejmujące wszystkie typy zmian. Majory dostają przez to 3 dni
-# zamiast 14, ale i tak nie są scalane automatycznie — cooldown chroni głównie
-# łatki, które przechodzą bez przeglądu.
+# default-days, obejmujące wszystkie typy zmian.
 #
 # Po każdej zmianie tego pliku trzeba sprawdzić, czy Dependabot go przyjął
 # (Insights → Dependency graph → Dependabot): lokalnie nie ma walidatora, który
@@ -35,7 +37,7 @@ updates:
     schedule:
       interval: weekly
     cooldown:
-      default-days: 3
+      default-days: 7
     groups:
       actions-patch:
         update-types: [patch]
@@ -48,7 +50,7 @@ updates:
     schedule:
       interval: weekly
     cooldown:
-      default-days: 3
+      default-days: 7
 
   # Zależności Pythona z uv.lock.
   - package-ecosystem: uv
@@ -56,7 +58,8 @@ updates:
     schedule:
       interval: weekly
     cooldown:
-      semver-patch-days: 3
+      default-days: 7
+      semver-patch-days: 7
       semver-minor-days: 7
       semver-major-days: 14
     groups:

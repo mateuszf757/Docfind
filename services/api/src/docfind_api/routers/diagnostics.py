@@ -3,13 +3,23 @@
 Wydzielone od funkcji produktu, bo rządzą się innymi regułami: nie wymagają
 uwierzytelnienia, będą wyłączone z logu dostępowego w ingressie (Etap 3)
 i nie wchodzą do metryk biznesowych (Etap 8).
+
+Wszystkie są `async def` i nie mogą blokować. Handler `def` Starlette
+wykonuje w puli wątków anyio, wspólnej dla całego procesu i ograniczonej do
+40 wątków. Gdy zajmą ją wolne wywołania do Elasticsearcha albo modelu,
+synchroniczne /healthz czeka na wolny wątek, przekracza timeout sondy
+i kubelet restartuje pod, który był zdrowy — tylko zajęty. Handler
+`async def` biegnie w pętli zdarzeń i odpowiada niezależnie od puli.
+To samo dotyczy zależności: `def` w Depends też trafia do puli wątków.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Response, status
+from typing import Annotated
 
-from docfind_api.metrics import METRICS_PATH, render_metrics
+from fastapi import APIRouter, Depends, Request, Response, status
+
+from docfind_api.metrics import METRICS_PATH, HttpMetrics
 from docfind_api.models import (
     BuildInfo,
     LivenessResponse,
@@ -21,8 +31,14 @@ from docfind_api.version import build_info
 router = APIRouter(tags=["diagnostyka"])
 
 
+async def http_metrics(request: Request) -> HttpMetrics:
+    """Metryki tej instancji aplikacji (docfind_api.main.create_app)."""
+    metrics: HttpMetrics = request.app.state.metrics
+    return metrics
+
+
 @router.get("/healthz", response_model=LivenessResponse)
-def healthz() -> LivenessResponse:
+async def healthz() -> LivenessResponse:
     """Proces żyje.
 
     Celowo nie dotyka zależności: gdyby sprawdzał Elasticsearch, awaria ES
@@ -41,7 +57,7 @@ def _readiness_checks() -> list[ReadinessCheck]:
 
 
 @router.get("/readyz", response_model=ReadinessResponse)
-def readyz(response: Response) -> ReadinessResponse:
+async def readyz(response: Response) -> ReadinessResponse:
     """Gotowość na ruch.
 
     Niegotowość zwraca 503, żeby kubelet wyciął pod z endpointów Service
@@ -57,7 +73,7 @@ def readyz(response: Response) -> ReadinessResponse:
 
 
 @router.get("/version", response_model=BuildInfo)
-def version() -> BuildInfo:
+async def version() -> BuildInfo:
     """Tożsamość działającego builda — fundament diagnostyki całego systemu."""
     return build_info()
 
@@ -67,11 +83,11 @@ def version() -> BuildInfo:
     response_class=Response,
     responses={200: {"content": {"text/plain": {}}}},
 )
-def metrics() -> Response:
+async def metrics(metrics: Annotated[HttpMetrics, Depends(http_metrics)]) -> Response:
     """Metryki dla Prometheusa.
 
     Wystawione bez uwierzytelnienia, bo w klastrze ruch do tej trasy nie
     wychodzi poza sieć podów — ingress nie kieruje tu żądań (Etap 3).
     """
-    payload, content_type = render_metrics()
+    payload, content_type = metrics.render()
     return Response(content=payload, media_type=content_type)

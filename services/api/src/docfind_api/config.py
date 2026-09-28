@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import os
 from enum import StrEnum
-from functools import lru_cache
 from pathlib import Path
-from typing import Any, Final
+from typing import Final
 
 import yaml
 from pydantic import AnyHttpUrl, BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic_core import ErrorDetails
 
 CONFIG_FILE_ENV: Final = "DOCFIND_CONFIG"
 DEFAULT_CONFIG_FILE: Final = Path("/app/config/app.yml")
@@ -62,10 +62,29 @@ class ServiceConfig(StrictModel):
     host: str = Field(default="0.0.0.0", description="Adres nasłuchu")
     port: int = Field(default=8000, ge=1, le=65535)
     log_level: LogLevel = LogLevel.INFO
-    shutdown_grace_seconds: float = Field(
-        default=3.0,
-        gt=0,
-        description="Ile czekać na dokończenie żądań przy SIGTERM",
+    # Liczba całkowita, bo tyle przyjmuje uvicorn. Wcześniej był tu float
+    # z gt=0, a przekazanie robiło int(): 0,5 przechodziło walidację, stawało
+    # się zerem i uvicorn anulował żądania w locie po 0,1 s zamiast je dokończyć.
+    shutdown_grace_seconds: int = Field(
+        default=3,
+        ge=1,
+        description="Ile sekund czekać na dokończenie żądań przy SIGTERM",
+    )
+    keep_alive_seconds: int = Field(
+        default=5,
+        ge=1,
+        description=(
+            "Ile sekund uvicorn trzyma bezczynne połączenie. Za proxy musi być dłuższy "
+            "niż limit bezczynności puli połączeń do backendu w proxy — inaczej proxy "
+            "trafia w połączenie, które uvicorn właśnie zamyka, i zwraca 502."
+        ),
+    )
+    docs: bool = Field(
+        default=False,
+        description=(
+            "Swagger UI pod /docs. Strona ładuje JS i CSS z cdn.jsdelivr.net, więc "
+            "domyślnie jest wyłączona; /openapi.json działa zawsze."
+        ),
     )
 
 
@@ -102,7 +121,7 @@ def config_path() -> Path:
     return Path(os.environ.get(CONFIG_FILE_ENV, DEFAULT_CONFIG_FILE))
 
 
-def _describe(error: dict[str, Any]) -> str:
+def _describe(error: ErrorDetails) -> str:
     location = ".".join(str(part) for part in error["loc"]) or "(korzeń)"
     return f"  {location}: {error['msg']}"
 
@@ -134,9 +153,3 @@ def load_config(path: Path | None = None) -> AppConfig:
     except ValidationError as exc:
         problems = "\n".join(_describe(error) for error in exc.errors())
         raise ConfigError(f"nieprawidłowa konfiguracja w {source}:\n{problems}") from exc
-
-
-@lru_cache(maxsize=1)
-def get_config() -> AppConfig:
-    """Konfiguracja procesu. Cache'owana — plik nie zmienia się w trakcie jego życia."""
-    return load_config()
