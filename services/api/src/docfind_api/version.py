@@ -33,7 +33,7 @@ def build_info() -> BuildInfo:
     """
     try:
         document = json.loads(_version_file().read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return UNKNOWN_BUILD
 
     if not isinstance(document, dict):

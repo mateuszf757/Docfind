@@ -3,7 +3,7 @@
 # z Etapu 1. Koszt tej zamiany — musl zamiast glibc — jest zapisany
 # w docs/DECYZJE.md.
 #
-# Obrazy bazowe przypięte digestem: tag python:3.12-alpine przesuwa się przy
+# Obrazy bazowe przypięte digestem: tag python:3.14-alpine przesuwa się przy
 # każdym wydaniu łatki Pythona albo Alpine, więc ten sam commit budowany dwa
 # razy dostawałby różne bazy. Aktualizacje digestów proponuje Dependabot
 # (.github/dependabot.yml) — dlatego obrazy są wpisane wprost w FROM, a nie
@@ -14,7 +14,7 @@
 FROM ghcr.io/astral-sh/uv:0.12.18@sha256:3adc3706091ce7c2fe595e669628caedd6d951551b92b258b7e7dbe06d9440bc AS uv
 
 
-FROM python:3.12-alpine@sha256:4c47124a8391cb7a9f571164147d154777cf012a4ece5f86097130d7a4478111 AS builder
+FROM python:3.14-alpine@sha256:9e9fde4d32eedce0b661d9ab91e826b62dddf28e928c230ec55f1866cac66b01 AS builder
 
 # Czas ostatniego commita (ci/lib.sh). Python, widząc tę zmienną, kompiluje
 # pliki .pyc w trybie z sumą kontrolną zamiast z czasem modyfikacji źródła,
@@ -92,7 +92,7 @@ COPY --from=config app.yml.example /repo/deploy/config/app.yml.example
 RUN /opt/venv/bin/python -m pytest -q -p no:cacheprovider
 
 
-FROM python:3.12-alpine@sha256:4c47124a8391cb7a9f571164147d154777cf012a4ece5f86097130d7a4478111 AS runtime
+FROM python:3.14-alpine@sha256:9e9fde4d32eedce0b661d9ab91e826b62dddf28e928c230ec55f1866cac66b01 AS runtime
 
 ARG VERSION=unknown
 ARG COMMIT=unknown

@@ -2,7 +2,7 @@
 name = "docfind-api"
 version = "0.0.0"
 description = "DOCFIND — API wyszukiwania dokumentów"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
     "fastapi>=0.115",
     # Importowany wprost w docfind_api.models, więc jest zależnością bezpośrednią,
@@ -79,7 +79,7 @@ ignore = [
 known-first-party = ["docfind_api", "tests"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 strict = true
 plugins = ["pydantic.mypy"]
 mypy_path = ["src", "."]

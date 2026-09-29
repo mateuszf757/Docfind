@@ -56,7 +56,7 @@ set -euo pipefail
   # w .cache/kubeconform.
   DF_KUBECONFORM_SCHEMA_COMMIT="c9452fcf5ef03628ab8b07e5b3a6b6f989e543bf"
 
-  # Wydanie Alpine pod pływającym tagiem python:3.12-alpine w Dockerfile.
+  # Wydanie Alpine pod pływającym tagiem python:3.14-alpine w Dockerfile.
   # Dependabot odświeża digest tego tagu i takie odświeżenie jest scalane
   # automatycznie jak łatka (decyzja 22) — ale pod tym samym tagiem pojawia się
   # też nowe wydanie Alpine, czyli nowy musl i OpenSSL. check-image-base.sh
