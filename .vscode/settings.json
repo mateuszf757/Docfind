@@ -1,0 +1,12 @@
+{
+  // Interpreter usługi z .venv (Python 3.14 pobrany przez uv), nie systemowy
+  // python3 3.12 z Ubuntu — ten drugi zgłaszałby składnię 3.14 jako błąd
+  // (docs/DECYZJE.md, decyzja 27).
+  "python.defaultInterpreterPath": "${workspaceFolder}/services/api/.venv/bin/python",
+  // Projekt nie jest instalowany do venv (tool.uv.package = false), więc
+  // analizator szuka importów tam, gdzie pytest: src i katalog usługi.
+  "python.analysis.extraPaths": [
+    "services/api/src",
+    "services/api"
+  ]
+}

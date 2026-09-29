@@ -423,11 +423,11 @@ przegląd. Warunki, bez których to byłoby niebezpieczne albo nie działało:
 - **Typ aktualizacji, który naprawdę przychodzi.** `fetch-metadata` 2.5.0
   zwracał pusty `update-type` dla PR-ów Pythona, więc łatki z `uv.lock` nigdy
   nie scalały się same (poprawione w 3.1.0). Odświeżenie digestu bez zmiany tagu
-  (`python:3.12-alpine@sha256:A` → `B`) fetch-metadata klasyfikuje błędnie jako
+  (`python:3.14-alpine@sha256:A` → `B`) fetch-metadata klasyfikuje błędnie jako
   major (dependabot/fetch-metadata#726), więc takie PR-y — większość łatek
   bezpieczeństwa bazy — też czekały na człowieka. Workflow rozpoznaje je teraz
   po poprzedniej wersji w postaci digestu i traktuje jak łatkę.
-- **Nowe wydanie Alpine to nie łatka.** Pod tym samym tagiem `3.12-alpine`
+- **Nowe wydanie Alpine to nie łatka.** Pod tym samym tagiem `3.14-alpine`
   pojawia się też nowe wydanie Alpine — nowy musl i OpenSSL. `ci/check-image-base.sh`
   porównuje zbudowany obraz z `DF_BASE_ALPINE` w `ci/lib.sh` i zatrzymuje build,
   dopóki człowiek nie podbije tej wartości w tym samym PR-ze.
@@ -549,6 +549,36 @@ trzeba `./bin/mise exec -- kubectl …` albo `export KUBECONFIG=$PWD/.cache/kube
 **Kiedy zmieniam zdanie:** nigdy dla skryptów. Dla pracy interaktywnej wygoda
 wraca bez zmiany zasady, gdy mise jest aktywowane w powłoce — wtedy ustawia
 `KUBECONFIG` samo po wejściu do katalogu projektu.
+
+## 27. Python 3.14, choć system ma 3.12
+
+**Wybieram nowszy interpreter niż ten, który daje dystrybucja.** Dependabot
+zaproponował bazę `python:3.14-alpine`. 3.12 dostaje już tylko poprawki
+bezpieczeństwa (koniec wsparcia 10.2028), 3.14 — poprawki błędów do ok. 10.2027
+i bezpieczeństwa do 10.2030, a upgrade jest najtańszy teraz, zanim dojdą klienci
+Elasticsearcha i modelu. Ubuntu 24.04 ma systemowy Python 3.12.3 i tak zostaje:
+należy do systemu. Testy biegną na Pythonie 3.14 pobranym przez uv do
+`~/.local/share/uv/python/` (adres i suma SHA-256 są wbudowane w binarkę uv,
+więc wersję interpretera wyznacza przypięta wersja uv). Host i obraz mają teraz
+tę samą łatkę — 3.14.7 — a wcześniej systemowe 3.12.3 różniło się od 3.12.14
+w obrazie o jedenaście wydań. W CI jest tak samo, bo runner `ubuntu-24.04` też
+ma 3.12.
+
+**Co tracę:** trzy rzeczy. Kod może używać składni tylko dla 3.14 (ruff już zdjął
+nawiasy w `except OSError, json.JSONDecodeError:`), więc uruchomiony systemowym
+`python3` kończy się `SyntaxError` — testy tylko przez `uv run` albo
+`./bin/mise run test`, a edytor musi wskazywać `.venv` usługi. Skrypty w `ci/`,
+które biegną na systemowym `python3` (`compare_oci.py`, wstawki w skryptach
+bashowych), zostają na 3.12 — pilnują tego `ci/ruff.toml` i mypy z
+`--python-version 3.12`. Pierwsza synchronizacja na nowej maszynie potrzebuje
+sieci, bo pobiera interpreter.
+
+**Kiedy zmieniam zdanie:** gdy zależność nie ma kół musllinux dla bieżącej wersji
+Pythona (build w `test-image.sh` przerwie się, bo w obrazie nie ma kompilatora),
+albo gdy środowisko pracy zabroni interpreterów pobieranych przez uv — wtedy
+wersja z dystrybucji i ta sama w obrazie. Kolejne wersje minor (3.15.0 wychodzi
+1.10.2026) przyjmuję po jednym–dwóch wydaniach poprawkowych: czerwony PR od
+Dependabota zamykam komentarzem `@dependabot ignore this minor version`.
 
 ---
 

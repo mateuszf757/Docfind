@@ -3,7 +3,7 @@
 #
 #   ci/check-image-base.sh api
 #
-# Dependabot odświeża digest pływającego tagu python:3.12-alpine i takie
+# Dependabot odświeża digest pływającego tagu python:3.14-alpine i takie
 # odświeżenie jest scalane automatycznie jak łatka (decyzja 22). Zwykle to
 # łatka Pythona albo pakietów Alpine — ale pod tym samym tagiem pojawia się
 # też nowe wydanie Alpine: nowy musl, nowy OpenSSL, a to nie jest łatka.

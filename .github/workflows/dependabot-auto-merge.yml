@@ -53,7 +53,7 @@ jobs:
       # update-type to najwyższa zmiana w PR-ze, także grupowym — dlatego
       # grupy w dependabot.yml są rozdzielone na patch i minor.
       #
-      # Odświeżenie digestu bez zmiany tagu (python:3.12-alpine@sha256:A → B)
+      # Odświeżenie digestu bez zmiany tagu (python:3.14-alpine@sha256:A → B)
       # fetch-metadata klasyfikuje błędnie jako semver-major, z poprzednią
       # wersją w postaci skróconego digestu w backtickach
       # (dependabot/fetch-metadata#726). To zwykle łatka Pythona albo Alpine,

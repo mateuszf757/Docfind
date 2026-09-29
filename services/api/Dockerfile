@@ -3,7 +3,7 @@
 # z Etapu 1. Koszt tej zamiany — musl zamiast glibc — jest zapisany
 # w docs/DECYZJE.md.
 #
-# Obrazy bazowe przypięte digestem: tag python:3.12-alpine przesuwa się przy
+# Obrazy bazowe przypięte digestem: tag python:3.14-alpine przesuwa się przy
 # każdym wydaniu łatki Pythona albo Alpine, więc ten sam commit budowany dwa
 # razy dostawałby różne bazy. Aktualizacje digestów proponuje Dependabot
 # (.github/dependabot.yml) — dlatego obrazy są wpisane wprost w FROM, a nie

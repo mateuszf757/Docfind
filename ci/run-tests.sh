@@ -182,7 +182,15 @@ uv run --frozen ruff format --check . "$repo_root/ci"
 
 # Adnotacje typów bez sprawdzania to dokumentacja, która może kłamać.
 df_log "mypy --strict"
-uv run --frozen mypy src tests "$repo_root/ci/check_policy.py" "$repo_root/ci/compare_oci.py"
+uv run --frozen mypy src tests "$repo_root/ci/check_policy.py"
+
+# compare_oci.py uruchamia systemowy python3 (3.12 na Ubuntu 24.04), nie uv —
+# check-reproducible.sh biegnie w zadaniu build, które nie ma uv. Typy względem
+# biblioteki standardowej 3.12, żeby funkcja dodana w 3.13 albo 3.14 nie
+# przeszła tu i nie padła dopiero przy porównaniu obrazów. Składni pilnuje
+# ruff z ci/ruff.toml.
+df_log "mypy --strict --python-version 3.12 (skrypty na systemowym python3)"
+uv run --frozen mypy --python-version 3.12 "$repo_root/ci/compare_oci.py"
 
 df_log "pytest"
 uv run --frozen pytest -q
