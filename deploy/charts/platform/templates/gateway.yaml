@@ -1,0 +1,42 @@
+{{- include "platform.validateIssuer" . -}}
+# Gateway z dwoma listenerami. Certyfikat listenera HTTPS tworzy cert-manager
+# z adnotacji — Certificate o nazwie sekretu z certificateRefs, odnawiany sam.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ .Values.gateway.name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "platform.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.gateway.issuer }}
+    cert-manager.io/duration: {{ .Values.certificate.duration }}
+    cert-manager.io/renew-before: {{ .Values.certificate.renewBefore }}
+    cert-manager.io/private-key-algorithm: ECDSA
+    cert-manager.io/private-key-size: "256"
+spec:
+  gatewayClassName: envoy
+  listeners:
+    # HTTP tylko do przekierowania na HTTPS — trasy z innych przestrzeni nazw
+    # nie mogą się do niego podpiąć, więc nic nie wystawi się przez HTTP.
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: {{ .Values.gateway.hostname | quote }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: {{ .Values.gateway.name }}-tls
+      allowedRoutes:
+        namespaces:
+          from: Selector
+          selector:
+            matchLabels:
+              {{ .Values.gateway.routeNamespaceLabel.key }}: {{ .Values.gateway.routeNamespaceLabel.value | quote }}

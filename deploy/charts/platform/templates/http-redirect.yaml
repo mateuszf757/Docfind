@@ -1,0 +1,20 @@
+# Każde żądanie na listenerze HTTP dostaje 301 na HTTPS. Trasa bez nazw hostów
+# obejmuje wszystkie — przekierowanie jest sprawą platformy, nie aplikacji.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: http-to-https
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "platform.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ .Values.gateway.name }}
+      sectionName: http
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            port: {{ .Values.gateway.httpsRedirectPort }}
+            statusCode: 301

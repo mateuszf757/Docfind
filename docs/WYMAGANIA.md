@@ -132,6 +132,31 @@ znikał, podczas gdy kontener dalej stał, bo trzyma go skrypt startowy k3d.
 Agenci widzieli wtedy `connection reset` i wyglądało to jak problem sieci
 albo DNS — a było to zapukanie do nieistniejącego procesu.
 
+## Limit instancji inotify
+
+**Sprawdzenie:** `sysctl -n fs.inotify.max_user_instances` — co najmniej 512.
+
+**Dlaczego:** przy Dockerze rootless wszystkie procesy we wszystkich kontenerach
+— węzły k3s, kubelety, containerd, każdy pod — działają na hoście jako jeden
+użytkownik i dzielą jego limit instancji inotify. Domyślne 128 przy klastrze
+z Etapu 3 było zajęte w 99 (głównie containerd-shim i k3s), a rolling update
+proxy podwaja na chwilę liczbę podów Envoy. Envoy bez inotify kończy się
+SIGSEGV: `assert failure: inotify_fd_ >= 0. Consider increasing value of
+fs.inotify.max_user_watches and/or fs.inotify.max_user_instances`.
+
+**Naprawa:**
+
+```bash
+echo 'fs.inotify.max_user_instances=512' | sudo tee /etc/sysctl.d/99-inotify.conf
+sudo sysctl --system
+```
+
+512 to wartość, którą dokumentacja kind podaje dla klastrów w kontenerach —
+około dwukrotny zapas ponad pełny stos z planu. To limit zasobu jądra, nie
+granica uprawnień: podnosi pamięć, jaką użytkownik może zająć na struktury
+inotify, a nie to, co może zrobić. `ci/deploy-local.sh` sprawdza go przy każdym
+wdrożeniu i ostrzega powyżej 80% zużycia.
+
 ## Pamięć
 
 **Sprawdzenie:** `free -h`

@@ -5,6 +5,14 @@
 #                                i instaluje chart
 #   ci/deploy-local.sh --down    usuwa klaster
 #
+# TLS na wejściu (Etap 3). Domyślnie własne CA i host docfind.internal.
+# Let's Encrypt przez DNS-01 w Cloudflare — najpierw zawsze staging:
+#
+#   ci/set-dns-token.sh          token API Cloudflare do klastra, raz
+#   DOCFIND_HOSTNAME=docfind.example.com DOCFIND_TLS_ISSUER=letsencrypt-staging \
+#   DOCFIND_ACME_EMAIL=ja@example.com DOCFIND_ACME_ZONE=example.com \
+#     ci/deploy-local.sh
+#
 # Obraz trafia do węzłów przez `k3d image import`, bez rejestru. Rejestr
 # (GHCR) wchodzi do gry razem z ArgoCD na Etapie 5.
 
@@ -17,6 +25,12 @@ source "$repo_root/ci/lib.sh"
 cluster="docfind"
 namespace="docfind"
 release="docfind"
+gateway_namespace="gateway"
+
+hostname="${DOCFIND_HOSTNAME:-docfind.internal}"
+issuer="${DOCFIND_TLS_ISSUER:-docfind-internal-ca}"
+acme_email="${DOCFIND_ACME_EMAIL:-}"
+acme_zone="${DOCFIND_ACME_ZONE:-}"
 
 for tool in k3d kubectl helm docker; do
   command -v "$tool" >/dev/null || { echo "BŁĄD: brak $tool — uruchom przez ./bin/mise run cluster:up" >&2; exit 1; }
@@ -152,7 +166,41 @@ create_cluster() {
   fi
 }
 
+# --- limit inotify ---------------------------------------------------------------
+# Przy Dockerze rootless wszystkie procesy we wszystkich kontenerach — węzły k3s,
+# kubelety, containerd, każdy pod — działają na hoście jako jeden użytkownik
+# i dzielą jego limit instancji inotify (domyślnie 128). Po jego wyczerpaniu
+# Envoy nie dostaje inotify i kończy się SIGSEGV (`assert failure:
+# inotify_fd_ >= 0`), a rolling update proxy podwaja na chwilę liczbę podów
+# — właśnie wtedy limit pękał. Sprawdzane przy każdym wdrożeniu, bo limit
+# zjada także wszystko inne w sesji użytkownika, nie tylko klaster.
+MIN_INOTIFY_INSTANCES=512
+
+check_inotify() {
+  local limit used=0 fd
+  limit=$(sysctl -n fs.inotify.max_user_instances)
+  if (( limit < MIN_INOTIFY_INSTANCES )); then
+    preflight_error \
+      "fs.inotify.max_user_instances=$limit — za mało dla klastra w kontenerach (minimum $MIN_INOTIFY_INSTANCES); Envoy kończy się SIGSEGV przy wyczerpaniu." \
+      "echo 'fs.inotify.max_user_instances=$MIN_INOTIFY_INSTANCES' | sudo tee /etc/sysctl.d/99-inotify.conf
+sudo sysctl --system"
+    return
+  fi
+  for fd in /proc/[0-9]*/fd/*; do
+    [[ "$(readlink "$fd" 2>/dev/null)" == "anon_inode:inotify" ]] && used=$((used + 1))
+  done
+  df_log "inotify: $used z $limit instancji"
+  (( used * 100 / limit < 80 )) \
+    || echo "UWAGA: zużyte $used z $limit instancji inotify — rolling update może wyczerpać limit" >&2
+}
+
 # --- klaster -----------------------------------------------------------------
+check_inotify
+if (( preflight_failed )); then
+  echo "Szczegóły: docs/WYMAGANIA.md" >&2
+  exit 1
+fi
+
 if k3d cluster get "$cluster" >/dev/null 2>&1; then
   df_log "klaster $cluster istnieje"
 else
@@ -181,6 +229,54 @@ helm upgrade --install coredns "$coredns_chart" \
 kubectl -n kube-system rollout status deployment/coredns --timeout=120s >/dev/null
 df_log "CoreDNS gotowy: $(kubectl -n kube-system get deploy coredns -o jsonpath='{.status.readyReplicas}') repliki"
 
+# Kolejność wynika z zależności, nie z wygody. Envoy Gateway pierwszy, bo jego
+# chart instaluje CRD Gateway API, a cert-manager z obsługą Gateway API
+# wymaga ich przy starcie — bez nich nie czeka, tylko kończy się błędem
+# i wpada w CrashLoopBackOff. Potem cert-manager, na końcu chart platformy,
+# który tworzy zasoby obu.
+envoy_gateway_chart=$(df_fetch_verified_oci_chart "$DF_ENVOY_GATEWAY_CHART_REF" \
+  "$DF_ENVOY_GATEWAY_CHART_VERSION" "$DF_ENVOY_GATEWAY_CHART_SHA256")
+df_log "Envoy Gateway: chart $DF_ENVOY_GATEWAY_CHART_VERSION (suma zweryfikowana)"
+helm upgrade --install envoy-gateway "$envoy_gateway_chart" \
+  --namespace envoy-gateway-system --create-namespace \
+  --values "$repo_root/deploy/platform/envoy-gateway/values.yaml" \
+  --wait --timeout 5m >/dev/null
+
+# startupapicheck w charcie sprawia, że --wait kończy się dopiero wtedy, gdy
+# webhook cert-managera naprawdę przyjmuje zapisy.
+cert_manager_chart=$(df_fetch_verified "$DF_CERT_MANAGER_CHART_URL" "$DF_CERT_MANAGER_CHART_SHA256")
+df_log "cert-manager: chart $DF_CERT_MANAGER_CHART_VERSION (suma zweryfikowana)"
+helm upgrade --install cert-manager "$cert_manager_chart" \
+  --namespace cert-manager --create-namespace \
+  --values "$repo_root/deploy/platform/cert-manager/values.yaml" \
+  --wait --timeout 5m >/dev/null
+
+# Let's Encrypt wymaga tokenu Cloudflare w klastrze. Bez niego wydawca by
+# powstał, a wyzwanie DNS-01 wisiałoby bez końca z błędem tylko w statusie
+# Challenge — sprawdzamy to tutaj, z instrukcją.
+if [[ "$issuer" == letsencrypt* ]] \
+    && ! kubectl -n cert-manager get secret cloudflare-api-token >/dev/null 2>&1; then
+  echo "BŁĄD: wydawca $issuer wymaga tokenu Cloudflare w klastrze — uruchom ci/set-dns-token.sh" >&2
+  exit 1
+fi
+
+# Port przekierowania HTTP→HTTPS z mapowania load balancera w cluster.yaml —
+# na hoście HTTPS słucha tam, a nie na 443 (decyzja 17).
+https_port=$(grep -oE '127\.0\.0\.1:[0-9]+:443' "$repo_root/deploy/k3d/cluster.yaml" | cut -d: -f2)
+
+df_log "platforma: Gateway dla $hostname, wydawca $issuer"
+helm upgrade --install platform "$repo_root/deploy/charts/platform" \
+  --namespace "$gateway_namespace" --create-namespace \
+  --set "gateway.hostname=$hostname" \
+  --set "gateway.issuer=$issuer" \
+  --set "gateway.httpsRedirectPort=$https_port" \
+  --set "acme.email=$acme_email" \
+  --set "acme.dnsZone=$acme_zone" \
+  --wait --timeout 3m >/dev/null
+kubectl -n cert-manager wait certificate/docfind-root-ca --for=condition=Ready --timeout=120s >/dev/null
+kubectl -n "$gateway_namespace" wait gateway/docfind --for=condition=Programmed --timeout=180s >/dev/null
+df_log "Gateway zaprogramowany"
+
 # --- obraz -------------------------------------------------------------------
 "$repo_root/ci/build.sh" api
 
@@ -204,9 +300,16 @@ df_log "import $image:$deploy_tag do węzłów"
 k3d image import "$image:$deploy_tag" --cluster "$cluster" --mode direct >/dev/null
 
 # --- chart -------------------------------------------------------------------
+# Przestrzeń nazw z etykietą, która pozwala jej trasom podpiąć się pod
+# listener HTTPS Gateway (gateway.routeNamespaceLabel w charcie platformy).
+# Zgodę daje platforma, a nie aplikacja sama sobie — stąd nie w charcie docfind.
+kubectl create namespace "$namespace" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl label namespace "$namespace" docfind.io/gateway-routes=allowed --overwrite >/dev/null
+
 df_log "helm upgrade --install $release"
 helm upgrade --install "$release" "$repo_root/deploy/charts/docfind" \
-  --namespace "$namespace" --create-namespace \
+  --namespace "$namespace" \
+  --set "route.hostname=$hostname" \
   --set "api.image.tag=$deploy_tag" \
   --wait --timeout 3m
 

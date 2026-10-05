@@ -1,0 +1,9 @@
+apiVersion: v2
+name: docfind-platform
+description: Wejście do klastra DOCFIND — Gateway API, TLS i wydawcy certyfikatów
+type: application
+# Platforma, nie produkt: tego charta nie dostaje klient (decyzja 13). Klient ma
+# własny Gateway i własne CA; dostaje chart docfind z HTTPRoute, który podpina
+# się pod jego Gateway.
+version: 0.1.0
+appVersion: "0.1.0"

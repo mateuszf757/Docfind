@@ -76,3 +76,16 @@ EXAMPLE_CONFIG_PATH: Final = (
     Path(__file__).resolve().parents[3] / "deploy" / "config" / "app.yml.example"
 )
 """Przykład dostarczany z produktem. Test pilnuje, żeby nie rozjechał się z modelem."""
+
+ENVOY_REQUEST_ID: Final = "8f14e45f-ceea-467a-9a2e-4d2a1d3e9b1c"
+"""Identyfikator w formacie, który nadaje Envoy (UUID v4)."""
+
+UNSAFE_REQUEST_IDS: Final = (
+    "abc def",
+    "a" * 129,
+    "id;rm -rf",
+    "żółw",
+)
+"""Wartości spoza dozwolonego formatu — nie mogą trafić do odpowiedzi ani do logu.
+Spacja, za długi, znaki spoza zbioru, znaki spoza ASCII.
+"""

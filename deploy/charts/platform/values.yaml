@@ -1,0 +1,65 @@
+# Wejście do klastra: jeden Gateway z listenerami HTTP i HTTPS.
+gateway:
+  name: docfind
+  # Nazwa hosta listenera HTTPS i certyfikatu. Domyślnie .internal — TLD
+  # zarezerwowana przez ICANN do użytku prywatnego, która nigdy nie zostanie
+  # przydzielona publicznie — z certyfikatem z własnego CA. Z domeną publiczną:
+  # docfind.<domena> i wydawca letsencrypt-staging, potem letsencrypt.
+  hostname: docfind.internal
+  # ClusterIssuer dla certyfikatu listenera: docfind-internal-ca,
+  # letsencrypt-staging albo letsencrypt.
+  issuer: docfind-internal-ca
+  # Port w przekierowaniu HTTP→HTTPS. Na klastrze lokalnym 8443, bo tam
+  # słucha load balancer k3d (decyzja 17); bez tego przekierowanie prowadziłoby
+  # na 443, gdzie na hoście nic nie słucha.
+  httpsRedirectPort: 443
+  # HTTPRoute może podpiąć się pod listener HTTPS tylko z przestrzeni nazw
+  # z tą etykietą. Domyślne "All" pozwalałoby dowolnej przestrzeni nazw
+  # przejąć ruch dla dowolnej nazwy hosta.
+  routeNamespaceLabel:
+    key: docfind.io/gateway-routes
+    value: allowed
+
+# Certyfikat listenera HTTPS, wystawiany przez cert-manager z adnotacji na
+# Gateway. ECDSA P-256: krótszy klucz i szybszy handshake niż RSA 2048 przy tej
+# samej sile, obsługiwany przez wszystkie współczesne klienty.
+certificate:
+  duration: 2160h
+  renewBefore: 720h
+
+# Własne CA: certyfikat główny samopodpisany, wystawiany przez cert-manager.
+# Pięć lat zamiast dziesięciu — wymiana CA to operacja, którą trzeba umieć
+# przeprowadzić, a umie się to, co się robi, nie raz na dekadę.
+internalCA:
+  duration: 43800h
+  renewBefore: 8760h
+
+# Let's Encrypt przez DNS-01 (decyzja 4). Wydawcy powstają tylko, gdy podany
+# jest adres e-mail i strefa — bez nich chart działa na samym własnym CA.
+acme:
+  email: ""
+  # Strefa DNS, dla której wydawca rozwiązuje wyzwania — np. example.com.
+  dnsZone: ""
+  # Secret z tokenem API Cloudflare w przestrzeni nazw cert-managera.
+  # Tworzy go ci/set-dns-token.sh — nigdy git (decyzja 5).
+  tokenSecretName: cloudflare-api-token
+
+# Pody proxy Envoy. Tworzy je kontroler Envoy Gateway na podstawie zasobu
+# EnvoyProxy — to jest jedyne miejsce, w którym da się ustawić ich repliki,
+# zasoby i PDB.
+proxy:
+  replicas: 2
+  # Bez limitu CPU (decyzja 16): proxy na ścieżce każdego żądania to ostatnie
+  # miejsce, w którym chce się dławienia przez CFS.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 512Mi
+  # Limit pamięci sidecara shutdown-manager (patch na Deploymencie proxy).
+  shutdownManagerMemoryLimit: 128Mi
+  # Ile proxy czeka na zakończenie trwających żądań przy wyłączaniu.
+  # Strumieniowane odpowiedzi modelu (Etap 7) mogą trwać dłużej niż zwykłe
+  # żądanie — wtedy ta wartość do przeglądu razem z timeoutem trasy.
+  drainTimeoutSeconds: 30

@@ -167,16 +167,38 @@ zablokowana synchronizacja wygląda dokładnie jak zepsuta aplikacja.
 **Kiedy zmieniam zdanie:** przy jednym środowisku i jednej osobie GitOps jest kosztem bez
 zysku. Tu zysk jest dydaktyczny i to wystarczający powód.
 
-## 11. ingress-nginx zamiast Traefika i Gateway API
+## 11. Gateway API z Envoy Gateway — zmiana decyzji, wcześniej ingress-nginx
 
-**Wybieram najpowszechniejsze.** k3d domyślnie dostarcza Traefika, a Gateway API jest kierunkiem,
-w którym ekosystem idzie. Wybieram ingress-nginx, bo tego najczęściej dotknę w pracy.
+**Zmieniłem zdanie, bo spełnił się warunek zmiany — mocniej, niż zakładałem.**
+Pierwotnie wybrałem ingress-nginx jako „najpowszechniejszy”, z warunkiem zmiany
+„gdy Gateway API stanie się domyślne”. W listopadzie 2025 SIG Network ogłosił
+wycofanie ingress-nginx: od marca 2026 bez wydań, bez poprawek błędów i bez łatek
+bezpieczeństwa; oficjalna rekomendacja to migracja na Gateway API. Wdrażanie
+w październiku 2026 kontrolera, który od siedmiu miesięcy nie dostaje łatek,
+na ścieżce całego ruchu wejściowego, nie da się obronić.
 
-**Co tracę:** uczę się interfejsu, który jest na wylocie, i wyłączam komponent dostarczany
-z dystrybucją, zamiast używać gotowego.
+Envoy Gateway zamiast Traefika i NGINX Gateway Fabric: projekt CNCF na Envoyu,
+czyli tym samym proxy co Istio i Contour, więc wiedza przenosi się na service
+mesh. Identyfikator żądania, timeouty i strumieniowanie ma natywnie.
 
-**Kiedy zmieniam zdanie:** gdy Gateway API stanie się domyślne w dokumentacji Kubernetesa —
-wtedy migracja samego wejścia jest dobrym, wyizolowanym ćwiczeniem.
+Podział odpowiedzialności: Gateway, wydawcy certyfikatów i przekierowanie
+HTTP→HTTPS należą do platformy (`deploy/charts/platform`), HTTPRoute do
+aplikacji (`deploy/charts/docfind`). Listener HTTPS przyjmuje trasy tylko
+z przestrzeni nazw z etykietą nadaną przez platformę — domyślne „All”
+pozwoliłoby dowolnej przestrzeni nazw przejąć ruch dla dowolnej nazwy hosta.
+
+**Co tracę:** prostotę. Envoy Gateway to kontroler plus osobne pody proxy, które
+kontroler tworzy w trakcie działania — ich repliki, zasoby i PDB ustawia się
+w zasobie EnvoyProxy, a czego tam nie ma (zasoby shutdown-managera), przez patch
+na wygenerowanym Deploymencie. Tych podów nie widać w `helm template`, więc
+polityki sprawdzam także na żywym klastrze (`ci/check-tls.sh`). Część
+ustawień — limit bezczynności połączeń do backendu — to CRD specyficzne dla
+Envoy Gateway; u klienta z inną implementacją Gateway API wyłącza się je
+wartością `route.envoyGatewayPolicies`.
+
+**Kiedy zmieniam zdanie:** gdy klient ma już własny Gateway — wtedy chart
+aplikacji podpina HTTPRoute pod jego Gateway, a chart platformy nie jest
+instalowany.
 
 ## 12. Storage local-path, bez Longhorna
 
@@ -582,10 +604,66 @@ Dependabota zamykam komentarzem `@dependabot ignore this minor version`.
 
 ---
 
+## 28. Schematy CRD generowane z przypiętych chartów
+
+**Wybieram walidację względem tego, co faktycznie instaluję.** kubeconform
+w trybie `-strict` potrzebuje schematu dla każdego zasobu, także z CRD
+(Gateway, HTTPRoute, Certificate, EnvoyProxy). Gotowe katalogi schematów CRD
+nie nadążają za wydaniami, więc walidacja względem starszej wersji
+przepuszczałaby pola, których API server nie przyjmie, albo odrzucała nowe.
+`ci/crd_schemas.py` generuje schematy z CRD wyrenderowanych z przypiętych
+chartów, z `additionalProperties: false` wszędzie, gdzie CRD nie dopuszcza
+nieznanych pól — literówka w polu zasobu jest błędem, tak jak dla zasobów
+wbudowanych. Sprawdzone w obie strony: literówka `requestId` i zła wartość enuma
+są odrzucane.
+
+**Co tracę:** dwie rzeczy. Sam rodzaj CustomResourceDefinition nie ma schematu
+w repozytorium yannh, więc jest pominięty jawnie (`-skip`), nie przez
+`-ignore-missing-schemas`, które wyłączyłoby walidację wszystkiego bez schematu.
+Pola oznaczone w CRD jako dowolne (patch w EnvoyProxy) nie są sprawdzane
+niczym — tam rozstrzyga dopiero polityka na żywym podzie.
+
+**Kiedy zmieniam zdanie:** gdy kubeconform zacznie czytać CRD wprost — wtedy
+generator jest zbędny.
+
+## 29. Identyfikator żądania nadawany na wejściu, nie przyjmowany od klienta
+
+**Wybieram identyfikator, któremu mogę ufać.** Envoy nadaje `X-Request-Id`
+każdemu żądaniu (`requestID: Generate`), zapisuje go w logu dostępowym w JSON
+i przekazuje do API, które odsyła go w odpowiedzi. Jeden identyfikator łączy
+zgłoszenie klienta, wiersz logu proxy i wiersz logu aplikacji. Nie
+`PreserveOrGenerate`: identyfikator od klienta z internetu pozwoliłby sklejać
+niezwiązane wpisy albo zalać logi cudzym identyfikatorem. API niczego samo nie
+generuje — identyfikator, którego nie ma w logu proxy, niczego nie łączy —
+i odrzuca wartości spoza bezpiecznego formatu, bo bywa wołane w klastrze
+z pominięciem proxy.
+
+**Co tracę:** klient nie może przekazać własnego identyfikatora do korelacji
+ze swoimi logami — musi wziąć nasz z odpowiedzi.
+
+**Kiedy zmieniam zdanie:** gdy przed naszym Gateway stanie zaufany load
+balancer klienta, który sam nadaje identyfikator — wtedy `Preserve` na
+połączeniach tylko od niego.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta
 na koniec projektu oznacza, że projekt niczego nie nauczył.
+
+**Kolejność instalacji wyprowadzona z wygody, nie z zależności.** Instalowałem
+cert-manager przed Envoy Gateway, bo „certyfikaty są potrzebne Gateway”.
+Zależność szła w drugą stronę: cert-manager z obsługą Gateway API wymaga przy
+starcie CRD Gateway API, które instaluje chart Envoy Gateway — i bez nich nie
+czeka, tylko wpada w CrashLoopBackOff. Dziś kolejność instalacji wypisuję
+z tego, czego każdy komponent potrzebuje przy starcie.
+
+**Limit, którego nie było widać, bo nikt go nie dzielił.** Envoy padał z SIGSEGV
+przy rolling update proxy. Przyczyna: przy Dockerze rootless wszystkie procesy
+we wszystkich kontenerach dzielą limit instancji inotify jednego użytkownika
+hosta (128), a rolling update na chwilę podwaja liczbę podów proxy. Test
+odnowienia certyfikatu zobaczył to jako połowę nieudanych żądań i łatwo byłoby
+szukać winy w podmianie certyfikatu. Dziś przy objawie „pod się restartuje”
+pierwsze jest `logs --previous`, a nie hipoteza o tym, co właśnie testuję.
 
 **Szukanie przyczyny, zanim sprawdzę, czy proces w ogóle żyje.** Klaster nie
 wstawał, agenci widzieli `connection reset` do serwera. Zbadałem DNS
