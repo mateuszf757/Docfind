@@ -115,22 +115,45 @@ df_python_minor() {
   printf '%s' "$version"
 }
 
-# Wersja z git describe. Bez tagów spada na 0.0.0-dev.<liczba commitów>+<sha>,
-# żeby build działał od pierwszego dnia, a wersja i tak rosła monotonicznie.
+# Wersja z najbliższego tagu wydania vX.Y.Z (decyzja 30). Na samym tagu, przy
+# czystym drzewie: X.Y.Z. Za tagiem: X.Y.(Z+1)-dev.<commity od tagu>+<sha> —
+# wersja przedpremierowa następnej łatki, więc w porządku SemVer stoi powyżej
+# wydania, z którego wyrosła, i poniżej każdego następnego. Surowe wyjście
+# git describe (0.3.0-5-gabc1234) SemVer czyta jako wersję starszą od 0.3.0
+# i zakresy wersji (chart OCI, Argo CD) posortowałyby je za wydaniem.
+#
+# Bez tagu: 0.0.0-dev.<liczba commitów>+<sha>, żeby build działał od
+# pierwszego dnia, a wersja i tak rosła monotonicznie.
+#
+# Tag w innej postaci (v0.4.0-rc.1, literówka) nie wyznacza wersji — jest
+# pomijany, a nie zatrzymuje buildów. Tagów v* nie da się usunąć (ruleset),
+# więc jeden zły tag zatrzymałby każdy kolejny build na zawsze.
 df_version() {
-  local described dirty=""
-  # git describe --dirty działa tylko wtedy, gdy trafi w tag. Na ścieżce
-  # zapasowej musimy oznaczyć brudne drzewo sami, inaczej obraz zbudowany
-  # z niezacommitowanych zmian poda commit, z którego nie powstał.
+  local dirty="" sha tag="" excluded=()
+  # Brudne drzewo oznaczamy sami, także na tagu: obraz zbudowany
+  # z niezacommitowanych zmian nie może podać się za wydanie ani za commit,
+  # z którego nie powstał.
   [[ -n "$(git status --porcelain)" ]] && dirty="-dirty"
+  sha=$(git rev-parse --short HEAD)
 
-  if described=$(git describe --tags --match 'v*' --dirty 2>/dev/null); then
-    printf '%s' "${described#v}"
+  # git describe zwraca najbliższy tag; niepasujące do vX.Y.Z wykluczamy
+  # i pytamy ponownie, aż trafi się wydanie albo tagi się skończą.
+  while tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' "${excluded[@]}" 2>/dev/null); do
+    [[ "$tag" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] && break
+    excluded+=(--exclude "$tag")
+  done
+
+  if [[ -z "$tag" ]]; then
+    printf '0.0.0-dev.%s+%s%s' "$(git rev-list --count HEAD)" "$sha" "$dirty"
+    return
+  fi
+
+  local major=${BASH_REMATCH[1]} minor=${BASH_REMATCH[2]} patch=${BASH_REMATCH[3]} distance
+  distance=$(git rev-list --count "$tag..HEAD")
+  if (( distance == 0 )) && [[ -z "$dirty" ]]; then
+    printf '%s.%s.%s' "$major" "$minor" "$patch"
   else
-    printf '0.0.0-dev.%s+%s%s' \
-      "$(git rev-list --count HEAD)" \
-      "$(git rev-parse --short HEAD)" \
-      "$dirty"
+    printf '%s.%s.%s-dev.%s+%s%s' "$major" "$minor" "$((patch + 1))" "$distance" "$sha" "$dirty"
   fi
 }
 
@@ -234,6 +257,101 @@ df_verify_image_identity() {
   fi
 
   df_log "version.json zgodny z $expected_commit"
+}
+
+# Digest konfiguracji obrazu z lokalnego magazynu Dockera. Konfiguracja niesie
+# digesty rozpakowanych warstw (diff_ids), więc ten sam digest konfiguracji to
+# ta sama zawartość — niezależnie od kompresji i typu manifestu, którymi kopia
+# lokalna różni się od tej w rejestrze. Z `docker save`, bo `docker image
+# inspect .Id` znaczy co innego w magazynie klasycznym (konfiguracja) i w
+# magazynie containerd (manifest), a BuildKit przy sterowniku docker nie podaje
+# digestu konfiguracji w --metadata-file.
+df_image_config_digest() {
+  local ref="${1:?podaj referencję obrazu}" archive manifest
+  archive=$(mktemp)
+  if ! docker save -o "$archive" "$ref" || ! manifest=$(tar -xOf "$archive" manifest.json); then
+    rm -f "$archive"
+    echo "BŁĄD: nie udało się odczytać manifestu $ref z docker save" >&2
+    return 2
+  fi
+  rm -f "$archive"
+  python3 -c '
+import json
+import sys
+
+config = json.loads(sys.argv[1])[0]["Config"]
+# blobs/sha256/<hex> (Docker 25+) albo <hex>.json (starszy format)
+name = config.rsplit("/", 1)[-1].removesuffix(".json")
+print(f"sha256:{name}")
+' "$manifest"
+}
+
+# Obraz w rejestrze to ten sprawdzony i ma atestację pochodzenia. Rozstrzyga
+# rejestr, czyli system, który obraz przechowuje — nie metadane BuildKitu, które
+# mówią, co BuildKit zamierzał wysłać. Decyzja 21 twierdziła, że opublikowane
+# obrazy mają atestację, bo build jej nie wyłączał; rejestr trzymał sam
+# manifest, bez indeksu i bez atestacji.
+#
+#   df_verify_published_image <obraz@digest> <digest konfiguracji sprawdzonego obrazu>
+#
+# Kody wyjścia: 0 — zgodny, 1 — inny obraz albo brak atestacji, 2 — rejestr
+# nieosiągalny albo odpowiedź nieczytelna.
+df_verify_published_image() {
+  local ref="${1:?podaj obraz@digest}" expected_config="${2:?podaj digest konfiguracji}"
+  local repository="${ref%@*}" index image_digest manifest config status=0
+
+  index=$(docker buildx imagetools inspect --raw "$ref") || {
+    echo "BŁĄD: nie udało się pobrać $ref z rejestru" >&2
+    return 2
+  }
+
+  # Atestacja to osobny manifest w indeksie, wskazujący adnotacją na manifest
+  # obrazu, którego dotyczy (konwencja BuildKitu: vnd.docker.reference.*).
+  image_digest=$(python3 -c '
+import json
+import sys
+
+ATTESTATION = "attestation-manifest"
+index = json.loads(sys.argv[1])
+manifests = index.get("manifests")
+if not isinstance(manifests, list):
+    media_type = index.get("mediaType", "?")
+    print(f"NIESPEŁNIONE: w rejestrze jest {media_type}, a nie indeks — obraz bez atestacji pochodzenia", file=sys.stderr)
+    sys.exit(1)
+
+def annotation(descriptor, key):
+    return descriptor.get("annotations", {}).get(f"vnd.docker.reference.{key}")
+
+images = [m for m in manifests if annotation(m, "type") != ATTESTATION]
+attested = {annotation(m, "digest") for m in manifests if annotation(m, "type") == ATTESTATION}
+if len(images) != 1:
+    print(f"NIESPEŁNIONE: indeks ma {len(images)} manifestów obrazu, oczekiwano jednego", file=sys.stderr)
+    sys.exit(1)
+if images[0]["digest"] not in attested:
+    print("NIESPEŁNIONE: indeks nie ma manifestu atestacji dla obrazu", file=sys.stderr)
+    sys.exit(1)
+print(images[0]["digest"])
+' "$index") || status=$?
+  case "$status" in
+    0) ;;
+    1) return 1 ;;
+    *) echo "BŁĄD: nieczytelny indeks $ref" >&2; return 2 ;;
+  esac
+
+  manifest=$(docker buildx imagetools inspect --raw "$repository@$image_digest") || {
+    echo "BŁĄD: nie udało się pobrać manifestu $repository@$image_digest" >&2
+    return 2
+  }
+  config=$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["config"]["digest"])' "$manifest") || {
+    echo "BŁĄD: nieczytelny manifest $repository@$image_digest" >&2
+    return 2
+  }
+
+  if [[ "$config" != "$expected_config" ]]; then
+    echo "NIESPEŁNIONE: w rejestrze obraz z konfiguracją $config, a sprawdzony miał $expected_config" >&2
+    return 1
+  fi
+  df_log "rejestr: atestacja pochodzenia obecna, konfiguracja zgodna z obrazem sprawdzonym ($config)"
 }
 
 # Pobiera plik do pamięci podręcznej w repozytorium i weryfikuje jego sumę

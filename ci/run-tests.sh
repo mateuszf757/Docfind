@@ -73,6 +73,11 @@ df_log "uv sync --locked"
 df_log "shellcheck"
 (cd "$repo_root" && shellcheck ci/*.sh)
 
+# Wersja z tagów trafia do /version, etykiet obrazu i tagów w rejestrze,
+# a błąd w jej logice nie psuje żadnego testu aplikacji.
+df_log "testy ci/lib.sh"
+"$repo_root/ci/test-lib.sh"
+
 # Workflowy GitHuba sprawdzane actionlintem: składnia, wyrażenia, nazwy
 # uprawnień, a w blokach run także shellcheck. Błąd w workflowie wychodzi
 # inaczej dopiero po wypchnięciu — a workflow auto-merge z uprawnieniami do
@@ -103,6 +108,19 @@ helm lint "$chart" --set api.image.tag=lint
 # schemat, który wszystko przepuszcza, też by „istniał".
 if helm template docfind "$chart" --set api.image.tag=lint --set api.replica=3 >/dev/null 2>&1; then
   echo "BŁĄD: chart przyjął nieznany klucz api.replica — values.schema.json niczego nie pilnuje" >&2
+  exit 1
+fi
+
+# Digest skrócony albo z literówką ma odpaść na schemacie, a nie przy pobieraniu
+# obrazu na węźle; poprawny ma trafić do referencji obrazu w Deploymencie.
+if helm template docfind "$chart" --set api.image.tag=lint --set api.image.digest=sha256:abc >/dev/null 2>&1; then
+  echo "BŁĄD: chart przyjął skrócony digest api.image.digest — values.schema.json go nie pilnuje" >&2
+  exit 1
+fi
+digest="sha256:$(printf '%064d' 0)"
+digest_render=$(helm template docfind "$chart" --set api.image.tag=lint --set "api.image.digest=$digest")
+if [[ "$digest_render" != *"docfind-api:lint@$digest\""* ]]; then
+  echo "BŁĄD: api.image.digest nie trafił do referencji obrazu w Deploymencie" >&2
   exit 1
 fi
 

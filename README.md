@@ -9,7 +9,7 @@ razem z ich kosztami, siedzą w [docs/DECYZJE.md](docs/DECYZJE.md).
 
 ## Stan
 
-Etap 3 z 11 — wejście przez Gateway API z TLS. Wymuszone odnowienie
+Etap 3 z 11 (`v0.3.0`) — wejście przez Gateway API z TLS. Wymuszone odnowienie
 certyfikatu pod ruchem: własne CA 59 żądań, Let's Encrypt staging 126 żądań —
 zero nieudanych, proxy podaje nowy certyfikat bez restartu.
 
@@ -24,6 +24,12 @@ zero nieudanych, proxy podaje nowy certyfikat bez restartu.
 - zasoby z CRD walidowane schematami z tych samych CRD, które instalujemy
   (decyzja 28); polityki sprawdzane też na żywych podach proxy, których nie
   widać w `helm template`
+- Pod Security `restricted` na przestrzeni nazw aplikacji — API server
+  odrzuca pod bez pełnego `securityContext`, także sondę drainu (decyzja 31)
+- obraz publikowany z atestacją pochodzenia, sprawdzaną w rejestrze razem
+  z tym, że to obraz przetestowany; digest w wyjściach zadania `build`
+  (korekta decyzji 21); po wdrożeniu `/version` sprawdzany na każdym podzie
+- wersje z tagów `vX.Y.Z`, numer minor to etap (decyzja 30)
 
 Etap 2 — usługa na Kubernetesie. Drain każdego węzła z repliką API:
 1358 żądań w trzech przebiegach, zero nieudanych.
@@ -112,6 +118,28 @@ zbudowany ani opublikowany. Jednorazowo:
 
 Bez tych sekretów workflow niczego nie scala i zostawia ostrzeżenie w PR-ze.
 
+## Wydania
+
+Wydanie to tag adnotowany `vX.Y.Z` na commicie z `main`. Numer minor to
+ukończony etap (`v0.3.0` = Etap 3), łatka to poprawki w jego obrębie
+(decyzja 30). Tagów `v*` pilnuje reguła: po wypchnięciu nie da się ich
+przesunąć ani usunąć, więc pomyłkę poprawia się kolejnym numerem.
+
+```bash
+git switch main && git pull --ff-only
+git tag --annotate v0.3.1 -m "Etap 3: <co zawiera wydanie>"
+git push origin v0.3.1
+```
+
+Tag uruchamia w CI build wydania i publikuje
+`ghcr.io/mateuszf757/docfind-api:0.3.1` z atestacją pochodzenia; digest jest
+w podsumowaniu zadania `build`. Obrazy z `main` między tagami mają wersję
+`0.3.2-dev.<commity od tagu>+<sha>` i tag `<sha12>`.
+
+```bash
+docker buildx imagetools inspect ghcr.io/mateuszf757/docfind-api:0.3.1 --format '{{json .Provenance}}'
+```
+
 ## Praca lokalna
 
 Wymagania i sposób ich sprawdzenia: [docs/WYMAGANIA.md](docs/WYMAGANIA.md).
@@ -125,7 +153,7 @@ katalogu `.mise/` w repozytorium — bez globalnej instalacji i bez sudo.
 ./bin/mise run test               # lint, typy, testy, polityki — jak zadanie test w CI
 ./bin/mise run ci                 # cały pipeline po kolei, jak w CI (bez publikacji)
 ./bin/mise run build              # build obrazu z wersją z gita
-RELEASE=1 ./bin/mise run build    # build wydania — odrzuca brudne drzewo
+RELEASE=1 ./bin/mise run build    # build wydania — tylko czyste drzewo na tagu vX.Y.Z
 ./bin/mise run test:image         # testy jednostkowe w obrazie na musl
 ./bin/mise run check:runtime      # warunki zakończenia Etapu 1
 ./bin/mise run check:reproducible # build z cache i od zera → identyczny obraz

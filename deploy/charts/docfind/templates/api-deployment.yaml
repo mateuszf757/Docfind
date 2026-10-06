@@ -50,7 +50,7 @@ spec:
             - pod-template-hash
       containers:
         - name: api
-          image: "{{ .Values.api.image.repository }}:{{ required "api.image.tag jest wymagany — podaj tag obrazu, nie polegaj na latest" .Values.api.image.tag }}"
+          image: "{{ .Values.api.image.repository }}:{{ required "api.image.tag jest wymagany — podaj tag obrazu, nie polegaj na latest" .Values.api.image.tag }}{{ with .Values.api.image.digest }}@{{ . }}{{ end }}"
           imagePullPolicy: {{ .Values.api.image.pullPolicy }}
           ports:
             - name: http

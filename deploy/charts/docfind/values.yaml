@@ -6,6 +6,11 @@ api:
     # Wymagany. Podaje go skrypt wdrożenia — domyślny "latest" oznaczałby,
     # że nie wiadomo, co stoi na klastrze, a /version jest bezużyteczne.
     tag: ""
+    # Digest z publikacji w CI (sha256:…, wyjście zadania build). Podany daje
+    # repository:tag@digest: węzeł pobiera obraz po digeście, a tag zostaje
+    # dla czytelnika i etykiety wersji. Tak trafia na klaster dokładnie ten
+    # obraz, który przeszedł pipeline — tag w rejestrze da się nadpisać.
+    digest: ""
     pullPolicy: IfNotPresent
 
   resources:

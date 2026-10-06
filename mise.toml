@@ -78,7 +78,7 @@ description = "Regeneracja deploy/config/app.schema.json z modelu Pydantic"
 run = "ci/gen-schema.sh"
 
 [tasks.build]
-description = "Build obrazu z wersją z gita; RELEASE=1 odrzuca brudne drzewo"
+description = "Build obrazu z wersją z gita; RELEASE=1 tylko czyste drzewo na tagu vX.Y.Z"
 usage = 'arg "[service]" default="api" help="Usługa z services/"'
 run = 'ci/build.sh "${usage_service}"'
 
