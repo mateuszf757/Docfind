@@ -79,6 +79,22 @@ do obsłużenia. Koszt: domena ~10 € rocznie.
 **Kiedy zmieniam zdanie:** gdy klient nie ma publicznej domeny — wtedy zostaje samo własne CA
 i alert o wygasaniu 30/14/7 dni zamiast automatycznego odnawiania.
 
+**Jak wyszło:** oba wydawcy działają na klastrze lokalnym bez wejścia
+z internetu. Własne CA: samopodpisany wydawca → certyfikat główny (ECDSA P-256,
+pięć lat) → wydawca CA. Let's Encrypt staging i produkcja przez DNS-01
+w Cloudflare dla `local.docfind.lol`: certyfikat w 40–80 s, łańcuch produkcyjny
+zweryfikowany względem systemowego magazynu zaufania. Wymuszone odnowienie pod
+ruchem (`ci/check-tls.sh`): własne CA 59 żądań i staging 126 żądań — zero
+nieudanych, proxy podaje nowy certyfikat bez restartu. Na produkcji odnowienie
+nie jest wymuszane, bo limit to 5 identycznych certyfikatów na tydzień;
+lokalnie domyślny jest staging (`mise.local.toml`).
+
+Koszt, który wyszedł dopiero na żywo: zmiana hosta albo wydawcy na działającym
+Gateway daje okno, w którym proxy podaje stary certyfikat dla nowej nazwy — do
+wystawienia nowego, przy ACME ponad minutę. Na produkcji zmianę robi się przez
+drugi listener z nowym certyfikatem i przełączenie ruchu dopiero po jego
+wystawieniu.
+
 ## 5. Sekrety w Vault przez External Secrets Operator
 
 **Wybieram bardziej złożone.** Plik z uprawnieniami 600 wystarczyłby przy trzech sekretach.

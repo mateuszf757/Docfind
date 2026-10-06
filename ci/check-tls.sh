@@ -4,6 +4,12 @@
 # jednego nieudanego żądania w trakcie.
 #
 #   ci/check-tls.sh
+#   DOCFIND_TLS_RENEW_PRODUCTION=1 ci/check-tls.sh   także na produkcyjnym Let's Encrypt
+#
+# Na produkcyjnym Let's Encrypt wymuszone odnowienie wymaga jawnej zgody:
+# każde to nowy certyfikat, a limit to 5 identycznych na tydzień — po jego
+# wyczerpaniu domena przez tydzień nie dostanie certyfikatu, także tego, który
+# odnowiłby się sam przed wygaśnięciem. Odnowienia testuje się na stagingu.
 #
 # Po drodze sprawdza resztę wejścia: trasę podpiętą pod Gateway, TLS
 # zweryfikowany względem CA, przekierowanie HTTP→HTTPS, identyfikator żądania
@@ -101,7 +107,6 @@ served_certificate() {
 headers=$(curl_https -o /dev/null -D - "https://$hostname:$https_port/version") \
   || fail "HTTPS do $hostname nie działa (weryfikacja TLS albo trasa)"
 grep -qiE '^HTTP/[0-9.]+ 200' <<<"$headers" || fail "GET /version nie zwraca 200"
-df_log "HTTPS: 200, certyfikat zweryfikowany ($issuer)"
 
 if [[ "$issuer" == "letsencrypt-staging" ]]; then
   # Najpierw całe wyjście do zmiennej: `openssl | grep -q` przy pipefail
@@ -109,6 +114,9 @@ if [[ "$issuer" == "letsencrypt-staging" ]]; then
   staging_certificate=$(served_certificate)
   [[ "$staging_certificate" == *STAGING* ]] \
     || fail "wydawca to letsencrypt-staging, a podany certyfikat nie pochodzi ze stagingu"
+  df_log "HTTPS: 200, certyfikat ze stagingu Let's Encrypt (łańcuch z założenia niezaufany)"
+else
+  df_log "HTTPS: 200, łańcuch certyfikatu zweryfikowany ($issuer)"
 fi
 
 request_id=$(awk 'tolower($1) == "x-request-id:" {print $2}' <<<"$headers" | tr -d '\r')
@@ -146,6 +154,18 @@ proxy_nodes=$(kubectl -n envoy-gateway-system get pods -l "$proxy_selector" \
 df_log "pody proxy: obrazy z digestem, bez limitu CPU, na $proxy_nodes węzłach"
 
 # --- wymuszone odnowienie pod ruchem ------------------------------------------------
+if [[ "$issuer" == "letsencrypt" && "${DOCFIND_TLS_RENEW_PRODUCTION:-0}" != "1" ]]; then
+  df_log "produkcyjny Let's Encrypt: odnowienie pod ruchem pominięte (limit 5 certyfikatów na tydzień)"
+  df_log "sprawdzone na produkcji: zaufany łańcuch, trasa, przekierowanie, nagłówki, polityki proxy"
+  exit 0
+fi
+
+# Przy ACME odnowienie to nowe wyzwanie DNS-01: rekord TXT w Cloudflare, jego
+# propagacja do publicznych resolwerów i walidacja po stronie Let's Encrypt.
+# Własne CA podpisuje od ręki.
+renew_timeout=120
+[[ "$issuer" == letsencrypt* ]] && renew_timeout=420
+
 before=$(served_certificate)
 revision_before=$(kubectl -n "$gateway_namespace" get certificate "$secret" -o jsonpath='{.status.revision}')
 df_log "przed odnowieniem: $(grep serial <<<"$before"), rewizja $revision_before"
@@ -167,14 +187,15 @@ df_log "cmctl renew $gateway_namespace/$secret"
 cmctl renew --namespace "$gateway_namespace" "$secret" >/dev/null
 
 # Odnowienie zakończone: rewizja wzrosła i certyfikat znów jest gotowy.
-for _ in $(seq 1 120); do
+for _ in $(seq 1 "$renew_timeout"); do
   revision=$(kubectl -n "$gateway_namespace" get certificate "$secret" -o jsonpath='{.status.revision}')
   ready=$(kubectl -n "$gateway_namespace" get certificate "$secret" \
     -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')
   (( revision > revision_before )) && [[ "$ready" == "True" ]] && break
   sleep 1
 done
-(( revision > revision_before )) || fail "cert-manager nie odnowił certyfikatu w 120 s (rewizja $revision)"
+(( revision > revision_before )) \
+  || fail "cert-manager nie odnowił certyfikatu w $renew_timeout s (rewizja $revision) — kubectl -n $gateway_namespace get challenges,orders"
 df_log "cert-manager odnowił certyfikat (rewizja $revision)"
 
 # Proxy podaje nowy certyfikat sam — Envoy Gateway śledzi Secret i przekazuje

@@ -9,11 +9,21 @@ razem z ich kosztami, siedzą w [docs/DECYZJE.md](docs/DECYZJE.md).
 
 ## Stan
 
-Etap 3 z 11 w toku — wejście przez Gateway API z TLS. Na własnym CA działa:
-HTTPS zweryfikowany względem CA, przekierowanie HTTP→HTTPS, identyfikator
-żądania od proxy do API, polityki na żywych podach proxy. Warunek zakończenia
-czeka na podniesienie limitu inotify (docs/WYMAGANIA.md), Let's Encrypt — na
-token Cloudflare.
+Etap 3 z 11 — wejście przez Gateway API z TLS. Wymuszone odnowienie
+certyfikatu pod ruchem: własne CA 59 żądań, Let's Encrypt staging 126 żądań —
+zero nieudanych, proxy podaje nowy certyfikat bez restartu.
+
+- Envoy Gateway zamiast ingress-nginx, który od marca 2026 nie dostaje łatek
+  bezpieczeństwa (decyzja 11)
+- cert-manager z własnym CA i z Let's Encrypt przez DNS-01 w Cloudflare —
+  zaufany certyfikat dla klastra bez wejścia z internetu (decyzja 4)
+- identyfikator żądania nadawany przez proxy, odsyłany przez API, w logu
+  dostępowym JSON razem z czasem backendu (decyzja 29)
+- limit bezczynności połączeń proxy→backend krótszy niż keep-alive API —
+  chart odmawia odwrotnej relacji, która daje sporadyczne 502
+- zasoby z CRD walidowane schematami z tych samych CRD, które instalujemy
+  (decyzja 28); polityki sprawdzane też na żywych podach proxy, których nie
+  widać w `helm template`
 
 Etap 2 — usługa na Kubernetesie. Drain każdego węzła z repliką API:
 1358 żądań w trzech przebiegach, zero nieudanych.
@@ -150,7 +160,7 @@ curl -s localhost:8000/metrics
 | 0 ✅ | Repozytorium i pipeline | PR uruchamia testy; build daje `version.json` zgodny z commitem |
 | 1 ✅ | API w kontenerze, walidacja konfiguracji, `/metrics` | obraz 120 MB < 200 MB; zły config = czytelna odmowa startu; zamykanie 0,37 s ponad narzut Dockera |
 | 2 ✅ | k3d, Deployment, probe'y, 2 repliki, PDB | drain każdego węzła: 1358 żądań, 0 błędów |
-| 3 | Envoy Gateway (Gateway API), cert-manager: własne CA i Let's Encrypt DNS-01 | wymuszone odnowienie certyfikatu przechodzi bez ingerencji |
+| 3 ✅ | Envoy Gateway (Gateway API), cert-manager: własne CA i Let's Encrypt DNS-01 | odnowienie pod ruchem: 59 i 126 żądań, 0 błędów |
 | 4 | Vault i External Secrets Operator | rotacja sekretu dociera do podów; zero jawnych sekretów w gicie |
 | 5 | ArgoCD, app-of-apps, sync waves | ręczne `kubectl delete deploy` → ArgoCD odtwarza stan |
 | 6 | ECK, Elasticsearch, ingest | reindeks z podmianą aliasu bez przestoju |
