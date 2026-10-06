@@ -9,7 +9,23 @@ razem z ich kosztami, siedzą w [docs/DECYZJE.md](docs/DECYZJE.md).
 
 ## Stan
 
-Etap 2 z 11 — usługa na Kubernetesie. Drain każdego węzła z repliką API:
+Etap 3 z 11 — wejście przez Gateway API z TLS. Wymuszone odnowienie
+certyfikatu pod ruchem: własne CA 59 żądań, Let's Encrypt staging 126 żądań —
+zero nieudanych, proxy podaje nowy certyfikat bez restartu.
+
+- Envoy Gateway zamiast ingress-nginx, który od marca 2026 nie dostaje łatek
+  bezpieczeństwa (decyzja 11)
+- cert-manager z własnym CA i z Let's Encrypt przez DNS-01 w Cloudflare —
+  zaufany certyfikat dla klastra bez wejścia z internetu (decyzja 4)
+- identyfikator żądania nadawany przez proxy, odsyłany przez API, w logu
+  dostępowym JSON razem z czasem backendu (decyzja 29)
+- limit bezczynności połączeń proxy→backend krótszy niż keep-alive API —
+  chart odmawia odwrotnej relacji, która daje sporadyczne 502
+- zasoby z CRD walidowane schematami z tych samych CRD, które instalujemy
+  (decyzja 28); polityki sprawdzane też na żywych podach proxy, których nie
+  widać w `helm template`
+
+Etap 2 — usługa na Kubernetesie. Drain każdego węzła z repliką API:
 1358 żądań w trzech przebiegach, zero nieudanych.
 
 - chart Helma z dwiema replikami, PDB, rozłożeniem na węzły i preStop
@@ -54,7 +70,8 @@ Zrobione w Etapach 0–1:
 services/api/      Usługa API — Dockerfile, kod, testy
 deploy/config/     app.yml.example i generowany app.schema.json
 deploy/charts/     Chart Helma docfind
-deploy/platform/   Wartości komponentów platformy (CoreDNS)
+deploy/charts/platform/  Chart platformy: Gateway, TLS, wydawcy certyfikatów
+deploy/platform/   Wartości komponentów platformy (CoreDNS, cert-manager, Envoy Gateway)
 deploy/k3d/        Definicja lokalnego klastra (1 serwer, 2 węzły robocze)
 ci/                Skrypty budowania, testów, wdrożenia i warunków zakończenia
 bin/mise           Launcher mise w przypiętej wersji — narzędzia i zadania (mise.toml)
@@ -115,6 +132,8 @@ RELEASE=1 ./bin/mise run build    # build wydania — odrzuca brudne drzewo
 
 ./bin/mise run cluster:up         # klaster k3d + build + helm upgrade --install
 ./bin/mise run cluster:drain      # warunek zakończenia Etapu 2
+./bin/mise run cluster:tls        # warunek zakończenia Etapu 3: odnowienie certyfikatu pod ruchem
+./bin/mise exec -- ci/set-dns-token.sh   # token Cloudflare dla Let's Encrypt (DNS-01), raz
 ./bin/mise run cluster:down       # usunięcie klastra
 ./bin/mise exec -- kubectl get pods -A   # kubectl z przypiętej wersji, kubeconfig projektu
 ```
@@ -141,7 +160,7 @@ curl -s localhost:8000/metrics
 | 0 ✅ | Repozytorium i pipeline | PR uruchamia testy; build daje `version.json` zgodny z commitem |
 | 1 ✅ | API w kontenerze, walidacja konfiguracji, `/metrics` | obraz 120 MB < 200 MB; zły config = czytelna odmowa startu; zamykanie 0,37 s ponad narzut Dockera |
 | 2 ✅ | k3d, Deployment, probe'y, 2 repliki, PDB | drain każdego węzła: 1358 żądań, 0 błędów |
-| 3 | ingress-nginx, cert-manager (DNS-01), streaming | wymuszone odnowienie certyfikatu przechodzi bez ingerencji |
+| 3 ✅ | Envoy Gateway (Gateway API), cert-manager: własne CA i Let's Encrypt DNS-01 | odnowienie pod ruchem: 59 i 126 żądań, 0 błędów |
 | 4 | Vault i External Secrets Operator | rotacja sekretu dociera do podów; zero jawnych sekretów w gicie |
 | 5 | ArgoCD, app-of-apps, sync waves | ręczne `kubectl delete deploy` → ArgoCD odtwarza stan |
 | 6 | ECK, Elasticsearch, ingest | reindeks z podmianą aliasu bez przestoju |

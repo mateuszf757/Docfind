@@ -132,6 +132,65 @@ znikał, podczas gdy kontener dalej stał, bo trzyma go skrypt startowy k3d.
 Agenci widzieli wtedy `connection reset` i wyglądało to jak problem sieci
 albo DNS — a było to zapukanie do nieistniejącego procesu.
 
+## Limit instancji inotify
+
+**Sprawdzenie:** `sysctl -n fs.inotify.max_user_instances` — co najmniej 512.
+
+**Dlaczego:** przy Dockerze rootless wszystkie procesy we wszystkich kontenerach
+— węzły k3s, kubelety, containerd, każdy pod — działają na hoście jako jeden
+użytkownik i dzielą jego limit instancji inotify. Domyślne 128 przy klastrze
+z Etapu 3 było zajęte w 99 (głównie containerd-shim i k3s), a rolling update
+proxy podwaja na chwilę liczbę podów Envoy. Envoy bez inotify kończy się
+SIGSEGV: `assert failure: inotify_fd_ >= 0. Consider increasing value of
+fs.inotify.max_user_watches and/or fs.inotify.max_user_instances`.
+
+**Naprawa:**
+
+```bash
+echo 'fs.inotify.max_user_instances=512' | sudo tee /etc/sysctl.d/99-inotify.conf
+sudo sysctl --system
+```
+
+512 to wartość, którą dokumentacja kind podaje dla klastrów w kontenerach —
+około dwukrotny zapas ponad pełny stos z planu. To limit zasobu jądra, nie
+granica uprawnień: podnosi pamięć, jaką użytkownik może zająć na struktury
+inotify, a nie to, co może zrobić. `ci/deploy-local.sh` sprawdza go przy każdym
+wdrożeniu i ostrzega powyżej 80% zużycia.
+
+## Token API Cloudflare (Let's Encrypt)
+
+Potrzebny tylko dla wydawców Let's Encrypt; własne CA działa bez niego.
+
+**Uprawnienia** (Cloudflare → My Profile → API Tokens → Create Token):
+`Zone → DNS → Edit` i `Zone → Zone → Read`, a w `Zone Resources` tylko
+`Include → Specific zone → <strefa>`. Token do wszystkich stref pozwoliłby po
+wycieku przejąć każdą domenę na koncie.
+
+**Zapisanie w klastrze:**
+
+```bash
+DOCFIND_ACME_ZONE=<strefa> ./bin/mise exec -- ci/set-dns-token.sh
+```
+
+Skrypt czyta token bez echa (albo ze standardowego wejścia, np. z menedżera
+haseł), sprawdza go w API Cloudflare — także czy widzi strefę — i dopiero
+wtedy zapisuje Secret. Token nie trafia do gita, historii powłoki ani do
+argumentów procesów.
+
+**Ustawienia klastra** — host, adres e-mail konta ACME, strefa i wydawca —
+w `mise.local.toml` (poza gitem):
+
+```toml
+[env]
+DOCFIND_HOSTNAME = "local.<strefa>"
+DOCFIND_ACME_EMAIL = "<adres>"
+DOCFIND_ACME_ZONE = "<strefa>"
+DOCFIND_TLS_ISSUER = "letsencrypt-staging"
+```
+
+Dostęp z przeglądarki w Windows: rekord `A local.<strefa> → 127.0.0.1`
+w Cloudflare, bez proxy (DNS only), i adres `https://local.<strefa>:8443`.
+
 ## Pamięć
 
 **Sprawdzenie:** `free -h`

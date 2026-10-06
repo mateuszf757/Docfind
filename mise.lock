@@ -49,6 +49,53 @@ url = "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_
 url_api = "https://api.github.com/repos/rhysd/actionlint/releases/assets/384924919"
 provenance = "github-attestations"
 
+[[tools.cmctl]]
+version = "2.6.1"
+backend = "aqua:cert-manager/cmctl"
+specifiers = ["2.6.1"]
+
+[tools.cmctl."platforms.linux-arm64"]
+checksum = "sha256:0261c9dc17711659548a1cb9014326f47cf472a699b48150fe133ae17054cf8c"
+url = "https://github.com/cert-manager/cmctl/releases/download/v2.6.1/cmctl_linux_arm64"
+url_api = "https://api.github.com/repos/cert-manager/cmctl/releases/assets/571931641"
+provenance = "cosign"
+
+[tools.cmctl."platforms.linux-arm64-musl"]
+checksum = "sha256:0261c9dc17711659548a1cb9014326f47cf472a699b48150fe133ae17054cf8c"
+url = "https://github.com/cert-manager/cmctl/releases/download/v2.6.1/cmctl_linux_arm64"
+url_api = "https://api.github.com/repos/cert-manager/cmctl/releases/assets/571931641"
+provenance = "cosign"
+
+[tools.cmctl."platforms.linux-x64"]
+checksum = "sha256:0af054c26a2b64ce286fa868d029164867695a93c3eb893662ce16f35e708db0"
+url = "https://github.com/cert-manager/cmctl/releases/download/v2.6.1/cmctl_linux_amd64"
+url_api = "https://api.github.com/repos/cert-manager/cmctl/releases/assets/571931643"
+provenance = "cosign"
+
+[tools.cmctl."platforms.linux-x64-musl"]
+checksum = "sha256:0af054c26a2b64ce286fa868d029164867695a93c3eb893662ce16f35e708db0"
+url = "https://github.com/cert-manager/cmctl/releases/download/v2.6.1/cmctl_linux_amd64"
+url_api = "https://api.github.com/repos/cert-manager/cmctl/releases/assets/571931643"
+provenance = "cosign"
+
+[tools.cmctl."platforms.macos-arm64"]
+checksum = "sha256:158413ab2f8466c2680317a9618396ed206f4207451d6c24f6f14ccdc6788d4e"
+url = "https://github.com/cert-manager/cmctl/releases/download/v2.6.1/cmctl_darwin_arm64"
+url_api = "https://api.github.com/repos/cert-manager/cmctl/releases/assets/571931632"
+provenance = "cosign"
+
+[tools.cmctl."platforms.macos-x64"]
+checksum = "sha256:019e63e759ed6ee6a88a0f92073bbf2de3001da13ae76008694e34bb57a6fca5"
+url = "https://github.com/cert-manager/cmctl/releases/download/v2.6.1/cmctl_darwin_amd64"
+url_api = "https://api.github.com/repos/cert-manager/cmctl/releases/assets/571931633"
+provenance = "cosign"
+
+[tools.cmctl."platforms.windows-x64"]
+checksum = "sha256:1fbc515b2714d1a98bfde5b16e205ee13832e683754a884edb71b0771a0f4887"
+url = "https://github.com/cert-manager/cmctl/releases/download/v2.6.1/cmctl_windows_amd64.exe"
+url_api = "https://api.github.com/repos/cert-manager/cmctl/releases/assets/571931637"
+provenance = "cosign"
+
 [[tools.gh]]
 version = "2.101.0"
 backend = "aqua:cli/cli"

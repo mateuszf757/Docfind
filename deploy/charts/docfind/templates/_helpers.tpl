@@ -40,3 +40,18 @@ Zabezpieczenie przed zbyt krótkim okresem łaski: preStop plus dokańczanie
 {{- fail (printf "api.terminationGracePeriodSeconds=%v jest za krótki: preStop (%v s) + dokańczanie żądań (%v s) + 1 s zapasu wymaga co najmniej %v s" .Values.api.terminationGracePeriodSeconds .Values.api.preStopSleepSeconds .Values.api.config.service.shutdown_grace_seconds $needed) -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Proxy musi zamykać bezczynne połączenia do backendu wcześniej niż backend.
+Inaczej proxy wysyła żądanie połączeniem, które uvicorn właśnie zamyka,
+i zwraca klientowi błąd — sporadyczny, a więc najtrudniejszy do znalezienia.
+*/}}
+{{- define "docfind.route.validateIdleTimeout" -}}
+{{- if and .Values.route.enabled .Values.route.envoyGatewayPolicies -}}
+{{- $proxy := int .Values.route.upstreamIdleTimeoutSeconds -}}
+{{- $backend := int .Values.api.config.service.keep_alive_seconds -}}
+{{- if ge $proxy $backend -}}
+{{- fail (printf "route.upstreamIdleTimeoutSeconds=%d musi być krótszy niż api.config.service.keep_alive_seconds=%d — inaczej proxy trafia w połączenia zamykane przez uvicorn" $proxy $backend) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

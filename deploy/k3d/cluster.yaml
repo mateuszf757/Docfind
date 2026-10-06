@@ -36,9 +36,9 @@ ports:
 options:
   k3s:
     extraArgs:
-      # Traefik jest domyślnym ingressem k3s. Wyłączony, bo wejściem będzie
-      # ingress-nginx (docs/DECYZJE.md, decyzja 11) — dwa kontrolery ingressu
-      # walczyłyby o te same porty.
+      # Traefik jest domyślnym ingressem k3s. Wyłączony, bo wejściem jest Envoy
+      # Gateway (docs/DECYZJE.md, decyzja 11) — dwa kontrolery walczyłyby
+      # o porty 80 i 443 load balancera.
       - arg: --disable=traefik
         nodeFilters: [server:*]
       # Wbudowany CoreDNS k3s ma jedną replikę i nie ma PodDisruptionBudget —

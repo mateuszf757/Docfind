@@ -28,7 +28,11 @@
         "image": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["repository", "tag", "pullPolicy"],
+          "required": [
+            "repository",
+            "tag",
+            "pullPolicy"
+          ],
           "properties": {
             "repository": {
               "type": "string",
@@ -39,14 +43,21 @@
               "type": "string"
             },
             "pullPolicy": {
-              "enum": ["Always", "IfNotPresent", "Never"]
+              "enum": [
+                "Always",
+                "IfNotPresent",
+                "Never"
+              ]
             }
           }
         },
         "resources": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["requests", "limits"],
+          "required": [
+            "requests",
+            "limits"
+          ],
           "properties": {
             "requests": {
               "$ref": "#/definitions/quantities"
@@ -69,16 +80,81 @@
           "type": "object"
         }
       }
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "hostname",
+        "gateway",
+        "requestTimeoutSeconds",
+        "envoyGatewayPolicies",
+        "upstreamIdleTimeoutSeconds"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "hostname": {
+          "type": "string",
+          "maxLength": 253,
+          "pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$"
+        },
+        "gateway": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "namespace",
+            "sectionName"
+          ],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "namespace": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sectionName": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "requestTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "envoyGatewayPolicies": {
+          "type": "boolean",
+          "description": "BackendTrafficPolicy wymaga CRD Envoy Gateway — false u klienta z inną implementacją Gateway API."
+        },
+        "upstreamIdleTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Musi być krótszy niż api.config.service.keep_alive_seconds; pilnuje tego szablon."
+        }
+      }
     }
   },
   "definitions": {
     "quantities": {
       "type": "object",
       "propertyNames": {
-        "enum": ["cpu", "memory", "ephemeral-storage"]
+        "enum": [
+          "cpu",
+          "memory",
+          "ephemeral-storage"
+        ]
       },
       "additionalProperties": {
-        "type": ["string", "number"]
+        "type": [
+          "string",
+          "number"
+        ]
       }
     }
   }

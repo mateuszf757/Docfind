@@ -17,6 +17,7 @@ from fastapi import FastAPI
 
 from docfind_api.config import AppConfig
 from docfind_api.metrics import HttpMetrics, MetricsMiddleware
+from docfind_api.request_id import RequestIdMiddleware
 from docfind_api.routers import diagnostics, search
 
 
@@ -36,6 +37,9 @@ def create_app(config: AppConfig) -> FastAPI:
     app.state.metrics = metrics
 
     app.add_middleware(MetricsMiddleware, metrics=metrics)
+    # Dodany jako ostatni, więc obejmuje wszystko inne — także odpowiedzi 404
+    # i 422, które powstają przed routerami, i błędy z innych middleware.
+    app.add_middleware(RequestIdMiddleware)
 
     app.include_router(diagnostics.router)
     app.include_router(search.router)

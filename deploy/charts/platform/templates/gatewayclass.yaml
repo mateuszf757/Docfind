@@ -1,0 +1,101 @@
+# Klasa Gateway obsługiwana przez Envoy Gateway, z parametrami podów proxy.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: envoy
+  labels:
+    {{- include "platform.labels" . | nindent 4 }}
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  parametersRef:
+    group: gateway.envoyproxy.io
+    kind: EnvoyProxy
+    name: docfind-proxy
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: docfind-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "platform.labels" . | nindent 4 }}
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        replicas: {{ .Values.proxy.replicas }}
+        # Nowy pod proxy wstaje i przechodzi gotowość, zanim stary zostanie
+        # zdjęty — jak przy API (decyzja 6).
+        strategy:
+          type: RollingUpdate
+          rollingUpdate:
+            maxSurge: 1
+            maxUnavailable: 0
+        pod:
+          topologySpreadConstraints:
+            - maxSkew: 1
+              topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchLabels:
+                  gateway.envoyproxy.io/owning-gateway-name: {{ .Values.gateway.name }}
+                  gateway.envoyproxy.io/owning-gateway-namespace: {{ .Release.Namespace }}
+              matchLabelKeys:
+                - pod-template-hash
+        container:
+          resources:
+            {{- toYaml .Values.proxy.resources | nindent 12 }}
+        # Sidecar shutdown-manager wygasza połączenia przy wymianie poda. Kontroler
+        # nadaje mu requesty, ale bez limitu pamięci, a EnvoyProxy nie ma pola na
+        # jego zasoby — stąd patch. Strategic merge scala kontenery po nazwie, więc
+        # requesty od kontrolera zostają. Treści patcha nie sprawdza żaden schemat;
+        # sprawdza ją polityka na żywym podzie w ci/check-tls.sh i tak ten brak
+        # został znaleziony.
+        patch:
+          type: StrategicMerge
+          value:
+            spec:
+              template:
+                spec:
+                  containers:
+                    - name: shutdown-manager
+                      resources:
+                        limits:
+                          memory: {{ .Values.proxy.shutdownManagerMemoryLimit }}
+      envoyPDB:
+        maxUnavailable: 1
+  shutdown:
+    drainTimeout: {{ printf "%ds" (int .Values.proxy.drainTimeoutSeconds) }}
+  # Log dostępowy w JSON na stdout — jeden wiersz na żądanie, z identyfikatorem
+  # żądania, czasem całkowitym i czasem po stronie backendu. Różnica między
+  # nimi to czas spędzony w proxy i w sieci, a flags mówi, dlaczego proxy samo
+  # odpowiedziało błędem (np. UF — brak połączenia z backendem, UT — timeout).
+  # To podstawowe źródło przy diagnozie z paczki (Etap 11).
+  telemetry:
+    accessLog:
+      settings:
+        - format:
+            type: JSON
+            json:
+              start_time: "%START_TIME%"
+              request_id: "%REQ(X-REQUEST-ID)%"
+              authority: "%REQ(:AUTHORITY)%"
+              method: "%REQ(:METHOD)%"
+              path: "%REQ(X-ENVOY-ORIGINAL-PATH?:PATH)%"
+              protocol: "%PROTOCOL%"
+              status: "%RESPONSE_CODE%"
+              flags: "%RESPONSE_FLAGS%"
+              duration_ms: "%DURATION%"
+              upstream_service_time_ms: "%RESP(X-ENVOY-UPSTREAM-SERVICE-TIME)%"
+              upstream_host: "%UPSTREAM_HOST%"
+              upstream_failure: "%UPSTREAM_TRANSPORT_FAILURE_REASON%"
+              route: "%ROUTE_NAME%"
+              bytes_received: "%BYTES_RECEIVED%"
+              bytes_sent: "%BYTES_SENT%"
+              user_agent: "%REQ(USER-AGENT)%"
+          sinks:
+            - type: File
+              file:
+                path: /dev/stdout

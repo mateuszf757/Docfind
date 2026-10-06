@@ -36,6 +36,18 @@ set -euo pipefail
   DF_COREDNS_CHART_URL="https://github.com/coredns/helm/releases/download/coredns-${DF_COREDNS_CHART_VERSION}/coredns-${DF_COREDNS_CHART_VERSION}.tgz"
   DF_COREDNS_CHART_SHA256="1587165a85ec63dec4603e2889a8a6f5af9222a63893b8ecc254dfeb80c0e1e0"
 
+  # cert-manager: suma zgodna z digestem w indeksie charts.jetstack.io.
+  DF_CERT_MANAGER_CHART_VERSION="v1.21.2"
+  DF_CERT_MANAGER_CHART_URL="https://charts.jetstack.io/charts/cert-manager-${DF_CERT_MANAGER_CHART_VERSION}.tgz"
+  DF_CERT_MANAGER_CHART_SHA256="73a56e1728edd6c99f1f31082618c3259d279a76b7ebd3d4bdc5475c2442d34a"
+
+  # Envoy Gateway publikuje chart wyłącznie jako artefakt OCI. Suma pliku to
+  # digest warstwy charta w manifeście rejestru — sprawdzona przy przypięciu
+  # niezależnie od `helm pull`, przez manifest pobrany wprost z rejestru.
+  DF_ENVOY_GATEWAY_CHART_REF="oci://docker.io/envoyproxy/gateway-helm"
+  DF_ENVOY_GATEWAY_CHART_VERSION="v1.9.2"
+  DF_ENVOY_GATEWAY_CHART_SHA256="1079cad009e0885f6e10e5f712257d8e5fdaf911d2ceb3fa1b78632c8f29bbf9"
+
   # Obraz sondy uruchamianej w klastrze przez check-drain.sh. Digest indeksu
   # wieloarchitekturowego, nie manifestu dla amd64 — tag jest przesuwalny,
   # a przypięcie ma działać na każdej architekturze węzła.
@@ -249,6 +261,34 @@ df_fetch_verified() {
   if [[ "$actual" != "$expected" ]]; then
     rm -f "$file"
     echo "BŁĄD: suma $(basename "$url") nie zgadza się z przypiętą (otrzymano $actual)." >&2
+    return 1
+  fi
+  printf '%s' "$file"
+}
+
+# Chart z rejestru OCI do tej samej pamięci podręcznej co df_fetch_verified,
+# z tą samą weryfikacją sumy przy każdym użyciu. `helm pull` sam nie weryfikuje
+# niczego poza tym, co poda rejestr — suma przypięta w repozytorium jest
+# niezależnym źródłem. Wypisuje ścieżkę do pliku.
+df_fetch_verified_oci_chart() {
+  local ref="$1" version="$2" expected="$3" repo_root file actual
+  repo_root=$(git rev-parse --show-toplevel)
+  file="$repo_root/.cache/downloads/$(basename "$ref")-$version.tgz"
+  mkdir -p "$(dirname "$file")"
+
+  if [[ ! -f "$file" ]]; then
+    local pull_dir
+    pull_dir=$(mktemp -d "$file.pull.XXXXXX")
+    helm pull "$ref" --version "$version" --destination "$pull_dir" >/dev/null \
+      || { rm -rf "$pull_dir"; return 1; }
+    mv "$pull_dir/$(basename "$ref")-$version.tgz" "$file"
+    rm -rf "$pull_dir"
+  fi
+
+  actual=$(sha256sum "$file" | cut -d' ' -f1)
+  if [[ "$actual" != "$expected" ]]; then
+    rm -f "$file"
+    echo "BŁĄD: suma charta $ref $version nie zgadza się z przypiętą (otrzymano $actual)." >&2
     return 1
   fi
   printf '%s' "$file"

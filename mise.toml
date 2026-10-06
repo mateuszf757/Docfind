@@ -58,6 +58,9 @@ zizmor = "1.30.1"
 # Do ci/apply-repo-settings.sh; gh z apt w Ubuntu 24.04 jest sprzed
 # `gh attestation verify`.
 gh = "2.101.0"
+# Do ci/check-tls.sh — `cmctl renew` wymusza odnowienie certyfikatu tak samo,
+# jak zrobiłby to cert-manager przed jego wygaśnięciem.
+cmctl = "2.6.1"
 
 [env]
 # Kubeconfig projektu zamiast globalnego ~/.kube/config. Lokalny klaster nie
@@ -120,6 +123,10 @@ run = "ci/deploy-local.sh"
 [tasks."cluster:down"]
 description = "Usunięcie lokalnego klastra"
 run = "ci/deploy-local.sh --down"
+
+[tasks."cluster:tls"]
+description = "Warunek Etapu 3: odnowienie certyfikatu pod ruchem, bez ingerencji"
+run = "ci/check-tls.sh"
 
 [tasks."cluster:drain"]
 description = "Warunek zakończenia Etapu 2: drain węzła bez utraty żądania"

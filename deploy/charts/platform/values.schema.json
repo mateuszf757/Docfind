@@ -1,0 +1,179 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Wartości charta docfind-platform",
+  "description": "Bez schematu Helm po cichu ignoruje nieznany klucz — literówka w nazwie wydawcy albo hosta dawałaby Gateway bez certyfikatu bez żadnego sygnału przy renderze.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "gateway",
+    "certificate",
+    "internalCA",
+    "acme",
+    "proxy"
+  ],
+  "properties": {
+    "global": {
+      "type": "object",
+      "description": "Helm dokłada `global` do wartości każdego charta."
+    },
+    "gateway": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "hostname",
+        "issuer",
+        "httpsRedirectPort",
+        "routeNamespaceLabel"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+        },
+        "hostname": {
+          "type": "string",
+          "pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$",
+          "maxLength": 253,
+          "description": "Nazwa DNS małymi literami. Długość osobno w maxLength — Helm waliduje schemat regexpami RE2, bez lookahead."
+        },
+        "issuer": {
+          "enum": [
+            "docfind-internal-ca",
+            "letsencrypt-staging",
+            "letsencrypt"
+          ]
+        },
+        "httpsRedirectPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "routeNamespaceLabel": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "key",
+            "value"
+          ],
+          "properties": {
+            "key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "value": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "certificate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "duration",
+        "renewBefore"
+      ],
+      "properties": {
+        "duration": {
+          "type": "string",
+          "pattern": "^[0-9]+h$",
+          "description": "Czas w godzinach, np. 2160h — format adnotacji cert-managera."
+        },
+        "renewBefore": {
+          "type": "string",
+          "pattern": "^[0-9]+h$",
+          "description": "Czas w godzinach, np. 2160h — format adnotacji cert-managera."
+        }
+      }
+    },
+    "internalCA": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "duration",
+        "renewBefore"
+      ],
+      "properties": {
+        "duration": {
+          "type": "string",
+          "pattern": "^[0-9]+h$",
+          "description": "Czas w godzinach, np. 2160h — format adnotacji cert-managera."
+        },
+        "renewBefore": {
+          "type": "string",
+          "pattern": "^[0-9]+h$",
+          "description": "Czas w godzinach, np. 2160h — format adnotacji cert-managera."
+        }
+      }
+    },
+    "acme": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "email",
+        "dnsZone",
+        "tokenSecretName"
+      ],
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "Pusty — wydawcy Let's Encrypt nie powstają.",
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+            }
+          ]
+        },
+        "dnsZone": {
+          "type": "string",
+          "anyOf": [
+            {
+              "const": ""
+            },
+            {
+              "pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$",
+              "maxLength": 253
+            }
+          ]
+        },
+        "tokenSecretName": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "proxy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "replicas",
+        "resources",
+        "drainTimeoutSeconds",
+        "shutdownManagerMemoryLimit"
+      ],
+      "properties": {
+        "replicas": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "resources": {
+          "type": "object"
+        },
+        "drainTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "shutdownManagerMemoryLimit": {
+          "type": "string",
+          "pattern": "^[0-9]+(Mi|Gi)$"
+        }
+      }
+    }
+  }
+}

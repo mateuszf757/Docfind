@@ -34,9 +34,11 @@ api:
       port: 8000
       log_level: info
       shutdown_grace_seconds: 3
-      # Do ustalenia na Etapie 3 razem z proxy: musi przekraczać limit
-      # bezczynności puli połączeń proxy do backendu.
-      keep_alive_seconds: 5
+      # Dłużej niż route.upstreamIdleTimeoutSeconds — proxy musi zamknąć
+      # bezczynne połączenie pierwsze. Odwrotnie proxy wysyła żądanie
+      # połączeniem, które uvicorn właśnie zamyka, i dostaje reset (502/503).
+      # Chart odmawia renderowania przy złej relacji.
+      keep_alive_seconds: 75
     elasticsearch:
       url: http://elasticsearch:9200
       alias: docfind
@@ -45,3 +47,24 @@ api:
       backend: stub
       max_context: 8192
       max_fragments: 8
+
+# Trasa z Gateway platformy do API (Gateway API, decyzja 11).
+route:
+  enabled: true
+  # Musi należeć do nazwy hosta listenera HTTPS Gateway — inaczej trasa się nie
+  # podepnie, a Gateway zwróci 404 dla każdego żądania.
+  hostname: docfind.internal
+  gateway:
+    name: docfind
+    namespace: gateway
+    sectionName: https
+  # Limit czasu całego żądania na proxy. Strumieniowanie odpowiedzi modelu
+  # (Etap 7) może wymagać więcej — do przeglądu razem z drainTimeout proxy.
+  requestTimeoutSeconds: 60
+  # Polityki specyficzne dla Envoy Gateway (BackendTrafficPolicy). Klient z inną
+  # implementacją Gateway API (Etap 10) ustawia false — chart nie może wymagać
+  # CRD, których jego klaster nie ma.
+  envoyGatewayPolicies: true
+  # Po ilu sekundach bezczynności proxy zamyka połączenie do backendu.
+  # Domyślnie w Envoyu godzina — dużo dłużej niż keep-alive uvicorna.
+  upstreamIdleTimeoutSeconds: 60

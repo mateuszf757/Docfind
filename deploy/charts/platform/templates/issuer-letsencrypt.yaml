@@ -1,0 +1,29 @@
+{{- if and .Values.acme.email .Values.acme.dnsZone }}
+{{- range $issuer := list (dict "name" "letsencrypt-staging" "server" "https://acme-staging-v02.api.letsencrypt.org/directory") (dict "name" "letsencrypt" "server" "https://acme-v02.api.letsencrypt.org/directory") }}
+# {{ $issuer.name }}: Let's Encrypt przez DNS-01 w Cloudflare (decyzja 4).
+# Najpierw zawsze staging: ma luźne limity, a błąd konfiguracji w produkcyjnym
+# CA potrafi zablokować domenę na tydzień (limit nieudanych walidacji).
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: {{ $issuer.name }}
+  labels:
+    {{- include "platform.labels" $ | nindent 4 }}
+spec:
+  acme:
+    server: {{ $issuer.server }}
+    email: {{ $.Values.acme.email | quote }}
+    privateKeySecretRef:
+      name: {{ $issuer.name }}-account-key
+    solvers:
+      - selector:
+          dnsZones:
+            - {{ $.Values.acme.dnsZone | quote }}
+        dns01:
+          cloudflare:
+            apiTokenSecretRef:
+              name: {{ $.Values.acme.tokenSecretName }}
+              key: api-token
+---
+{{- end }}
+{{- end }}

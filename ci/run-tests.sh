@@ -113,10 +113,45 @@ helm template coredns "$coredns_chart" --namespace kube-system \
     --values "$repo_root/deploy/platform/coredns/values.yaml" \
   > "$render_dir/coredns.yaml"
 
+cert_manager_chart=$(df_fetch_verified "$DF_CERT_MANAGER_CHART_URL" "$DF_CERT_MANAGER_CHART_SHA256")
+helm template cert-manager "$cert_manager_chart" --namespace cert-manager \
+    --values "$repo_root/deploy/platform/cert-manager/values.yaml" \
+  > "$render_dir/cert-manager.yaml"
+
+envoy_gateway_chart=$(df_fetch_verified_oci_chart "$DF_ENVOY_GATEWAY_CHART_REF" \
+  "$DF_ENVOY_GATEWAY_CHART_VERSION" "$DF_ENVOY_GATEWAY_CHART_SHA256")
+helm template envoy-gateway "$envoy_gateway_chart" --namespace envoy-gateway-system \
+    --values "$repo_root/deploy/platform/envoy-gateway/values.yaml" --include-crds \
+  > "$render_dir/envoy-gateway.yaml"
+
+# Chart platformy w obu wariantach: na własnym CA i z Let's Encrypt — inaczej
+# szablony wydawców ACME nie byłyby renderowane, a więc ani sprawdzane.
+platform_chart="$repo_root/deploy/charts/platform"
+helm lint "$platform_chart"
+if helm template platform "$platform_chart" --set gateway.hostnme=x >/dev/null 2>&1; then
+  echo "BŁĄD: chart platformy przyjął nieznany klucz gateway.hostnme — values.schema.json niczego nie pilnuje" >&2
+  exit 1
+fi
+helm template platform "$platform_chart" --namespace gateway > "$render_dir/platform.yaml"
+helm template platform "$platform_chart" --namespace gateway \
+    --set acme.email=ci@example.com --set acme.dnsZone=example.com \
+    --set gateway.hostname=docfind.example.com --set gateway.issuer=letsencrypt-staging \
+  > "$render_dir/platform-letsencrypt.yaml"
+
+# Schematy zasobów z CRD — Gateway API, Envoy Gateway, cert-manager — z tych
+# samych CRD, które instalują przypięte charty. Gotowe katalogi schematów CRD
+# nie nadążają za wydaniami; walidacja względem starszej wersji przepuszczałaby
+# pola, których API server nie przyjmie.
+crd_schema_dir="$render_dir/crd-schemas"
+cat "$render_dir/envoy-gateway.yaml" "$render_dir/cert-manager.yaml" \
+  | (cd "$repo_root/services/api" && uv run --frozen python "$repo_root/ci/crd_schemas.py" "$crd_schema_dir")
+
 # Schematy z commita przypiętego w ci/lib.sh zamiast domyślnej gałęzi master.
 # Pojedyncze cudzysłowy są celowe: {{ … }} rozwija kubeconform, nie powłoka.
 # shellcheck disable=SC2016
 schema_location='https://raw.githubusercontent.com/yannh/kubernetes-json-schema/'"$DF_KUBECONFORM_SCHEMA_COMMIT"'/{{ .NormalizedKubernetesVersion }}-standalone{{ .StrictSuffix }}/{{ .ResourceKind }}{{ .KindSuffix }}.json'
+# shellcheck disable=SC2016
+crd_schema_location="$crd_schema_dir"'/{{ .Group }}/{{ .ResourceKind }}_{{ .ResourceAPIVersion }}.json'
 schema_cache="$repo_root/.cache/kubeconform"
 mkdir -p "$schema_cache"
 
@@ -127,8 +162,15 @@ for rendered in "$render_dir"/*.yaml; do
   # manifestu jest inaczej po cichu ignorowana przez API server. Nigdy
   # -ignore-missing-schemas: przy CRD wyłączyłoby walidację bez słowa.
   df_log "kubeconform $name względem Kubernetesa $DF_KUBERNETES_VERSION"
+  #
+  # -skip CustomResourceDefinition: repozytorium schematów yannh nie ma schematu
+  # dla samego rodzaju CRD (404 w każdym wariancie). Pominięty jest dokładnie
+  # ten jeden rodzaj, nie wszystko bez schematu. Definicje CRD przychodzą
+  # wyłącznie z chartów przypiętych sumą i nie piszemy ich sami — służą nam za
+  # źródło schematów, a ich poprawność sprawdza API server przy instalacji.
   kubeconform -strict -summary -kubernetes-version "$DF_KUBERNETES_VERSION" \
-    -schema-location "$schema_location" -cache "$schema_cache" "$rendered"
+    -schema-location "$schema_location" -schema-location "$crd_schema_location" \
+    -skip CustomResourceDefinition -cache "$schema_cache" "$rendered"
 
   # Poprawne względem schematu nie znaczy zgodne z decyzjami — domyślny
   # limit CPU z charta CoreDNS przeszedł kubeconform bez słowa.
@@ -138,7 +180,7 @@ for rendered in "$render_dir"/*.yaml; do
   # build (version.json zgodny z commitem), a w dostawie do klienta wejdzie
   # digest z rejestru (Etap 10).
   policy_flags=()
-  [[ "$name" == "docfind" ]] || policy_flags+=(--require-digest)
+  [[ "$name" == "docfind" || "$name" == platform* ]] || policy_flags+=(--require-digest)
   df_log "polityki $name"
   (cd "$repo_root/services/api" && uv run --frozen python "$repo_root/ci/check_policy.py" "$name" "${policy_flags[@]}") \
     < "$rendered"

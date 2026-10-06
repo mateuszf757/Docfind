@@ -1,0 +1,45 @@
+# Własne CA w trzech krokach, bo cert-manager nie umie wystawić certyfikatu
+# głównego inaczej: samopodpisany wydawca (tylko do tego jednego certyfikatu),
+# certyfikat główny CA i wydawca CA, który z niego podpisuje.
+#
+# Certyfikat główny leży w przestrzeni nazw cert-managera: ClusterIssuer typu CA
+# czyta swój sekret wyłącznie stamtąd.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: docfind-selfsigned-bootstrap
+  labels:
+    {{- include "platform.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: docfind-root-ca
+  namespace: cert-manager
+  labels:
+    {{- include "platform.labels" . | nindent 4 }}
+spec:
+  isCA: true
+  commonName: DOCFIND Internal Root CA
+  secretName: docfind-root-ca
+  duration: {{ .Values.internalCA.duration }}
+  renewBefore: {{ .Values.internalCA.renewBefore }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: docfind-selfsigned-bootstrap
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: docfind-internal-ca
+  labels:
+    {{- include "platform.labels" . | nindent 4 }}
+spec:
+  ca:
+    secretName: docfind-root-ca
