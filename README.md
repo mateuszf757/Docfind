@@ -58,7 +58,7 @@ Etap 2 — usługa na Kubernetesie. Drain każdego węzła z repliką API:
   samej bazie co produkcja (decyzja 24)
 - build powtarzalny bajt w bajt, także między lokalnym BuildKitem a tym
   z CI — ten sam commit daje ten sam obraz i nie wywołuje rolloutu
-  (decyzja 21, `ci/check-reproducible.sh`)
+  (decyzja 21, `dft check reproducible`)
 
 Zrobione w Etapach 0–1:
 
@@ -162,7 +162,8 @@ i bez sudo.
 ./bin/mise run build              # build obrazu z wersją z gita
 RELEASE=1 ./bin/mise run build    # build wydania — tylko czyste drzewo na tagu vX.Y.Z
 ./bin/mise run test:image         # testy jednostkowe w obrazie na musl
-./bin/mise run check:runtime      # warunki zakończenia Etapu 1
+./bin/mise run check:runtime      # warunki zakończenia Etapu 1 (raport JSON w .cache/reports)
+./bin/mise run test:negatives     # warianty, które bramki Etapu 1 muszą odrzucić
 ./bin/mise run check:reproducible # build z cache i od zera → identyczny obraz
 ./bin/mise run check:tools        # to samo dla narzędzi Go → identyczna binarka
 ./bin/mise exec -- ci/dft --help  # polecenia dft (wersja, tożsamość, bramki)

@@ -1,6 +1,6 @@
 // Package reproducible sprawdza, że build obrazu jest powtarzalny: build
 // z pamięcią podręczną i build od zera dają identyczny obraz (decyzja 21).
-// Port ci/check-reproducible.sh i ci/compare_oci.py.
+// Dawniej ci/check-reproducible.sh i ci/compare_oci.py.
 //
 // Powtarzalność oznacza, że obraz da się niezależnie odtworzyć z commita i że
 // ta sama zawartość ma zawsze ten sam digest — więc zmiana digestu na klastrze

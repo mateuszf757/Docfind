@@ -112,27 +112,32 @@ run = "ci/gen-schema.sh"
 [tasks.build]
 description = "Build obrazu z wersją z gita; RELEASE=1 tylko czyste drzewo na tagu vX.Y.Z"
 usage = 'arg "[service]" default="api" help="Usługa z services/"'
-run = 'ci/build.sh "${usage_service}"'
+run = 'ci/dft build "${usage_service}"'
 
 [tasks."check:base"]
 description = "Baza obrazu zgodna z zapisaną: Alpine z ci/pins.env, Python z .python-version"
 usage = 'arg "[service]" default="api" help="Usługa z services/"'
-run = 'ci/check-image-base.sh "${usage_service}"'
+run = 'ci/dft check base "${usage_service}"'
 
 [tasks."test:image"]
 description = "Testy jednostkowe w obrazie na musl — ta sama baza co produkcja"
 usage = 'arg "[service]" default="api" help="Usługa z services/"'
-run = 'ci/test-image.sh "${usage_service}"'
+run = 'ci/dft test-image "${usage_service}"'
 
 [tasks."check:runtime"]
-description = "Warunki zakończenia Etapu 1 na zbudowanym obrazie"
+description = "Warunki zakończenia Etapu 1 na zbudowanym obrazie (raport JSON w .cache/reports)"
 usage = 'arg "[service]" default="api" help="Usługa z services/"'
-run = 'ci/check-runtime.sh "${usage_service}"'
+run = 'ci/dft check runtime "${usage_service}"'
+
+[tasks."test:negatives"]
+description = "Warianty negatywne bramek artefaktu na prawdziwym obrazie — każdy ma zostać odrzucony"
+usage = 'arg "[service]" default="api" help="Usługa z services/"'
+run = 'ci/dft check negatives "${usage_service}"'
 
 [tasks."check:reproducible"]
 description = "Build z pamięcią podręczną i od zera muszą dać identyczny obraz"
 usage = 'arg "[service]" default="api" help="Usługa z services/"'
-run = 'ci/check-reproducible.sh "${usage_service}"'
+run = 'ci/dft check reproducible "${usage_service}"'
 
 [tasks.ci]
 description = "Cały pipeline po kolei, jak w CI (bez publikacji)"
@@ -146,6 +151,7 @@ run = [
     { task = "check:base" },
     { task = "test:image" },
     { task = "check:runtime" },
+    { task = "test:negatives" },
     { task = "check:reproducible" },
 ]
 

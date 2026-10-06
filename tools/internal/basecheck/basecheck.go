@@ -1,5 +1,5 @@
 // Package basecheck sprawdza bazę zbudowanego obrazu względem wersji
-// zapisanych w repozytorium — port ci/check-image-base.sh.
+// zapisanych w repozytorium (dawniej ci/check-image-base.sh).
 //
 // Dependabot odświeża digest pływającego tagu python:3.14-alpine i takie
 // odświeżenie jest scalane automatycznie jak łatka (decyzja 22). Zwykle to

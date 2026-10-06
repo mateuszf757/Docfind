@@ -1,5 +1,5 @@
 // Package oci czyta obrazy zapisane przez `docker save` (układ OCI) i porównuje
-// je warstwa po warstwie — port ci/compare_oci.py.
+// je warstwa po warstwie (dawniej ci/compare_oci.py).
 package oci
 
 import (

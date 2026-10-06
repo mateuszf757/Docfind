@@ -1,8 +1,7 @@
-# Skrypty w ci/ uruchamia także systemowy python3 — compare_oci.py
-# w check-reproducible.sh (zadanie build nie ma uv) i wstawki w skryptach
-# bashowych. Na Ubuntu 24.04, lokalnie i na runnerze, to Python 3.12.
-# Reguły są te same co dla usługi, ale składnia celuje w 3.12: przy celu 3.14
-# formatter zdejmowałby nawiasy w `except (A, B):` (PEP 758), a to na 3.12
-# błąd składni — build padłby jako „awaria narzędzia" w porównaniu obrazów.
+# Skrypty Pythona w ci/ (check_policy.py, crd_schemas.py) czekają na
+# przeniesienie do Go (decyzja 23); biegną przez uv, ale zostają przy celu
+# 3.12, jak wstawki w skryptach bashowych uruchamiane systemowym python3
+# (Ubuntu 24.04, lokalnie i na runnerze). Przy celu 3.14 formatter zdejmowałby
+# nawiasy w `except (A, B):` (PEP 758), a to na 3.12 błąd składni.
 extend = "../services/api/pyproject.toml"
 target-version = "py312"

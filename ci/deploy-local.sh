@@ -278,7 +278,7 @@ kubectl -n "$gateway_namespace" wait gateway/docfind --for=condition=Programmed 
 df_log "Gateway zaprogramowany"
 
 # --- obraz -------------------------------------------------------------------
-"$repo_root/ci/build.sh" api
+"$DF_DFT" build api
 
 image=$("$DF_DFT" identity image api)
 built_tag=$("$DF_DFT" identity docker-tag)
@@ -328,7 +328,8 @@ kubectl -n "$namespace" rollout status "deployment/$release-api" --timeout=120s
 kubectl -n "$namespace" get pods -o wide -l app.kubernetes.io/component=api
 
 # To, co stoi na klastrze, musi się zgadzać z gitem — ta sama zasada co przy
-# budowaniu obrazu (df_verify_image_identity), sprawdzana na każdym podzie.
+# budowaniu obrazu (dft build czyta version.json z obrazu), sprawdzana na
+# każdym podzie.
 # Wcześniej /version jednego poda, wybranego przez `exec deployment/…`, było
 # tylko wypisywane: inny commit na klastrze nie zatrzymywał niczego.
 #

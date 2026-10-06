@@ -142,16 +142,6 @@ jobs:
         with:
           driver-opts: image=${{ steps.pins.outputs.buildkit }}
 
-      # Logowanie i publikacja tylko przy push. Na PR-ach nie ma czego
-      # publikować, a PR-y od Dependabota i tak dostają token tylko do odczytu.
-      - name: logowanie do GHCR
-        if: github.event_name == 'push'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
       - name: build obrazu api
         env:
           # Na tagu v* to jest build wydania: brudne drzewo przerywa pipeline.
@@ -170,19 +160,43 @@ jobs:
         run: ./bin/mise run test:image
 
       # Warunki zakończenia Etapu 1 sprawdzane na artefakcie, nie na kodzie:
-      # rozmiar obrazu, odmowa startu bez konfiguracji, czas zamykania.
+      # rozmiar obrazu, odmowa startu bez konfiguracji i ze złą konfiguracją,
+      # koszt zamykania, żądanie w locie przy SIGTERM. Raport JSON zostaje
+      # w .cache/reports.
       - name: warunki zakończenia etapu
         run: ./bin/mise run check:runtime
 
+      # Warianty, które bramki muszą odrzucić, na tym samym obrazie: obraz,
+      # który wstaje bez konfiguracji, PID 1 bez obsługi SIGTERM, żądanie
+      # w locie dłuższe niż limit dokańczania. Bramka, której nie da się
+      # oblać, niczego nie sprawdza.
+      - name: warianty negatywne bramek
+        run: ./bin/mise run test:negatives
+
       # Build z pamięcią podręczną i build od zera muszą dać identyczny obraz.
       # Publikowany digest da się wtedy niezależnie odtworzyć z commita, a zmiana
-      # digestu zawsze oznacza zmianę zawartości. Skrypt potrzebuje tylko
-      # docker, python3 i Go — zadanie build nie ma uv.
+      # digestu zawsze oznacza zmianę zawartości. Porównanie warstwa po
+      # warstwie robi dft (port dawnego compare_oci.py) — bez uv i Pythona.
       - name: powtarzalność builda
         run: ./bin/mise run check:reproducible
 
-      # build.sh publikuje z BuildKitu z atestacją pochodzenia i sprawdza
-      # w rejestrze, że konfiguracja obrazu to ta z obrazu przetestowanego wyżej.
+      # Logowanie i publikacja tylko przy push, po wszystkich sprawdzeniach:
+      # dane logowania leżą w ~/.docker/config.json od tego kroku do końca
+      # zadania, więc nie ma ich tam, gdy biegną build, testy i bramki.
+      # Na PR-ach nie ma czego publikować, a PR-y od Dependabota i tak
+      # dostają token tylko do odczytu.
+      - name: logowanie do GHCR
+        if: github.event_name == 'push'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+
+      # dft build publikuje z BuildKitu z atestacją pochodzenia i sprawdza
+      # w rejestrze (go-containerregistry), że to indeks z atestacją, a obraz
+      # ma konfigurację obrazu przetestowanego wyżej.
       - name: publikacja obrazu api
         id: publish
         if: github.event_name == 'push'

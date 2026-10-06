@@ -1,5 +1,5 @@
 // Package build buduje obraz usługi z tożsamością z gita i publikuje go do
-// rejestru z atestacją pochodzenia — port ci/build.sh.
+// rejestru z atestacją pochodzenia (dawniej ci/build.sh).
 //
 // Obraz jest samoopisujący się: version.json powstaje wewnątrz niego z build
 // argów, więc nie da się go rozdzielić z tożsamością (Etap 0).

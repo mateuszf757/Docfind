@@ -405,7 +405,8 @@ użytkownik nie powstaje przez `adduser` (zapisywał dzisiejszą datę w
 `/etc/shadow`), a kod aplikacji jest kopiowany jako pliki z bytecode'em
 `checked-hash`, zamiast instalowany przez uv — który zapisywał w dist-info
 ctime źródła, niemożliwe do ustawienia z przestrzeni użytkownika. Każdą z tych
-przyczyn znalazło porównanie warstwa po warstwie (`ci/compare_oci.py`).
+przyczyn znalazło porównanie warstwa po warstwie (wtedy `ci/compare_oci.py`,
+dziś `tools/internal/oci`).
 
 Czasy modyfikacji są **ustawiane** na czas commita, a nie tylko przycinane.
 `rewrite-timestamp` w BuildKit przycina wyłącznie czasy nowsze od
@@ -414,13 +415,13 @@ i z warstw w pamięci podręcznej, czyli od stanu buildera. Pierwsza wersja
 tej decyzji twierdziła, że dwa sterowniki BuildKit dają ten sam obraz; test,
 na którym to oparłem, brał warstwy z pamięci podręcznej. Po poprawce:
 identyczny digest przy buildzie z pamięcią podręczną, od zera, na sterowniku
-lokalnym i na tym z CI. `ci/check-reproducible.sh` porównuje build z pamięcią
+lokalnym i na tym z CI. `dft check reproducible` porównuje build z pamięcią
 podręczną z buildem od zera w każdym pipeline'ie.
 
 Zgodność z CI zależy od wersji BuildKit, bo frontend Dockerfile jest w nią
 wbudowany — a `setup-buildx-action` brał przesuwalny tag. CI używa teraz
 BuildKitu przypiętego digestem (`DF_BUILDKIT_IMAGE` w `ci/pins.env`), w tej samej
-wersji co lokalny Docker; `check-reproducible.sh` ostrzega, gdy lokalna wersja
+wersji co lokalny Docker; `dft check reproducible` ostrzega, gdy lokalna wersja
 się rozjedzie.
 
 **Korekta (2026-10-06): atestacja nie docierała do rejestru.** Ta decyzja
@@ -428,11 +429,11 @@ twierdziła, że obrazy publikowane mają atestację pochodzenia. Rejestr mówi�
 innego: dla każdego commita z `main` w GHCR leżał pojedynczy manifest Docker
 v2, bez indeksu i bez manifestu atestacji. Publikacja szła przez
 `--output type=docker` i `docker push` — BuildKit tworzył atestację, ale do
-rejestru trafiała kopia z magazynu demona, już bez niej. Teraz `build.sh`
+rejestru trafiała kopia z magazynu demona, już bez niej. Teraz `dft build`
 publikuje prosto z BuildKitu (`type=image,push=true`, `--provenance=mode=max`)
 i przy każdej publikacji sprawdza w rejestrze, że indeks ma manifest atestacji,
 a konfiguracja obrazu — czyli warstwy po rozpakowaniu — jest ta sama co w
-obrazie, który przeszedł sprawdzenia (`df_verify_published_image`). Digest
+obrazie, który przeszedł sprawdzenia (`tools/internal/registry`). Digest
 opublikowanego obrazu jest wyjściem zadania `build` i trafia do jego
 podsumowania.
 
@@ -485,8 +486,8 @@ przegląd. Warunki, bez których to byłoby niebezpieczne albo nie działało:
   (decyzja 23); przeniesienie jej do Go wymagałoby budowania kodu
   z repozytorium w workflowie, który trzyma klucz aplikacji z prawem zapisu.
 - **Nowe wydanie Alpine to nie łatka.** Pod tym samym tagiem `3.14-alpine`
-  pojawia się też nowe wydanie Alpine — nowy musl i OpenSSL. `ci/check-image-base.sh`
-  porównuje zbudowany obraz z `DF_BASE_ALPINE` w `ci/pins.env` i zatrzymuje build,
+  pojawia się też nowe wydanie Alpine — nowy musl i OpenSSL. Bramka bazy obrazu
+  (`dft check base`) porównuje zbudowany obraz z `DF_BASE_ALPINE` w `ci/pins.env` i zatrzymuje build,
   dopóki człowiek nie podbije tej wartości w tym samym PR-ze.
 - **Moduły Go narzędzi.** Łatki z `tools/go.mod` (ekosystem `gomod`) scalają
   się same, świadomie: narzędzia nie trafiają do klienta, a zadanie `test`
@@ -623,14 +624,14 @@ biegły na interpreterze hosta: lokalnie systemowy Python 3.12.3 z glibc, w CI
 wersję. Obraz biegnie na Pythonie 3.12.14 i musl, z innymi binariami
 pydantic-core, uvloop i httptools (koła musllinux zamiast manylinux). Teraz etap
 `test` w Dockerfile, zbudowany na bazie buildera, uruchamia pytest w obrazie
-(`ci/test-image.sh`, zadanie build w CI). `.python-version` przypina wersję
-testów na hoście, a `run-tests.sh` i `check-image-base.sh` pilnują, żeby Python
+(`dft test-image`, zadanie build w CI). `.python-version` przypina wersję
+testów na hoście, a `dft check versions` i `dft check base` pilnują, żeby Python
 testów, tag bazy i zbudowany obraz miały tę samą wersję.
 
 **Co tracę:** ~20 s pierwszego biegu na każdym PR-ze i testy w kontekście
 builda — `.dockerignore` przepuszcza `tests/`, choć runtime ich nie kopiuje.
 Etap `test` potrzebuje też `deploy/config/app.yml.example` spoza kontekstu
-usługi, więc bez `ci/test-image.sh` (nazwany kontekst `config`) się nie zbuduje.
+usługi, więc bez `dft test-image` (nazwany kontekst `config`) się nie zbuduje.
 
 **Kiedy zmieniam zdanie:** gdy baza zejdzie z musl (odwrócona decyzja 14) —
 wtedy testy na hoście z przypiętą wersją Pythona dają prawie to samo
@@ -694,14 +695,15 @@ ma 3.12.
 **Co tracę:** trzy rzeczy. Kod może używać składni tylko dla 3.14 (ruff już zdjął
 nawiasy w `except OSError, json.JSONDecodeError:`), więc uruchomiony systemowym
 `python3` kończy się `SyntaxError` — testy tylko przez `uv run` albo
-`./bin/mise run test`, a edytor musi wskazywać `.venv` usługi. Skrypty w `ci/`,
-które biegną na systemowym `python3` (`compare_oci.py`, wstawki w skryptach
-bashowych), zostają na 3.12 — pilnują tego `ci/ruff.toml` i mypy z
-`--python-version 3.12`. Pierwsza synchronizacja na nowej maszynie potrzebuje
+`./bin/mise run test`, a edytor musi wskazywać `.venv` usługi. Wstawki Pythona
+w skryptach bashowych, które jeszcze nie przeszły do Go (decyzja 23), biegną na
+systemowym `python3` i zostają na 3.12 — pilnuje tego `ci/ruff.toml`;
+`compare_oci.py` przeszedł do Go razem z bramką powtarzalności. Pierwsza synchronizacja na nowej maszynie potrzebuje
 sieci, bo pobiera interpreter.
 
 **Kiedy zmieniam zdanie:** gdy zależność nie ma kół musllinux dla bieżącej wersji
-Pythona (build w `test-image.sh` przerwie się, bo w obrazie nie ma kompilatora),
+Pythona (build etapu test w `dft test-image` przerwie się, bo w obrazie nie ma
+kompilatora),
 albo gdy środowisko pracy zabroni interpreterów pobieranych przez uv — wtedy
 wersja z dystrybucji i ta sama w obrazie. Kolejne wersje minor (3.15.0 wychodzi
 1.10.2026) przyjmuję po jednym–dwóch wydaniach poprawkowych: czerwony PR od
@@ -830,6 +832,74 @@ ich pody pochodzą z cudzych chartów i nie sprawdziłem ich względem profilu.
 wymaga uprawnień spoza `restricted` — wtedy osobna przestrzeń nazw dla niego,
 a nie obniżenie profilu dla API. Etykiety przejdą do Argo CD na Etapie 5,
 razem z tworzeniem przestrzeni nazw.
+
+## 32. Opóźnienie zaślepki jako szew dla bramek
+
+**Wybieram zmianę w produkcie po to, żeby bramka mogła zawieść.** Etap 1
+obiecuje zamykanie bez utraty żądań, a decyzja 6 — drain bez utraty żądania.
+Żaden endpoint nie trwał jednak dłużej niż ułamek milisekundy, więc SIGTERM
+zawsze trafiał w proces bez żądań w toku i test „żądanie w locie zostaje
+dokończone" nie miał czego sprawdzić. Zaślepka dostała `llm.stub_delay_ms`:
+opóźnienie odpowiedzi `/search` tylko dla backendu `stub`, domyślnie 0,
+odrzucane przez model przy prawdziwym backendzie. Bramka Etapu 1 uruchamia obraz
+z opóźnieniem 1,5 s, wysyła żądanie, po 0,375 s wysyła SIGTERM i wymaga
+odpowiedzi 200. Wariant negatywny z opóźnieniem 5 s, dłuższym niż
+`shutdown_grace_seconds` (3 s), musi zostać odrzucony — i jest: uvicorn
+anuluje zadanie po limicie, a klient dostaje zerwane połączenie.
+
+**Co tracę:** pole istniejące dla bramek trafia do kontraktu konfiguracji
+(`app.schema.json`, przykład dla klienta). `/search` czyta teraz konfigurację
+z `app.state`, czego wcześniej nie potrzebował. Ktoś może zostawić opóźnienie
+po teście — przy prawdziwym backendzie model to odrzuci, przy zaślepce
+spowolni tylko zaślepkę.
+
+**Kiedy zmieniam zdanie:** na Etapie 7, gdy strumieniowana odpowiedź modelu
+da prawdziwie długie żądania — wtedy bramka zamykania używa strumienia,
+a opóźnienie zostaje tylko dla e2e na `stub` (decyzja 9) albo znika.
+
+## 33. Zależności narzędzi Go: biblioteka tam, gdzie typuje dane
+
+**Wybieram osobno dla każdego obszaru, z pomiarem, a nie jedną zasadą.**
+Narzędzia rozmawiają z gitem, Dockerem, rejestrem, Kubernetesem i Helmem.
+Biblioteka wygrywa, gdy daje typowane dane i testy bez zewnętrznego systemu
+za rozsądną liczbę modułów; CLI wygrywa, gdy to on jest interfejsem albo gdy
+biblioteka niesie założenia o środowisku, które tu nie zachodzą.
+
+- **git — CLI.** Wersja artefaktu ma semantykę `git describe` i `git status`;
+  ich reimplementacja (go-git) byłaby drugą definicją wersji.
+- **Docker — CLI.** SDK (`client.FromEnv`) czyta `DOCKER_HOST`, a nie aktywny
+  kontekst CLI — tu aktywny jest `rootless`, a domyślne
+  `/var/run/docker.sock` nie istnieje; buildx i BuildKit są dostępne tylko
+  z CLI. Wyjście parsuje Go, a testy biegną na nagranych odpowiedziach.
+- **Rejestr — go-containerregistry v0.22.1.** Zastępuje `docker buildx
+  imagetools inspect --raw` i JSON parsowany wstawkami Pythona: typowany
+  indeks i manifest, uwierzytelnienie z konfiguracji Dockera (tej, którą
+  zapisuje `docker/login-action`), HTTP dla rejestru na loopbacku, rejestr
+  w pamięci do testów negatywnych bez Dockera i weryfikacja bez Dockera
+  w zadaniu promocji. Koszt zmierzony: lista budowania modułu narzędzi
+  z 18 do 60 modułów, `go mod graph` z 47 do 110 linii; do binarki trafia
+  9 modułów zewnętrznych, w tym `docker/cli` (tylko konfiguracja
+  i pomocnicy uwierzytelnienia) i logrus. Aktualizuje Dependabot (`gomod`).
+
+Publikacja sprawdzona tak jak przy wprowadzeniu atestacji: builder
+`docker-container` z BuildKitem przypiętym digestem, tymczasowy rejestr na
+127.0.0.1:5000 (`DF_REGISTRY_IMAGE`) i `DF_IMAGE_REGISTRY` zamiast łatania
+kodu. Obraz wypchnięty przez `docker push` — ten sam manifest platformy, ale
+bez indeksu i atestacji — zostaje odrzucony, podobnie jak indeks z inną
+konfiguracją niż obraz sprawdzony.
+
+**Co tracę:** go-containerregistry ciągnie `docker/cli` i jego zależności
+— więcej łatek do scalania za funkcję, którą dałoby się napisać w kilkudziesięciu
+liniach HTTP, gdyby nie uwierzytelnienie przez pomocników Dockera. Parsowanie
+wyjścia CLI (np. `docker buildx inspect`) jest kruche wobec zmian formatu;
+łapią to testy na nagranym wyjściu, ale dopiero gdy ktoś je zaktualizuje do
+nowego formatu.
+
+**Kiedy zmieniam zdanie:** dla Dockera — gdy SDK zacznie respektować kontekst
+CLI albo narzędzia przestaną budować przez buildx. Dla rejestru — gdy
+go-containerregistry przestanie być utrzymywane albo jego zależności zaczną
+dawać więcej łatek niż sam rejestr; wtedy własny klient OCI z uwierzytelnieniem
+tylko tokenem (CI) i anonimowo (GHCR publiczny).
 
 ## Czego bym dziś nie powtórzył
 

@@ -55,8 +55,9 @@ RUN uv sync --frozen --no-dev --no-install-project
 # Instalacja przez uv — wprost z katalogu i z koła — zapisywała w dist-info
 # plik uv_cache.json z ctime źródła, którego nie da się ustawić z przestrzeni
 # użytkownika; był to jedyny plik różniący dwa buildy tego samego commita
-# (znaleziony przez ci/check-reproducible.sh). Pliki skopiowane i skompilowane
-# do .pyc w trybie checked-hash są powtarzalne z samej konstrukcji.
+# (znaleziony porównaniem buildów, dziś `dft check reproducible`). Pliki
+# skopiowane i skompilowane do .pyc w trybie checked-hash są powtarzalne
+# z samej konstrukcji.
 COPY src /opt/app/src
 RUN python -m compileall -q --invalidation-mode checked-hash /opt/app/src
 
@@ -76,10 +77,10 @@ RUN if [ -n "${SOURCE_DATE_EPOCH}" ]; then \
 # manylinux; obraz biegnie na musl, z kołami musllinux — to inne binaria
 # pydantic-core, uvloop i httptools. Etap nie trafia do obrazu: runtime kopiuje
 # z buildera, nie stąd, a BuildKit buduje go tylko na żądanie
-# (--target test, ci/test-image.sh).
+# (--target test, `dft test-image`).
 #
 # Układ katalogów jak w repozytorium, bo testy sięgają po
-# deploy/config/app.yml.example ścieżką względną; ci/test-image.sh podaje ten
+# deploy/config/app.yml.example ścieżką względną; `dft test-image` podaje ten
 # katalog jako nazwany kontekst "config".
 FROM builder AS test
 

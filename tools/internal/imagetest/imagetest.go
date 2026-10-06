@@ -1,6 +1,6 @@
 // Package imagetest uruchamia testy jednostkowe w obrazie na musl — ta sama
-// baza i ta sama łatka Pythona co produkcja (etap test w Dockerfile). Port
-// ci/test-image.sh.
+// baza i ta sama łatka Pythona co produkcja (etap test w Dockerfile);
+// dawniej ci/test-image.sh.
 //
 // Zadanie test uruchamia testy na interpreterze hosta: glibc i koła
 // manylinux. Obraz biegnie na musl, z kołami musllinux. Kod, który przechodzi

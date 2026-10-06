@@ -42,7 +42,7 @@ func builder(env *environment) build.Builder {
 }
 
 // flag czyta zmienną środowiskową w postaci 0/1 — ten sam interfejs co
-// ci/build.sh (RELEASE=1, PUSH=1, NO_CACHE=1), z którego korzysta workflow.
+// dawny ci/build.sh (RELEASE=1, PUSH=1, NO_CACHE=1), z którego korzysta workflow.
 func flag(name string) (bool, error) {
 	switch os.Getenv(name) {
 	case "", "0":

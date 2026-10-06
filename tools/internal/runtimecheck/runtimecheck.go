@@ -1,5 +1,5 @@
 // Package runtimecheck to warunki zakończenia Etapu 1 sprawdzane na
-// zbudowanym obrazie — port ci/check-runtime.sh, rozszerzony o złą
+// zbudowanym obrazie (dawniej ci/check-runtime.sh), rozszerzone o złą
 // konfigurację (U11b) i żądanie w locie przy SIGTERM (U3).
 package runtimecheck
 
