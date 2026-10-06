@@ -263,11 +263,18 @@ func DockerTag(version string) string {
 // DefaultOwner — właściciel repozytorium, gdy GITHUB_REPOSITORY_OWNER jest pusty.
 const DefaultOwner = "mateuszf757"
 
-// ImageName zwraca nazwę obrazu usługi w GHCR. Ścieżka obrazu w rejestrze
-// jest małymi literami, a nazwa konta GitHuba nie musi być.
-func ImageName(owner, service string) string {
-	if owner == "" {
-		owner = DefaultOwner
+// ImageName zwraca nazwę obrazu usługi: <rejestr>/docfind-<usługa>.
+//
+// Rejestr domyślnie to GHCR konta właściciela; ścieżka obrazu w rejestrze jest
+// małymi literami, a nazwa konta GitHuba nie musi być. registry (DF_IMAGE_REGISTRY)
+// zastępuje go w całości — publikację sprawdza się wtedy na tymczasowym
+// rejestrze na loopbacku tym samym kodem, zamiast go łatać.
+func ImageName(registry, owner, service string) string {
+	if registry == "" {
+		if owner == "" {
+			owner = DefaultOwner
+		}
+		registry = "ghcr.io/" + strings.ToLower(owner)
 	}
-	return fmt.Sprintf("ghcr.io/%s/docfind-%s", strings.ToLower(owner), service)
+	return fmt.Sprintf("%s/docfind-%s", strings.TrimSuffix(registry, "/"), service)
 }

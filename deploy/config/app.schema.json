@@ -85,6 +85,14 @@
           "exclusiveMinimum": 0,
           "title": "Max Fragments",
           "type": "integer"
+        },
+        "stub_delay_ms": {
+          "default": 0,
+          "description": "Sztuczne opóźnienie odpowiedzi zaślepki w milisekundach, tylko dla backendu stub. Bramki potrzebują żądania, które trwa: zamykanie przy SIGTERM ma je dokończyć, a drain ma przejść bez jego utraty. W produkcji 0.",
+          "maximum": 60000,
+          "minimum": 0,
+          "title": "Stub Delay Ms",
+          "type": "integer"
         }
       },
       "title": "LlmConfig",

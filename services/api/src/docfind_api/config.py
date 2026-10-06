@@ -103,11 +103,30 @@ class LlmConfig(StrictModel):
     model: str | None = None
     max_context: int = Field(default=8192, gt=0, description="Limit kontekstu modelu w tokenach")
     max_fragments: int = Field(default=8, gt=0, description="Ile fragmentów trafia do promptu")
+    stub_delay_ms: int = Field(
+        default=0,
+        ge=0,
+        le=60_000,
+        description=(
+            "Sztuczne opóźnienie odpowiedzi zaślepki w milisekundach, tylko dla backendu stub. "
+            "Bramki potrzebują żądania, które trwa: zamykanie przy SIGTERM ma je dokończyć, "
+            "a drain ma przejść bez jego utraty. W produkcji 0."
+        ),
+    )
 
     @model_validator(mode="after")
     def _real_backend_requires_endpoint(self) -> LlmConfig:
         if self.backend is not LlmBackend.STUB and self.endpoint is None:
             raise ValueError(f"backend '{self.backend.value}' wymaga podania 'endpoint'")
+        return self
+
+    @model_validator(mode="after")
+    def _delay_only_for_stub(self) -> LlmConfig:
+        # Opóźnienie przy prawdziwym modelu nic by nie symulowało — dokładałoby
+        # czas do prawdziwej odpowiedzi. Odrzucone, zanim ktoś zostawi je
+        # w konfiguracji produkcyjnej po teście.
+        if self.backend is not LlmBackend.STUB and self.stub_delay_ms:
+            raise ValueError("stub_delay_ms dotyczy tylko backendu 'stub'")
         return self
 
 

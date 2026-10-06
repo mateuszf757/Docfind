@@ -15,9 +15,24 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/versions"
 )
 
-const checkUsage = "dft check <versions|go|reproducible-tools>"
+const checkUsage = "dft check <versions|go|reproducible-tools|runtime|base|reproducible|negatives> [usługa] | dft check published <obraz@digest> <digest konfiguracji>"
 
 func runCheck(ctx context.Context, env *environment, args []string) error {
+	if len(args) == 0 {
+		return cli.Usage("użycie: %s", checkUsage)
+	}
+	switch args[0] {
+	case "runtime":
+		return runCheckRuntime(ctx, env, args[1:])
+	case "base":
+		return runCheckBase(ctx, env, args[1:])
+	case "reproducible":
+		return runCheckReproducible(ctx, env, args[1:])
+	case "published":
+		return runCheckPublished(ctx, env, args[1:])
+	case "negatives":
+		return runCheckNegatives(ctx, env, args[1:])
+	}
 	if err := expectArgs(args, 1, 1, checkUsage); err != nil {
 		return err
 	}
