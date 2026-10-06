@@ -306,6 +306,17 @@ k3d image import "$image:$deploy_tag" --cluster "$cluster" --mode direct >/dev/n
 kubectl create namespace "$namespace" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl label namespace "$namespace" docfind.io/gateway-routes=allowed --overwrite >/dev/null
 
+# Pod Security restricted (decyzja 31): API server odrzuca pod, który nie
+# spełnia profilu — także taki, który nie przeszedł przez CI, jak sonda drainu.
+# Wersja profilu przypięta do wersji klastra: "latest" zmieniałby reguły razem
+# z aktualizacją Kubernetesa, bez przeglądu.
+psa_version="v${DF_KUBERNETES_VERSION%.*}"
+kubectl label namespace "$namespace" --overwrite \
+  pod-security.kubernetes.io/enforce=restricted \
+  pod-security.kubernetes.io/enforce-version="$psa_version" \
+  pod-security.kubernetes.io/warn=restricted \
+  pod-security.kubernetes.io/warn-version="$psa_version" >/dev/null
+
 df_log "helm upgrade --install $release"
 helm upgrade --install "$release" "$repo_root/deploy/charts/docfind" \
   --namespace "$namespace" \
@@ -316,8 +327,81 @@ helm upgrade --install "$release" "$repo_root/deploy/charts/docfind" \
 kubectl -n "$namespace" rollout status "deployment/$release-api" --timeout=120s
 kubectl -n "$namespace" get pods -o wide -l app.kubernetes.io/component=api
 
-# To, co stoi na klastrze, musi się zgadzać z gitem — ta sama zasada co
-# przy budowaniu obrazu, tylko sprawdzana na działającym podzie.
-reported=$(kubectl -n "$namespace" exec "deployment/$release-api" -- \
-  python -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8000/version").read().decode())')
-df_log "/version na klastrze: $reported"
+# To, co stoi na klastrze, musi się zgadzać z gitem — ta sama zasada co przy
+# budowaniu obrazu (df_verify_image_identity), sprawdzana na każdym podzie.
+# Wcześniej /version jednego poda, wybranego przez `exec deployment/…`, było
+# tylko wypisywane: inny commit na klastrze nie zatrzymywał niczego.
+#
+# Pody wygaszane po rolloutcie (z deletionTimestamp) przez preStop jeszcze
+# odpowiadają starą wersją, więc są pomijane; liczba sprawdzonych podów musi
+# się zgadzać z liczbą replik.
+verify_deployed_identity() {
+  local deployment="$1" container="$2" expected_image="$3" expected_version="$4" expected_commit="$5"
+  local deployment_json selector replicas pods_json pods pod image reported version commit checked=0 failures=0
+
+  # Wywołana w `|| { … }`, więc set -e w jej wnętrzu nie działa — każdy
+  # odczyt, od którego zależy werdykt, jest sprawdzany jawnie.
+  deployment_json=$(kubectl -n "$namespace" get deployment "$deployment" -o json) || return 1
+  read -r selector replicas < <(python3 -c '
+import json
+import sys
+
+spec = json.loads(sys.argv[1])["spec"]
+labels = spec["selector"]["matchLabels"]
+print(",".join(f"{key}={value}" for key, value in sorted(labels.items())), spec["replicas"])
+' "$deployment_json")
+  if [[ -z "$selector" || ! "$replicas" =~ ^[0-9]+$ ]]; then
+    echo "BŁĄD: nie udało się odczytać selektora i liczby replik Deploymentu $deployment" >&2
+    return 1
+  fi
+
+  pods_json=$(kubectl -n "$namespace" get pods -l "$selector" -o json) || return 1
+  pods=$(python3 -c '
+import json
+import sys
+
+container = sys.argv[2]
+for pod in json.loads(sys.argv[1])["items"]:
+    if pod["metadata"].get("deletionTimestamp"):
+        continue
+    images = [c["image"] for c in pod["spec"]["containers"] if c["name"] == container]
+    print(pod["metadata"]["name"], images[0] if images else "-")
+' "$pods_json" "$container")
+
+  while read -r pod image; do
+    [[ -n "$pod" ]] || continue
+    checked=$((checked + 1))
+    if [[ "$image" != "$expected_image" ]]; then
+      echo "NIESPEŁNIONE: $pod uruchamia $image, oczekiwano $expected_image" >&2
+      failures=$((failures + 1))
+      continue
+    fi
+    # </dev/null: pętla czyta listę podów ze standardowego wejścia.
+    if ! reported=$(kubectl -n "$namespace" exec "$pod" -c "$container" -- \
+        python -c 'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8000/version", timeout=5).read().decode())' \
+        </dev/null); then
+      echo "NIESPEŁNIONE: $pod nie odpowiada na /version" >&2
+      failures=$((failures + 1))
+      continue
+    fi
+    version=$(df_json_field version <<<"$reported")
+    commit=$(df_json_field commit <<<"$reported")
+    if [[ "$version" != "$expected_version" || "$commit" != "$expected_commit" ]]; then
+      echo "NIESPEŁNIONE: $pod raportuje $version ($commit), oczekiwano $expected_version ($expected_commit)" >&2
+      failures=$((failures + 1))
+    else
+      df_log "$pod: /version $version, commit ${commit:0:12}"
+    fi
+  done <<<"$pods"
+
+  if (( checked != replicas )); then
+    echo "NIESPEŁNIONE: sprawdzone pody: $checked, a Deployment $deployment ma $replicas replik" >&2
+    failures=$((failures + 1))
+  fi
+  (( failures == 0 ))
+}
+
+verify_deployed_identity "$release-api" api "$image:$deploy_tag" "$(df_version)" "$(df_commit)" || {
+  echo "BŁĄD: na klastrze działa coś innego niż obraz zbudowany z tego drzewa" >&2
+  exit 1
+}

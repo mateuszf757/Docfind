@@ -42,6 +42,11 @@
               "description": "Wymagany przy renderze (szablon odmawia pustego) — bez domyślnego latest.",
               "type": "string"
             },
+            "digest": {
+              "description": "Opcjonalny digest obrazu z publikacji w CI; podany daje repository:tag@digest. Pełny sha256 — skrócony albo z literówką odpadłby dopiero przy pobieraniu obrazu na węźle.",
+              "type": "string",
+              "pattern": "^(sha256:[a-f0-9]{64})?$"
+            },
             "pullPolicy": {
               "enum": [
                 "Always",

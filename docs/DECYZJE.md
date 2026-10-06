@@ -422,10 +422,25 @@ BuildKitu przypiętego digestem (`DF_BUILDKIT_IMAGE` w `ci/lib.sh`), w tej samej
 wersji co lokalny Docker; `check-reproducible.sh` ostrzega, gdy lokalna wersja
 się rozjedzie.
 
+**Korekta (2026-10-06): atestacja nie docierała do rejestru.** Ta decyzja
+twierdziła, że obrazy publikowane mają atestację pochodzenia. Rejestr mówił co
+innego: dla każdego commita z `main` w GHCR leżał pojedynczy manifest Docker
+v2, bez indeksu i bez manifestu atestacji. Publikacja szła przez
+`--output type=docker` i `docker push` — BuildKit tworzył atestację, ale do
+rejestru trafiała kopia z magazynu demona, już bez niej. Teraz `build.sh`
+publikuje prosto z BuildKitu (`type=image,push=true`, `--provenance=mode=max`)
+i przy każdej publikacji sprawdza w rejestrze, że indeks ma manifest atestacji,
+a konfiguracja obrazu — czyli warstwy po rozpakowaniu — jest ta sama co w
+obrazie, który przeszedł sprawdzenia (`df_verify_published_image`). Digest
+opublikowanego obrazu jest wyjściem zadania `build` i trafia do jego
+podsumowania.
+
 **Co tracę:** trzy rzeczy. Pole `built_at` w `/version` zmieniło nazwę na
 `source_date`, bo podaje czas commita, a nie budowania — zmiana kontraktu.
 Lokalne obrazy nie mają atestacji pochodzenia, bo ta z natury zmienia digest
-co build; publikowane do rejestru mają. Pakiet `docfind_api` nie jest
+co build; publikowane do rejestru mają, a ich digest indeksu jest przez to
+inny przy każdej publikacji — tożsamością obrazu w rejestrze jest digest
+z konkretnej publikacji, nie z przebudowy. Pakiet `docfind_api` nie jest
 zainstalowany, więc nie ma go w `importlib.metadata` — kod nie korzysta
 z tego, ale narzędzie do inwentaryzacji zależności go nie zobaczy.
 
@@ -661,6 +676,73 @@ ze swoimi logami — musi wziąć nasz z odpowiedzi.
 balancer klienta, który sam nadaje identyfikator — wtedy `Preserve` na
 połączeniach tylko od niego.
 
+## 30. Wersje z tagów `vX.Y.Z`, numer minor to etap
+
+**Wybieram schemat, który czyta się razem z planem projektu.** Wydanie to tag
+adnotowany `vX.Y.Z` na commicie z `main`, w schemacie `0.<etap>.<łatka>`:
+`v0.3.0` to Etap 3, poprawki w jego obrębie podbijają łatkę, `v0.4.0` przychodzi
+z Etapem 4, a `v1.0.0` z pierwszą dostawą do klienta (Etap 10). Tag jest
+jedynym źródłem wersji. `df_version` daje na nim `X.Y.Z`, a między tagami
+`X.Y.(Z+1)-dev.<commity od tagu>+<sha>`, czyli wersję przedpremierową
+następnej łatki. Surowe `git describe` (`0.3.0-5-gabc1234`) SemVer czyta jako
+wersję starszą od `0.3.0`, więc zakres wersji — chart OCI, Argo CD — ustawiłby
+obraz z `main` przed wydaniem, z którego wyrósł. Tag w innej postaci
+(`v0.4.0-rc.1`, literówka) nie wyznacza wersji i jest pomijany zamiast
+zatrzymywać buildy: tagów `v*` nie da się usunąć, więc błąd trwałby wiecznie.
+
+Build wydania (`RELEASE=1`, w CI na tagu) wymaga czystego drzewa na commicie
+z takim tagiem i publikuje tylko tag wersji. Tag `<sha12>` zostaje przy
+obrazie z `main`: commit z tagiem buduje się dwa razy, z różnym
+`version.json`, i wspólny tag przeskakiwałby z jednego obrazu na drugi. Tagi
+chroni ruleset (`.github/rulesets/tags.json`) — nie da się ich przesunąć ani
+usunąć.
+
+Przy okazji wyszedł błąd poprzedniej wersji `df_version`: `git describe
+--dirty` nie widzi plików nieśledzonych, więc build na tagu z nowym, jeszcze
+niedodanym plikiem podałby się za czyste wydanie. Teraz brud ocenia
+`git status --porcelain`, jak na ścieżce bez tagu; pilnuje tego
+`ci/test-lib.sh`.
+
+**Co tracę:** numer minor nic nie mówi o zgodności interfejsu. Przy `0.x`
+SemVer jej nie obiecuje, ale klient z Etapu 10 może tak to czytać. Wersja
+deweloperska nazywa następną łatkę (`0.3.1-dev…`), choć następnym wydaniem może
+być `0.4.0` — porządek się zgadza, nazwa nie. Pomyłki w tagu nie da się cofnąć
+przesunięciem, tylko kolejnym numerem. Obraz z `main` i obraz wydania tego
+samego commita mają różne digesty, bo różnią się wersją w `version.json`, więc
+„ten sam digest na obu klastrach" z Etapu 9 wymaga promowania obrazu wydania,
+a nie obrazu z `main`.
+
+**Kiedy zmieniam zdanie:** na Etapie 10, gdy chart stanie się publicznym
+interfejsem — wtedy jego wersja idzie za zgodnością (zmiana łamiąca = major),
+niezależnie od numeru etapu. Albo gdy promocja z Etapu 9 będzie potrzebowała
+kandydatów wydań — wtedy schemat dostaje `-rc.N`, a `df_version` przestaje je
+pomijać.
+
+## 31. Pod Security `restricted` na przestrzeni nazw aplikacji
+
+**Wybieram regułę w API serverze, nie tylko w CI.** `check_policy.py` pilnuje
+tego, co przechodzi przez pipeline. Pod utworzony skryptem — jak sonda drainu,
+która nie miała `securityContext` — nie przechodził przez nic. Przestrzeń nazw
+`docfind` dostaje etykiety Pod Security Admission `enforce` i `warn` na poziomie
+`restricted`, z wersją profilu przypiętą do wersji klastra (`v1.36` z
+`DF_KUBERNETES_VERSION`). Nadaje je `deploy-local.sh`, tak jak etykietę
+dopuszczającą trasy, bo to zgoda platformy, a nie aplikacji. Spec poda API
+spełniał profil od Etapu 1. Sonda dostała `securityContext` w tej samej
+zmianie, więc regresja wychodzi przy `kubectl apply`, a nie w audycie.
+
+**Co tracę:** w `docfind` nie uruchomię już doraźnie poda bez pełnego
+`securityContext`. `kubectl run -it --image=busybox` i kontener debugujący
+z rootem zostaną odrzucone — diagnoza idzie przez `kubectl debug
+--profile=restricted` albo z innej przestrzeni nazw. Wersję profilu trzeba
+podbijać razem z Kubernetesem. Pozostałe przestrzenie nazw (`gateway`,
+`cert-manager`, `envoy-gateway-system`, `kube-system`) zostają bez etykiet:
+ich pody pochodzą z cudzych chartów i nie sprawdziłem ich względem profilu.
+
+**Kiedy zmieniam zdanie:** gdy komponent, który musi mieszkać w `docfind`,
+wymaga uprawnień spoza `restricted` — wtedy osobna przestrzeń nazw dla niego,
+a nie obniżenie profilu dla API. Etykiety przejdą do Argo CD na Etapie 5,
+razem z tworzeniem przestrzeni nazw.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta
@@ -719,3 +801,16 @@ wołał `uv`, którego zadanie `build` w CI nie ma — lokalnie było, więc prz
 Gorzej, że brak narzędzia skończył się komunikatem „build nie jest powtarzalny”:
 awaria narzędzia wyglądała jak wynik. Dziś skrypt sprawdza swoje wymagania na
 starcie, a kod wyjścia rozdziela wynik negatywny od awarii.
+
+**Obietnica wyprowadzona z komendy, a nie z miejsca docelowego.** Decyzja 21
+twierdziła, że obrazy w rejestrze mają atestację pochodzenia, bo build przy
+publikacji jej nie wyłączał. Nikt nie zapytał rejestru, a ten od pierwszej
+publikacji trzymał sam manifest: kopia szła przez magazyn demona i
+`docker push`, który atestacji nie niósł. To ta sama lekcja co przy
+`dependabot.yml`, tylko z drugiej strony — tam słabszy system przyjął
+konfigurację, tu żaden nie został zapytany o efekt. Obok siedziało podobne
+twierdzenie bez sprawdzenia: `deploy-local.sh` miał komentarz „musi się
+zgadzać z gitem", a `/version` jednego poda tylko wypisywał. Dziś twierdzenie
+o artefakcie sprawdza skrypt na artefakcie w miejscu docelowym, przy każdym
+przebiegu: rejestr przy publikacji, każdy pod po wdrożeniu, API server przy
+tworzeniu poda.

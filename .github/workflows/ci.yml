@@ -1,8 +1,13 @@
 name: ci
 
 # PR      → lint, testy, build obrazu i jego warunki; nic nie opuszcza pipeline'u
-# main    → dodatkowo publikacja obrazu otagowanego commitem
-# tag v*  → build wydania; brudne drzewo odrzucone, obraz otagowany wersją
+# main    → dodatkowo publikacja obrazu otagowanego wersją i commitem
+# tag v*  → build wydania: tylko czyste drzewo na tagu vX.Y.Z, obraz otagowany
+#           samą wersją (decyzja 30)
+#
+# Publikacja niesie atestację pochodzenia, a digest opublikowanego obrazu jest
+# wyjściem zadania build i trafia do jego podsumowania — promuje się digest,
+# nie tag.
 #
 # Build obrazu biegnie także na PR-ach, bo zmiana zależności albo obrazu
 # bazowego sprawdzona samymi testami jednostkowymi trafiłaby do main, zanim
@@ -85,6 +90,10 @@ jobs:
       contents: read
       # Publikacja obrazu do GHCR — tylko przy push, ale zadanie jest jedno.
       packages: write
+    # Puste na PR-ach, bo nic nie jest publikowane.
+    outputs:
+      image: ${{ steps.publish.outputs.image }}
+      digest: ${{ steps.publish.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -144,7 +153,10 @@ jobs:
       - name: powtarzalność builda
         run: ./ci/check-reproducible.sh api
 
+      # build.sh publikuje z BuildKitu z atestacją pochodzenia i sprawdza
+      # w rejestrze, że konfiguracja obrazu to ta z obrazu przetestowanego wyżej.
       - name: publikacja obrazu api
+        id: publish
         if: github.event_name == 'push'
         env:
           RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}

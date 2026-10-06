@@ -83,6 +83,13 @@ kubectl -n "$namespace" delete pod "$probe_pod" --ignore-not-found --wait=true >
 # Poza kodem HTTP każde żądanie zapisuje kod wyjścia curl i czasy faz. Bez tego
 # "000" nie mówi, co zawiodło: exit=6 albo zawieszone dns= to rozwiązywanie
 # nazwy (CoreDNS), connect=0 przy rozwiązanej nazwie to brak endpointu.
+#
+# Przestrzeń nazw ma profil Pod Security restricted (deploy-local.sh, decyzja
+# 31), więc sonda spełnia go jak każdy inny pod: bez tokenu konta usługi,
+# nie jako root, bez eskalacji i uprawnień, z seccomp. Obraz deklaruje
+# użytkownika nazwą (curl_user), a runAsNonRoot sprawdza tylko numeryczny UID —
+# stąd jawne 101:102 z /etc/passwd obrazu z DF_CURL_IMAGE. Zasoby według
+# decyzji 16: requesty i limit pamięci, bez limitu CPU.
 kubectl apply -f - >/dev/null <<EOF
 apiVersion: v1
 kind: Pod
@@ -92,11 +99,29 @@ metadata:
 spec:
   restartPolicy: Never
   terminationGracePeriodSeconds: 1
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 101
+    runAsGroup: 102
+    seccompProfile:
+      type: RuntimeDefault
   nodeSelector:
     kubernetes.io/hostname: $probe_node
   containers:
     - name: probe
       image: $probe_image
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          memory: 64Mi
       command:
         - sh
         - -c
