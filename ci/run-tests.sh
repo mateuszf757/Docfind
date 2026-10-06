@@ -2,8 +2,12 @@
 # Lint, typy i testy jednostkowe. Uruchamiane identycznie lokalnie i w pipelinie —
 # jeśli przechodzi u ciebie, przechodzi w CI, bo to ten sam skrypt.
 #
-#   ./bin/mise run test    narzędzia w wersjach i z sumami z mise.lock
-#   ci/run-tests.sh        to samo, jeśli te narzędzia są już w PATH
+#   ./bin/mise run test    całość: ten skrypt i bramki w Go (spójność wersji,
+#                          kod narzędzi) — narzędzia z mise.lock
+#   ci/run-tests.sh        tylko ta część, jeśli narzędzia są już w PATH
+#
+# W trakcie przenoszenia do Go (decyzja 23): spójność wersji i testy funkcji
+# tożsamości są już w dft (`dft check versions`, `dft check go`).
 
 set -euo pipefail
 
@@ -14,46 +18,13 @@ source "$repo_root/ci/lib.sh"
 # Wymagania sprawdzane na starcie i zgłaszane razem. Brak narzędzia w połowie
 # biegu wyglądałby jak błąd w kodzie, a nie w środowisku.
 missing=()
-for tool in uv python3 shellcheck actionlint zizmor helm kubeconform kubectl; do
+for tool in uv shellcheck actionlint zizmor helm kubeconform; do
   command -v "$tool" >/dev/null || missing+=("$tool")
 done
 if (( ${#missing[@]} > 0 )); then
   echo "BŁĄD: brak w PATH: ${missing[*]}" >&2
   echo "Uruchom przez mise, które instaluje je w wersjach z mise.lock: ./bin/mise run test" >&2
   exit 2
-fi
-
-# --- spójność wersji ---------------------------------------------------------
-# Te same wersje w miejscach, których żaden automat nie synchronizuje. Rozjazd
-# ma wyjść tutaj, a nie jako obraz na innym Pythonie niż testy.
-
-# kubectl z mise.toml ↔ Kubernetes klastra i schematów kubeconform (ci/lib.sh).
-kubectl_version=$(kubectl version --client -o json \
-  | python3 -c 'import json, sys; print(json.load(sys.stdin)["clientVersion"]["gitVersion"])')
-if [[ "$kubectl_version" != "v$DF_KUBERNETES_VERSION" ]]; then
-  echo "BŁĄD: kubectl $kubectl_version (mise.toml), a klaster i schematy to v$DF_KUBERNETES_VERSION (ci/lib.sh)" >&2
-  exit 1
-fi
-
-# Python: .python-version (testy) ↔ tag bazy w Dockerfile (produkcja). Nowa
-# wersja bazy od Dependabota zatrzyma się tutaj, dopóki testy nie przejdą na nią.
-python_minor=$(df_python_minor)
-mapfile -t base_minors < <(
-  grep -oE '^FROM python:[0-9]+\.[0-9]+' "$repo_root/services/api/Dockerfile" | cut -d: -f2 | sort -u
-)
-if [[ "${base_minors[*]}" != "$python_minor" ]]; then
-  echo "BŁĄD: testy biegną na Pythonie $python_minor (services/api/.python-version)," \
-    "a obraz na ${base_minors[*]:-?} (services/api/Dockerfile)" >&2
-  exit 1
-fi
-
-# uv: lokalny ↔ Dockerfile. W CI równe z konstrukcji — ci.yml instaluje wersję
-# odczytaną z Dockerfile — więc lokalnie wystarczy ostrzeżenie. Twardy błąd
-# zatrzymywałby pracę po każdej cotygodniowej łatce uv od Dependabota.
-uv_expected=$(df_uv_version)
-uv_actual=$(uv --version | awk '{print $2}')
-if [[ "$uv_actual" != "$uv_expected" ]]; then
-  echo "UWAGA: lokalny uv $uv_actual, a Dockerfile i CI używają $uv_expected — uv self update $uv_expected" >&2
 fi
 
 # --- zależności Pythona ------------------------------------------------------
@@ -69,14 +40,10 @@ df_log "uv sync --locked"
 # różne uwagi; tak padł kiedyś pipeline na shellchecku 0.9.0 z apt.
 #
 # Glob rozwija bash, więc musi to zrobić w korzeniu repozytorium — inaczej
-# wywołanie spoza niego przekazałoby dosłowne "ci/*.sh".
+# wywołanie spoza niego przekazałoby dosłowne "ci/*.sh". ci/dft nie ma
+# rozszerzenia, więc jest wymieniony osobno.
 df_log "shellcheck"
-(cd "$repo_root" && shellcheck ci/*.sh)
-
-# Wersja z tagów trafia do /version, etykiet obrazu i tagów w rejestrze,
-# a błąd w jej logice nie psuje żadnego testu aplikacji.
-df_log "testy ci/lib.sh"
-"$repo_root/ci/test-lib.sh"
+(cd "$repo_root" && shellcheck ci/*.sh ci/dft)
 
 # Workflowy GitHuba sprawdzane actionlintem: składnia, wyrażenia, nazwy
 # uprawnień, a w blokach run także shellcheck. Błąd w workflowie wychodzi
@@ -164,7 +131,7 @@ crd_schema_dir="$render_dir/crd-schemas"
 cat "$render_dir/envoy-gateway.yaml" "$render_dir/cert-manager.yaml" \
   | (cd "$repo_root/services/api" && uv run --frozen python "$repo_root/ci/crd_schemas.py" "$crd_schema_dir")
 
-# Schematy z commita przypiętego w ci/lib.sh zamiast domyślnej gałęzi master.
+# Schematy z commita przypiętego w ci/pins.env zamiast domyślnej gałęzi master.
 # Pojedyncze cudzysłowy są celowe: {{ … }} rozwija kubeconform, nie powłoka.
 # shellcheck disable=SC2016
 schema_location='https://raw.githubusercontent.com/yannh/kubernetes-json-schema/'"$DF_KUBECONFORM_SCHEMA_COMMIT"'/{{ .NormalizedKubernetesVersion }}-standalone{{ .StrictSuffix }}/{{ .ResourceKind }}{{ .KindSuffix }}.json'

@@ -1,5 +1,5 @@
 # Envoy Gateway — kontroler Gateway API (decyzja 11).
-# Wersja charta i suma: ci/lib.sh (DF_ENVOY_GATEWAY_CHART_*).
+# Wersja charta i suma: ci/pins.env (DF_ENVOY_GATEWAY_CHART_*).
 #
 # Chart instaluje kontroler. Pody proxy Envoy, przez które płynie ruch, tworzy
 # kontroler w trakcie działania, z zasobu EnvoyProxy w charcie

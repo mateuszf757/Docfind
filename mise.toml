@@ -11,10 +11,11 @@
 #   ./bin/mise tasks           lista zadań
 #   ./bin/mise exec -- kubectl get pods    narzędzie z przypiętej wersji
 #
-# Logika zostaje w skryptach ci/*.sh, a zadania tylko je wołają — każdy skrypt
-# działa także bez mise, jeśli narzędzia są w PATH. Zadania TOML biegną w
-# `sh -o errexit -c` (dash, bez pipefail), więc nie ma w nich nic poza
-# wywołaniem skryptu.
+# Logika narzędzi i bramek jest w Go (tools/, program dft — decyzja 23).
+# Zadania wołają ci/dft, który buduje program z bieżącego drzewa i go
+# uruchamia; skrypty ci/*.sh, które jeszcze zostały, przechodzą do Go
+# w kolejnych zmianach. Zadania TOML biegną w `sh -o errexit -c` (dash, bez
+# pipefail), więc nie ma w nich nic poza wywołaniem programu.
 #
 # Czego mise tu nie zarządza:
 # - uv — jedynym źródłem wersji jest Dockerfile, gdzie przypięcie digestem
@@ -24,7 +25,8 @@
 # - Python — wersję do testów wybiera uv z services/api/.python-version,
 #   w produkcji decyduje obraz bazowy. Trzeci menedżer interpretera byłby
 #   trzecim miejscem, w którym wersja może się rozjechać.
-# - obrazy (k3s, BuildKit, curl) i chart CoreDNS — przypięte w ci/lib.sh.
+# - obrazy (k3s, BuildKit, curl), charty i commit schematów — przypięte
+#   w ci/pins.env, pliku danych czytanym przez dft i workflowy.
 #
 # Aktualizacja narzędzia: zmień wersję poniżej, potem `./bin/mise lock`
 # i `./bin/mise install`. mise sam odrzuca wydania młodsze niż 24 h
@@ -44,8 +46,8 @@ lockfile = true
 locked = true
 
 [tools]
-# W tej samej wersji co klaster (DF_KUBERNETES_VERSION w ci/lib.sh) —
-# run-tests.sh pilnuje zgodności.
+# W tej samej wersji co klaster (DF_KUBERNETES_VERSION w ci/pins.env) —
+# pilnuje tego `dft check versions`.
 kubectl = "1.36.4"
 k3d = "5.9.0"
 helm = "4.3.0"
@@ -61,6 +63,11 @@ gh = "2.101.0"
 # Do ci/check-tls.sh — `cmctl renew` wymusza odnowienie certyfikatu tak samo,
 # jak zrobiłby to cert-manager przed jego wygaśnięciem.
 cmctl = "2.6.1"
+# Toolchain narzędzi i bramek z tools/ (decyzja 23). Ta sama wersja stoi
+# w dyrektywie `go` w tools/go.mod — pilnuje tego `dft check versions`.
+# Aktualizacja: wersja tutaj, `./bin/mise lock`, w tools/
+# `go mod edit -go=<wersja>`, potem `./bin/mise run test`.
+go = "1.27.1"
 
 [env]
 # Kubeconfig projektu zamiast globalnego ~/.kube/config. Lokalny klaster nie
@@ -68,10 +75,35 @@ cmctl = "2.6.1"
 # uruchomiony przez mise widzi tylko ten klaster. Tę samą ścieżkę ustawia
 # ci/lib.sh dla skryptów uruchamianych bez mise.
 KUBECONFIG = "{{config_root}}/.cache/kubeconfig"
+# Polecenie `go` nie pobiera innego toolchainu, gdy go.mod zażąda nowszego —
+# kończy się błędem. Przy domyślnym GOTOOLCHAIN=auto pobrałoby w trakcie biegu
+# toolchain, którego nie ma w mise.lock (decyzja 20: „co jeszcze to pobiera,
+# kiedy biegnie").
+GOTOOLCHAIN = "local"
+# Moduły tylko z proxy.golang.org. Przy domyślnym „…,direct" moduł, którego
+# proxy nie zwróci, jest pobierany przez git prosto z repozytorium kodu —
+# kolejne narzędzie i kolejne źródło w trakcie builda. Integralność sprawdza
+# go.sum i baza sum (GOSUMDB, domyślnie włączona).
+GOPROXY = "https://proxy.golang.org"
+# Statyczne binarki bez cgo — build nie zależy od kompilatora C hosta.
+# `-race` wymaga cgo, więc `dft check go` włącza je tylko na czas testów.
+CGO_ENABLED = "0"
 
 [tasks.test]
-description = "Lint, typy, testy, polityki, schemat — to samo co zadanie test w CI"
-run = "ci/run-tests.sh"
+description = "Spójność wersji, lint, typy, testy, polityki, schemat, kod Go — to samo co zadanie test w CI"
+run = [
+    "ci/dft check versions",
+    "ci/run-tests.sh",
+    "ci/dft check go",
+]
+
+[tasks."check:tools"]
+description = "Narzędzia z tools/ zbudowane z pamięcią podręczną i od zera dają te same bajty"
+run = "ci/dft check reproducible-tools"
+
+[tasks.pins]
+description = "Przypięte wersje dla workflowów — uv i BuildKit — do GITHUB_OUTPUT albo na ekran"
+run = "ci/dft pins github-output"
 
 [tasks.schema]
 description = "Regeneracja deploy/config/app.schema.json z modelu Pydantic"
@@ -83,7 +115,7 @@ usage = 'arg "[service]" default="api" help="Usługa z services/"'
 run = 'ci/build.sh "${usage_service}"'
 
 [tasks."check:base"]
-description = "Baza obrazu zgodna z zapisaną: Alpine z ci/lib.sh, Python z .python-version"
+description = "Baza obrazu zgodna z zapisaną: Alpine z ci/pins.env, Python z .python-version"
 usage = 'arg "[service]" default="api" help="Usługa z services/"'
 run = 'ci/check-image-base.sh "${usage_service}"'
 
@@ -108,12 +140,13 @@ description = "Cały pipeline po kolei, jak w CI (bez publikacji)"
 # `depends`: zależności mise uruchamia równolegle (jobs = 8), a te kroki
 # dzielą obraz o tym samym tagu i pamięć podręczną BuildKitu.
 run = [
-    "ci/run-tests.sh",
-    "ci/build.sh api",
-    "ci/check-image-base.sh api",
-    "ci/test-image.sh api",
-    "ci/check-runtime.sh api",
-    "ci/check-reproducible.sh api",
+    { task = "test" },
+    { task = "check:tools" },
+    { task = "build" },
+    { task = "check:base" },
+    { task = "test:image" },
+    { task = "check:runtime" },
+    { task = "check:reproducible" },
 ]
 
 [tasks."cluster:up"]

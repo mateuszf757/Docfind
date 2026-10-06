@@ -21,17 +21,17 @@ context="$repo_root/services/$service"
 [[ -d "$context" ]] || { echo "BŁĄD: brak usługi '$service' w services/" >&2; exit 1; }
 
 if [[ "${RELEASE:-0}" == "1" ]]; then
-  df_require_clean_tree
+  "$DF_DFT" identity require-clean
 fi
 
-version=$(df_version)
-tag=$(df_docker_tag "$version")
-commit=$(df_commit)
-source_date_epoch=$(df_source_date_epoch)
-source_date=$(df_source_date "$source_date_epoch")
-image=$(df_image_name "$service")
+version=$("$DF_DFT" version)
+tag=$("$DF_DFT" identity docker-tag "$version")
+commit=$("$DF_DFT" identity commit)
+source_date_epoch=$("$DF_DFT" identity source-date-epoch)
+source_date=$("$DF_DFT" identity source-date "$source_date_epoch")
+image=$("$DF_DFT" identity image "$service")
 
-# Build wydania to build wydanej wersji: df_version daje samo X.Y.Z tylko na
+# Build wydania to build wydanej wersji: dft version daje samo X.Y.Z tylko na
 # commicie z tagiem vX.Y.Z (decyzja 30). Commit bez tagu albo tag w innej
 # postaci dałby obraz wydania z wersją deweloperską.
 if [[ "${RELEASE:-0}" == "1" && ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then

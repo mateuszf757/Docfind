@@ -23,9 +23,10 @@ for tool in docker python3 tar; do
   command -v "$tool" >/dev/null || { echo "BŁĄD: brak $tool w PATH" >&2; exit 2; }
 done
 
-# Brudne drzewo dostaje bieżący czas zamiast czasu commita (df_source_date_epoch),
-# więc z definicji nie jest powtarzalne — sprawdzanie go nic by nie dowiodło.
-df_require_clean_tree
+# Brudne drzewo dostaje bieżący czas zamiast czasu commita (dft identity
+# source-date-epoch), więc z definicji nie jest powtarzalne — sprawdzanie go
+# nic by nie dowiodło.
+"$DF_DFT" identity require-clean
 
 # Oba buildy biegną na tym samym builderze, więc wersja BuildKit nie wpływa na
 # werdykt tego skryptu. Wpływa za to na twierdzenie, że lokalny obraz jest
@@ -39,7 +40,7 @@ if [[ -n "$buildkit_local" && "$buildkit_local" != "$buildkit_ci" ]]; then
   echo "UWAGA: lokalny BuildKit $buildkit_local, CI używa $buildkit_ci — lokalny digest może różnić się od tego z CI" >&2
 fi
 
-image="$(df_image_name "$service"):$(df_docker_tag "$(df_version)")"
+image="$("$DF_DFT" identity image "$service"):$("$DF_DFT" identity docker-tag)"
 work_dir=$(mktemp -d)
 trap 'rm -rf "$work_dir"' EXIT
 

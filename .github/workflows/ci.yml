@@ -47,6 +47,9 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-24.04
+    # Domyślny limit to 360 minut — zawieszony krok trzymałby runner sześć
+    # godzin. Typowy bieg trwa 2–3 minuty.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -55,11 +58,23 @@ jobs:
           # i może go odczytać każdy późniejszy krok. Skrypty nie pushują.
           persist-credentials: false
 
+      # Narzędzia z mise.lock, z sumami — te same wersje co lokalnie, w tym Go
+      # dla narzędzi z tools/ (nie Go z obrazu runnera i nie setup-go, który
+      # domyślnie włącza pamięć podręczną modułów).
+      - name: narzędzia (mise)
+        env:
+          # Tylko w tym kroku: mise sprawdza atestacje GitHuba przez API,
+          # a bez tokenu limit to 60 żądań na godzinę na adres runnera.
+          # Token tego zadania ma tylko odczyt.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./bin/mise install
+
       # Wersja uv z Dockerfile — jedynego miejsca, w którym uv jest przypięty
       # i które aktualizuje Dependabot. Bez tego setup-uv bierze najnowszego.
+      # Czyta ją dft, a nie `source ci/lib.sh` w powłoce (decyzja 23).
       - name: przypięte wersje
         id: pins
-        run: echo "uv=$(bash -c 'source ci/lib.sh && df_uv_version')" >> "$GITHUB_OUTPUT"
+        run: ./bin/mise run pins
 
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
@@ -69,23 +84,23 @@ jobs:
           # uv sync ze świeżego pobrania to kilka sekund.
           enable-cache: false
 
-      # Narzędzia z mise.lock, z sumami — te same wersje co lokalnie.
-      - name: narzędzia (mise)
-        env:
-          # Tylko w tym kroku: mise sprawdza atestacje GitHuba przez API,
-          # a bez tokenu limit to 60 żądań na godzinę na adres runnera.
-          GITHUB_TOKEN: ${{ github.token }}
-        run: ./bin/mise install
-
-      # Jeden skrypt: spójność wersji, shellcheck, actionlint, zizmor, charty,
-      # polityki, ruff, mypy, pytest, schemat. Osobny krok w CI, którego nie ma
-      # w run-tests.sh, to krok, który lokalnie nie biegnie.
-      - name: lint, typy, testy, polityki, schemat
+      # Jedno zadanie mise: spójność wersji, shellcheck, actionlint, zizmor,
+      # charty, polityki, ruff, mypy, pytest, schemat i bramki kodu Go
+      # (gofmt, vet, staticcheck, testy z -race, govulncheck). Osobny krok
+      # w CI, którego nie ma w zadaniu, to krok, który lokalnie nie biegnie.
+      - name: wersje, lint, typy, testy, polityki, schemat, kod Go
         run: ./bin/mise run test
+
+      # Dwa buildy narzędzi Go — z pamięcią podręczną i od zera — dają te
+      # same bajty. Sumy trafiają do podsumowania, do porównania z lokalnymi.
+      - name: powtarzalność narzędzi Go
+        run: ./bin/mise run check:tools
 
   build:
     needs: test
     runs-on: ubuntu-24.04
+    # Typowy bieg trwa 1–2 minuty; publikacja i powtarzalność to dwa buildy.
+    timeout-minutes: 30
     permissions:
       contents: read
       # Publikacja obrazu do GHCR — tylko przy push, ale zadanie jest jedno.
@@ -94,6 +109,11 @@ jobs:
     outputs:
       image: ${{ steps.publish.outputs.image }}
       digest: ${{ steps.publish.outputs.digest }}
+    env:
+      # Zadania mise biegną tu z samym Go. Domyślnie `mise run` doinstalowałby
+      # brakujące narzędzia (kubectl, helm, …) — z zapytaniami do API GitHuba,
+      # których to zadanie nie potrzebuje.
+      MISE_AUTO_INSTALL: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -102,13 +122,21 @@ jobs:
           # i może go odczytać każdy późniejszy krok. Skrypty nie pushują.
           persist-credentials: false
 
-      # Obraz BuildKit z ci/lib.sh. Bez przypięcia sterownik docker-container
+      # Tylko Go, z sumą z mise.lock: dft budowany ze źródeł w tym zadaniu,
+      # a nie binarka z zadania test — zadanie z packages: write
+      # uruchamiałoby program zbudowany gdzie indziej. Go pobierany
+      # z dl.google.com, więc bez tokenu: token tego zadania ma prawo zapisu
+      # do rejestru.
+      - name: Go (mise)
+        run: ./bin/mise install go
+
+      # Obraz BuildKit z ci/pins.env. Bez przypięcia sterownik docker-container
       # bierze przesuwalny tag, a od wersji BuildKit (i wbudowanego w nią
       # frontendu Dockerfile) zależy, czy obraz z CI jest bajt w bajt taki
       # jak lokalny (decyzja 21).
       - name: przypięte wersje
         id: pins
-        run: echo "buildkit=$(bash -c 'source ci/lib.sh && printf %s "$DF_BUILDKIT_IMAGE"')" >> "$GITHUB_OUTPUT"
+        run: ./bin/mise run pins
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
@@ -128,30 +156,30 @@ jobs:
         env:
           # Na tagu v* to jest build wydania: brudne drzewo przerywa pipeline.
           RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
-        run: ./ci/build.sh api
+        run: ./bin/mise run build
 
       # Odświeżenie digestu python:3.14-alpine od Dependabota jest scalane
       # automatycznie, ale może przynieść nowe wydanie Alpine. Tu zamienia się
       # to w czerwony build, dopóki człowiek nie podbije DF_BASE_ALPINE.
       - name: baza obrazu zgodna z zapisaną
-        run: ./ci/check-image-base.sh api
+        run: ./bin/mise run check:base
 
       # Testy jednostkowe na tej samej bazie co produkcja: musl i ta sama łatka
       # Pythona. Zadanie test uruchamia je na glibc runnera.
       - name: testy na obrazie (musl)
-        run: ./ci/test-image.sh api
+        run: ./bin/mise run test:image
 
       # Warunki zakończenia Etapu 1 sprawdzane na artefakcie, nie na kodzie:
       # rozmiar obrazu, odmowa startu bez konfiguracji, czas zamykania.
       - name: warunki zakończenia etapu
-        run: ./ci/check-runtime.sh api
+        run: ./bin/mise run check:runtime
 
       # Build z pamięcią podręczną i build od zera muszą dać identyczny obraz.
       # Publikowany digest da się wtedy niezależnie odtworzyć z commita, a zmiana
       # digestu zawsze oznacza zmianę zawartości. Skrypt potrzebuje tylko
-      # docker i python3 — zadanie build nie ma uv.
+      # docker, python3 i Go — zadanie build nie ma uv.
       - name: powtarzalność builda
-        run: ./ci/check-reproducible.sh api
+        run: ./bin/mise run check:reproducible
 
       # build.sh publikuje z BuildKitu z atestacją pochodzenia i sprawdza
       # w rejestrze, że konfiguracja obrazu to ta z obrazu przetestowanego wyżej.
@@ -161,4 +189,4 @@ jobs:
         env:
           RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
           PUSH: "1"
-        run: ./ci/build.sh api
+        run: ./bin/mise run build

@@ -1,7 +1,7 @@
 """Wczytywanie tożsamości builda.
 
 version.json powstaje wewnątrz obrazu przy budowaniu, z danych z gita
-(patrz ci/lib.sh). Gdy pliku nie ma — bo kod biegnie wprost z drzewa
+(patrz tools/internal/identity). Gdy pliku nie ma — bo kod biegnie wprost z drzewa
 roboczego — zwracamy UNKNOWN_BUILD zamiast zmyślać wersję.
 """
 

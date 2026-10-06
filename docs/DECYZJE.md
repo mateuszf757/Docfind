@@ -379,7 +379,7 @@ przesuwalny tag BuildKitu, `ubuntu-latest` zmienia system i jego `python3`,
 kubeconform przy każdym biegu pobierał schematy z gałęzi `master`, a `uv sync`
 instalował projekt w trybie edytowalnym i przy tym najnowszego hatchlinga,
 którego nie ma w `uv.lock`. Teraz uv w CI ma wersję z Dockerfile, BuildKit
-digest z `ci/lib.sh`, runner to `ubuntu-24.04`, schematy pochodzą z
+digest z `ci/pins.env`, runner to `ubuntu-24.04`, schematy pochodzą z
 przypiętego commita, a projekt nie jest budowany (`tool.uv.package = false`).
 Dowodem był bieg kubeconform bez sieci — z domyślnymi ustawieniami padał.
 Przypięcie sprawdza się pytaniem „co jeszcze to pobiera, kiedy biegnie", a nie
@@ -387,12 +387,13 @@ Przypięcie sprawdza się pytaniem „co jeszcze to pobiera, kiedy biegnie", a n
 
 **Co tracę:** czytelność — `@sha256:edad48e1…` nic nie mówi bez komentarza —
 i darmowe łatki bezpieczeństwa, które przy tagu przychodziły same. Tę drugą
-stratę pokrywa Dependabot (akcje, bazy w Dockerfile, uv.lock), ale **nie**
-przypięcia w `ci/lib.sh` ani narzędzia w `mise.toml` (decyzja 23): k3s,
-BuildKit, charty, schematy i binarki aktualizuję ręcznie, razem z sumami.
+stratę pokrywa Dependabot (akcje, bazy w Dockerfile, uv.lock, moduły Go
+w `tools/go.mod`), ale **nie** przypięcia w `ci/pins.env` ani narzędzia
+w `mise.toml` (decyzja 23): k3s, BuildKit, charty, schematy, binarki i toolchain
+Go aktualizuję ręcznie, razem z sumami.
 
 **Kiedy zmieniam zdanie:** nigdy dla samego przypinania. Ręczne aktualizacje
-z `ci/lib.sh` i `mise.toml` przeniosę do Renovate, gdy zaczną zalegać.
+z `ci/pins.env` i `mise.toml` przeniosę do Renovate, gdy zaczną zalegać.
 
 ## 21. Build powtarzalny bajt w bajt
 
@@ -418,7 +419,7 @@ podręczną z buildem od zera w każdym pipeline'ie.
 
 Zgodność z CI zależy od wersji BuildKit, bo frontend Dockerfile jest w nią
 wbudowany — a `setup-buildx-action` brał przesuwalny tag. CI używa teraz
-BuildKitu przypiętego digestem (`DF_BUILDKIT_IMAGE` w `ci/lib.sh`), w tej samej
+BuildKitu przypiętego digestem (`DF_BUILDKIT_IMAGE` w `ci/pins.env`), w tej samej
 wersji co lokalny Docker; `check-reproducible.sh` ostrzega, gdy lokalna wersja
 się rozjedzie.
 
@@ -479,11 +480,19 @@ przegląd. Warunki, bez których to byłoby niebezpieczne albo nie działało:
   (`python:3.14-alpine@sha256:A` → `B`) fetch-metadata klasyfikuje błędnie jako
   major (dependabot/fetch-metadata#726), więc takie PR-y — większość łatek
   bezpieczeństwa bazy — też czekały na człowieka. Workflow rozpoznaje je teraz
-  po poprzedniej wersji w postaci digestu i traktuje jak łatkę.
+  po poprzedniej wersji w postaci digestu i traktuje jak łatkę. Klasyfikacja
+  jest wyrażeniem GitHub Actions, a krok powłoki tylko przepisuje wynik
+  (decyzja 23); przeniesienie jej do Go wymagałoby budowania kodu
+  z repozytorium w workflowie, który trzyma klucz aplikacji z prawem zapisu.
 - **Nowe wydanie Alpine to nie łatka.** Pod tym samym tagiem `3.14-alpine`
   pojawia się też nowe wydanie Alpine — nowy musl i OpenSSL. `ci/check-image-base.sh`
-  porównuje zbudowany obraz z `DF_BASE_ALPINE` w `ci/lib.sh` i zatrzymuje build,
+  porównuje zbudowany obraz z `DF_BASE_ALPINE` w `ci/pins.env` i zatrzymuje build,
   dopóki człowiek nie podbije tej wartości w tym samym PR-ze.
+- **Moduły Go narzędzi.** Łatki z `tools/go.mod` (ekosystem `gomod`) scalają
+  się same, świadomie: narzędzia nie trafiają do klienta, a zadanie `test`
+  buduje je i uruchamia ich testy z `-race` przed scaleniem. Łatka, która
+  podnosi wymaganą wersję Go, kończy się czerwonym CI (`GOTOOLCHAIN=local`),
+  a nie cichym pobraniem toolchainu.
 - **Cooldown.** Nowa wersja jest proponowana dopiero 7 dni po wydaniu, major po
   14. Pierwotnie łatki czekały 3 dni; zizmor w `run-tests.sh` wymaga co
   najmniej 7, a koszt jest mały — aktualizacje bezpieczeństwa z alertów
@@ -511,35 +520,100 @@ e2e z Etapu 9 nie domknie luki. Przy przejściu na Renovate (decyzja 20) ten
 workflow znika: Renovate scala sam, własnym tokenem aplikacji, i rozróżnia
 odświeżenie digestu od zmiany wersji.
 
-## 23. mise jako jedno wejście do narzędzi i zadań
+## 23. mise jako jedno wejście, logika narzędzi w Go — zmiana decyzji
 
-**Wybieram jedno narzędzie zamiast skryptu instalacyjnego i luźnych poleceń.**
-Wcześniej binarki instalował `ci/install-tools.sh` — tylko dla linux/amd64, do
-globalnego `~/.local/bin` wspólnego dla wszystkich projektów — a shellcheck,
-actionlint, helm i kubeconform biegły w przypiętych kontenerach. Teraz
+**Zmieniłem zdanie w połowie tej decyzji i zapisuję dlaczego.** Pierwsza wersja
+miała dwie części: mise jako jedno wejście do narzędzi i zadań oraz zasadę
+„logika zostaje w skryptach `ci/*.sh`, a zadania tylko je wołają". Pierwsza
+część zostaje. Druga przestaje obowiązywać: logika narzędzi i bramek — wersja
+z gita, pomiary, analiza logów, odczyty API, decyzja o wyniku — jest w Go,
+w module `tools/` (program `dft`, wołany przez `ci/dft`).
+
+Co zostaje z pierwszej wersji. Wcześniej binarki instalował
+`ci/install-tools.sh` — tylko dla linux/amd64, do globalnego `~/.local/bin` —
+a shellcheck, actionlint, helm i kubeconform biegły w przypiętych kontenerach.
 `mise.toml` przypina wersje, `mise.lock` trzyma URL i sumę dla każdej platformy
 (także macOS i arm64), a `locked = true` odmawia instalacji czegokolwiek spoza
-lockfile'a. Sumy kubectl, k3d, helm i kubeconform w `mise.lock` są bajt w bajt
-tymi, które były w `ci/lib.sh` — te same artefakty z tych samych adresów.
-Samo mise wchodzi do repozytorium jako `bin/mise`: skrypt z przypiętą wersją
-i sumami, które przy przypięciu zgadzały się z plikiem sum podpisanym kluczem
-GPG autorów (odcisk z dokumentacji mise). Wszystko ląduje w `.mise/` w
-repozytorium — bez globalnej instalacji i bez aktywacji w powłoce, tak samo
-lokalnie i w CI. Zadania w `mise.toml` tylko wołają skrypty z `ci/`, więc
-skrypty działają też bez mise. `run-tests.sh` nie potrzebuje już Dockera i jest
-szybszy (5,6 s zamiast 8,6 s lokalnie).
+lockfile'a. Sumy kubectl, k3d, helm i kubeconform w `mise.lock` były przy
+przejściu bajt w bajt tymi z dawnego `ci/lib.sh`. Samo mise wchodzi do
+repozytorium jako `bin/mise`: skrypt z przypiętą wersją i sumami, które przy
+przypięciu zgadzały się z plikiem sum podpisanym kluczem GPG autorów. Wszystko
+ląduje w `.mise/` w repozytorium — bez globalnej instalacji i bez aktywacji
+w powłoce, tak samo lokalnie i w CI, a CI woła te same zadania mise co autor.
 
-**Co tracę:** Dependabot nie obsługuje mise — narzędzia z `mise.toml` aktualizuję
-ręcznie (`./bin/mise lock`), tak jak wcześniej przypięcia z `ci/lib.sh`. Jest
-jedno narzędzie więcej do zrozumienia, z własnymi pułapkami: zadania TOML biegną
-w `sh` bez `pipefail`, a zależności zadań (`depends`) równolegle. uv zostaje
-poza mise: jego wersja jest w Dockerfile, bo tam aktualizuje ją Dependabot —
-druga kopia w `mise.toml` rozjeżdżałaby się przy każdej jego łatce.
+Co przesądziło o zmianie: decyzja autora po zewnętrznej analizie bramek
+(rekomendacja: logika pomiarów i analiza logów w Go, Bash jako cienkie
+wejścia) i historia porażek Basha w tym repozytorium. `cmd | grep -q` przy
+`pipefail` siedziało w sześciu miejscach — SIGPIPE przerywał build bez
+komunikatu, a w `if` dawał fałszywe „nie". `check-reproducible.sh` zakładał
+środowisko, w którym go napisałem, i brak `uv` wyglądał jak wynik (oba
+w „Czego bym dziś nie powtórzył"). 17 wstawek `python3 -c` niosło logikę bez
+typów i bez testów — ruff i mypy sprawdzają pliki `.py`, a nie napis w skrypcie
+bashowym. `df_version` dawał „czyste wydanie" przy pliku nieśledzonym na tagu,
+co wyszło dopiero po napisaniu testów w PR #18. Wspólny mianownik: decyzja
+o wyniku bramki zapadała w kodzie, którego nic nie typuje i który testuje się
+dopiero na żywym środowisku.
 
-**Kiedy zmieniam zdanie:** gdy ręczne aktualizacje `mise.toml` i `ci/lib.sh`
-zaczną zalegać — wtedy Renovate, który obsługuje mise, Dockerfile, akcje i uv
-naraz; uv przejdzie wtedy do `mise.toml`, bo jedna grupa aktualizacji podbije
-obie kopie jednocześnie.
+Układ:
+
+- **Toolchain.** Go 1.27.1 z mise (`core:go`; `mise lock` zapisuje URL i sumę
+  dla 7 platform, suma linux-x64 zgodna z https://go.dev/dl). `GOTOOLCHAIN=local`
+  — przy domyślnym `auto` polecenie `go` samo pobrałoby nowszy toolchain, gdy
+  zażąda go `go.mod` (decyzja 20: „co jeszcze to pobiera, kiedy biegnie").
+  `GOPROXY` tylko proxy.golang.org, bez `direct` (żadnego `git` przy pobieraniu
+  modułów), `CGO_ENABLED=0`. Dyrektywa `go` w `tools/go.mod` równa wersji
+  z mise — pilnuje `dft check versions`. Go z obrazu runnera i `setup-go`
+  (z domyślnie włączoną pamięcią podręczną) nie są używane.
+- **Zależności.** `go.sum` i baza sum (`GOSUMDB`), `-mod=readonly`, bez
+  vendoringu: vendoring client-go to dziesiątki MB w repozytorium i diff
+  każdej łatki w tysiącach linii, a moduły z proxy weryfikuje `go.sum`.
+  staticcheck i govulncheck dyrektywą `tool` w `go.mod` — jedno źródło dla
+  narzędzi Go; govulncheck nie ma w rejestrze mise, a golangci-lint odradza
+  instalację przez `go tool`. Moduły aktualizuje Dependabot (`gomod`,
+  cooldown jak dla Pythona), łatki scalane automatycznie (decyzja 22).
+- **Bash** zostaje tylko jako klej: woła programy po kolei i przekazuje
+  argumenty; nie parsuje wyjścia, nie mierzy, nie czeka w pętli, nie sprząta
+  `trap`em stanu poza sobą, nie ma logiki wartej testu, mieści się w ~40
+  liniach. **Python** tylko tam, gdzie wykonuje kod aplikacji: walidacja
+  `app.yml` modelem, schemat konfiguracji, testy.
+- **Bramki kodu Go** w zadaniu `test`: formatowanie (przez `go/format` —
+  `gofmt -l` kończy się kodem 0 także przy niesformatowanych plikach), `go vet`,
+  staticcheck, `go test`, govulncheck. `-race` wymaga cgo i kompilatora C:
+  na runnerze jest i tam detektor wyścigów jest obowiązkowy (brak to awaria,
+  kod 2), na hoście autora nie ma gcc i testy biegną bez niego, z ostrzeżeniem.
+  Binarka jest powtarzalna: build z pamięcią podręczną i z pustym `GOCACHE`
+  dają te same bajty (`check:tools`), jak obraz w decyzji 21.
+- **Konwencje z Basha zostają:** kody 0/1/2, `BŁĄD:` i `NIESPEŁNIONE:` na
+  stderr, `==>` na stdout, wymagania sprawdzane na starcie. Dochodzą: anulowanie
+  przez `signal.NotifyContext` i sprzątanie stanu zewnętrznego także po SIGINT
+  i SIGTERM, pomiar czasu zegarem monotonicznym.
+- **Przypięcia są danymi:** `ci/pins.env` (KEY=VALUE) czyta Go, workflowy
+  dostają wartości przez `./bin/mise run pins` zamiast `source ci/lib.sh`
+  w `bash -c`, a skrypty bashowe do czasu przeniesienia — przez `source`.
+
+Przenoszenie idzie etapami i stary skrypt znika dopiero po parytecie: ten sam
+werdykt starego i nowego kodu na tym samym wejściu, różnice wyjaśnione.
+Pierwsza przeszła tożsamość artefaktu (`tools/internal/identity`, decyzja 30).
+
+**Co tracę:** toolchain i `go.sum` do utrzymania — wersji Go nie podbija
+Dependabot, robię to ręcznie w `mise.toml` i `go.mod`. Kompilację w CI bez
+pamięci podręcznej przy każdym biegu. Kolejny ekosystem dla Dependabota
+i kolejne łatki do scalania; narzędzia przypięte dyrektywą `tool` dzielą graf
+modułów z kodem — govulncheck podniósł `golang.org/x/tools`, z którym
+budowany jest staticcheck, do wersji nowszej niż ta, z którą go wydano.
+Wyższy próg wejścia: skrypt bashowy czyta się bez budowania, program w Go
+trzeba zbudować, a Go znam słabiej niż Basha. Z pierwszej wersji zostaje:
+Dependabot nie obsługuje mise, więc `mise.toml` aktualizuję ręcznie
+(`./bin/mise lock`), zadania TOML biegną w `sh` bez `pipefail`, a zależności
+zadań (`depends`) równolegle; uv zostaje poza mise, bo jego wersję w Dockerfile
+podbija Dependabot.
+
+**Kiedy zmieniam zdanie:** dla Go — gdy utrzymanie narzędzi (toolchain, moduły,
+zgodność bibliotek z wersją klastra) zacznie zabierać więcej czasu niż zmiany
+w samych bramkach; wtedy Go zostaje dla pomiarów i analizy logów, a odczyty API
+wracają do wywołań CLI. Dla mise — gdy ręczne aktualizacje `mise.toml`
+i `ci/pins.env` zaczną zalegać; wtedy Renovate, który obsługuje mise,
+Dockerfile, akcje, uv i moduły Go naraz, a uv przejdzie do `mise.toml`.
 
 ## 24. Testy jednostkowe także w obrazie, na musl
 
@@ -682,7 +756,8 @@ połączeniach tylko od niego.
 adnotowany `vX.Y.Z` na commicie z `main`, w schemacie `0.<etap>.<łatka>`:
 `v0.3.0` to Etap 3, poprawki w jego obrębie podbijają łatkę, `v0.4.0` przychodzi
 z Etapem 4, a `v1.0.0` z pierwszą dostawą do klienta (Etap 10). Tag jest
-jedynym źródłem wersji. `df_version` daje na nim `X.Y.Z`, a między tagami
+jedynym źródłem wersji. `dft version` (`tools/internal/identity`) daje na nim
+`X.Y.Z`, a między tagami
 `X.Y.(Z+1)-dev.<commity od tagu>+<sha>`, czyli wersję przedpremierową
 następnej łatki. Surowe `git describe` (`0.3.0-5-gabc1234`) SemVer czyta jako
 wersję starszą od `0.3.0`, więc zakres wersji — chart OCI, Argo CD — ustawiłby
@@ -700,8 +775,21 @@ usunąć.
 Przy okazji wyszedł błąd poprzedniej wersji `df_version`: `git describe
 --dirty` nie widzi plików nieśledzonych, więc build na tagu z nowym, jeszcze
 niedodanym plikiem podałby się za czyste wydanie. Teraz brud ocenia
-`git status --porcelain`, jak na ścieżce bez tagu; pilnuje tego
-`ci/test-lib.sh`.
+`git status --porcelain`, jak na ścieżce bez tagu; pilnują tego testy na
+prawdziwym repozytorium gita (`go test ./internal/identity` w `tools/`).
+Podstawienie surowego `git describe` w miejsce tej logiki oblewa cztery z nich,
+w tym dokładnie ten przypadek.
+
+Przy przeniesieniu z Basha do Go (decyzja 23) na jedenastu stanach
+repozytorium stara i nowa implementacja dały te same wersje, tagi obrazu
+i werdykty czystości. Trzy różnice są zamierzone: skrócony commit to zawsze
+pierwsze 7 znaków, a nie `git rev-parse --short` — tamto bierze długość
+z `core.abbrev` autora i wydłuża skrót przy niejednoznaczności, a wersja trafia
+do `version.json`, więc ten sam commit dawałby inny obraz lokalnie i w CI;
+pliki nieśledzone liczą się także przy `status.showUntrackedFiles=no`
+w konfiguracji autora (poprzednio taka konfiguracja przepuszczała brudne
+drzewo jako czyste); tag z zerem wiodącym (`v01.2.3`) nie jest wydaniem, tak
+jak w SemVer.
 
 **Co tracę:** numer minor nic nie mówi o zgodności interfejsu. Przy `0.x`
 SemVer jej nie obiecuje, ale klient z Etapu 10 może tak to czytać. Wersja

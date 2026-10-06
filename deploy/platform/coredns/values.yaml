@@ -1,5 +1,5 @@
 # CoreDNS klastra, instalowany z charta coredns/coredns zamiast wbudowanego
-# w k3s. Wersja charta i suma: ci/lib.sh (DF_COREDNS_CHART_*).
+# w k3s. Wersja charta i suma: ci/pins.env (DF_COREDNS_CHART_*).
 #
 # Wbudowany CoreDNS k3s ma jedną replikę i nie ma PodDisruptionBudget. Drain
 # jego węzła odciął DNS całemu klastrowi na kilka sekund i check-drain.sh

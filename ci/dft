@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Wejście do narzędzi i bramek DOCFIND w Go (tools/, decyzja 23).
+#
+#   ci/dft <polecenie> [argumenty]       np. ci/dft version, ci/dft check go
+#   ./bin/mise exec -- ci/dft --help     lista poleceń
+#
+# Buduje program z tools/cmd/dft i uruchamia go z podanymi argumentami.
+# `go build` przy niezmienionym kodzie niczego nie kompiluje — porównuje
+# identyfikatory buildu z pamięcią podręczną Go — więc każde wywołanie bierze
+# program zgodny z drzewem roboczym, bez osobnego kroku budowania.
+#
+# Go pochodzi z mise (./bin/mise run … albo ./bin/mise exec -- ci/dft …).
+# Bez cgo i bez pobierania innego toolchainu także przy wywołaniu bez mise:
+# te dwa ustawienia decydują o tym, co i czym jest budowane. GOPROXY zostaje
+# z otoczenia — decyduje tylko o źródle pobrania, a integralność modułów
+# sprawdza go.sum.
+#
+# Kod wyjścia programu przechodzi bez zmian (0/1/2); nieudany build to 2.
+
+set -euo pipefail
+
+command -v go >/dev/null || { echo "BŁĄD: brak go — uruchom przez ./bin/mise run … albo ./bin/mise exec -- ci/dft …" >&2; exit 2; }
+
+root=$(git rev-parse --show-toplevel)
+bin="$root/.cache/bin/dft"
+
+CGO_ENABLED=0 GOTOOLCHAIN=local go build -C "$root/tools" -mod=readonly -trimpath -o "$bin" ./cmd/dft \
+  || { echo "BŁĄD: nie udało się zbudować dft (tools/cmd/dft)" >&2; exit 2; }
+exec "$bin" "$@"

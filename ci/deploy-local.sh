@@ -280,8 +280,8 @@ df_log "Gateway zaprogramowany"
 # --- obraz -------------------------------------------------------------------
 "$repo_root/ci/build.sh" api
 
-image=$(df_image_name api)
-built_tag=$(df_docker_tag "$(df_version)")
+image=$("$DF_DFT" identity image api)
+built_tag=$("$DF_DFT" identity docker-tag)
 
 # Tag wyliczony z zawartości obrazu, nie z wersji. Build z brudnego drzewa
 # dostaje za każdym razem ten sam tag "...-dirty"; przy IfNotPresent
@@ -401,7 +401,7 @@ for pod in json.loads(sys.argv[1])["items"]:
   (( failures == 0 ))
 }
 
-verify_deployed_identity "$release-api" api "$image:$deploy_tag" "$(df_version)" "$(df_commit)" || {
+verify_deployed_identity "$release-api" api "$image:$deploy_tag" "$("$DF_DFT" version)" "$("$DF_DFT" identity commit)" || {
   echo "BŁĄD: na klastrze działa coś innego niż obraz zbudowany z tego drzewa" >&2
   exit 1
 }

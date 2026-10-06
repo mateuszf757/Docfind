@@ -36,7 +36,7 @@ status=0
 docker buildx build \
   --target test \
   --build-context "config=$repo_root/deploy/config" \
-  --build-arg "SOURCE_DATE_EPOCH=$(df_source_date_epoch)" \
+  --build-arg "SOURCE_DATE_EPOCH=$("$DF_DFT" identity source-date-epoch)" \
   --output type=cacheonly \
   --progress plain \
   "$context" >"$log" 2>&1 || status=$?
