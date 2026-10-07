@@ -243,11 +243,16 @@ func runCheckReproducible(ctx context.Context, env *environment, args []string) 
 
 // writeReport zapisuje wynik bramki w JSON do DF_REPORT_DIR albo
 // .cache/reports — dowód zostaje po biegu, a w CI trafia do artefaktów.
-func writeReport(env *environment, name string, v any) error {
-	dir := os.Getenv("DF_REPORT_DIR")
-	if dir == "" {
-		dir = filepath.Join(env.root, ".cache", "reports")
+// reportDir — katalog raportów bramek: DF_REPORT_DIR albo .cache/reports.
+func reportDir(env *environment) string {
+	if dir := os.Getenv("DF_REPORT_DIR"); dir != "" {
+		return dir
 	}
+	return filepath.Join(env.root, ".cache", "reports")
+}
+
+func writeReport(env *environment, name string, v any) error {
+	dir := reportDir(env)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}

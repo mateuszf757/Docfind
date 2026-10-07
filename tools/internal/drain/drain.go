@@ -12,6 +12,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -74,6 +76,10 @@ type Config struct {
 	LeaseDuration time.Duration
 	LeaseRenew    time.Duration
 	RunID         string
+	// ProbeLogDir — katalog na pełny log sondy z każdego drainu (linia JSON
+	// na żądanie, z czasami faz); pusty — log tylko w podsumowaniu raportu.
+	// Dowód po porażce w CI, gdzie sondy już nie ma.
+	ProbeLogDir string
 }
 
 // Gate to jeden bieg bramki.
@@ -255,7 +261,19 @@ func (g *Gate) drainOne(ctx context.Context, target string, replicaNodes []strin
 	if err := sleep(ctx, g.Cfg.SettleAfter); err != nil {
 		return result, err
 	}
-	results, err := g.probeResults(ctx, probe)
+	raw, err := g.probeLog(ctx, probe)
+	if err != nil {
+		return result, err
+	}
+	if g.Cfg.ProbeLogDir != "" {
+		if err := os.MkdirAll(g.Cfg.ProbeLogDir, 0o755); err != nil {
+			return result, err
+		}
+		if err := os.WriteFile(filepath.Join(g.Cfg.ProbeLogDir, "drain-probe-"+target+".jsonl"), raw, 0o644); err != nil {
+			return result, err
+		}
+	}
+	results, err := probeline.Parse(raw)
 	if err != nil {
 		return result, err
 	}
@@ -394,10 +412,18 @@ func (g *Gate) startProbe(ctx context.Context, node string) (string, error) {
 	return name, cli.Unmet("pętla żądań nie dostała odpowiedzi 200 w 90 s jeszcze przed drainem — test nie ma punktu odniesienia (kubectl -n %s logs %s)", g.Cfg.Namespace, name)
 }
 
-func (g *Gate) probeResults(ctx context.Context, pod string) ([]probeline.Result, error) {
+func (g *Gate) probeLog(ctx context.Context, pod string) ([]byte, error) {
 	raw, err := g.Core.CoreV1().Pods(g.Cfg.Namespace).GetLogs(pod, &corev1.PodLogOptions{Container: "probe"}).DoRaw(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("log sondy %s: %w", pod, err)
+	}
+	return raw, nil
+}
+
+func (g *Gate) probeResults(ctx context.Context, pod string) ([]probeline.Result, error) {
+	raw, err := g.probeLog(ctx, pod)
+	if err != nil {
+		return nil, err
 	}
 	return probeline.Parse(raw)
 }

@@ -61,6 +61,10 @@ zero nieudanych), i sprząta po sobie także po przerwaniu.
 - build powtarzalny bajt w bajt, także między lokalnym BuildKitem a tym
   z CI — ten sam commit daje ten sam obraz i nie wywołuje rolloutu
   (decyzja 21, `dft check reproducible`)
+- efemeryczny klaster k3d w CI na każdym PR-ze, po scaleniu i nocą: obraz
+  z zadania build (archiwum albo digest z GHCR), drain każdego węzła,
+  odnowienie certyfikatu pod ruchem, tożsamość na podach, dowody z klastra
+  jako artefakt; wymagany po dziesięciu zielonych biegach z rzędu (decyzja 36)
 
 Zrobione w Etapach 0–1:
 
@@ -177,6 +181,8 @@ RELEASE=1 ./bin/mise run build    # build wydania — tylko czyste drzewo na tag
 ./bin/mise run cluster:tls        # warunek zakończenia Etapu 3: odnowienie certyfikatu pod ruchem
 ./bin/mise run cluster:identity   # na każdym podzie obraz, wersja i commit z tego drzewa
 ./bin/mise run test:cluster       # to, co API server ma odrzucić (sonda bez securityContext)
+./bin/mise run cluster:evidence   # dowody z klastra do .cache/reports (jak artefakt w CI)
+./bin/mise run ci:trial           # okres próbny zadania cluster: seria zielonych biegów na main
 ./bin/mise run dns-token          # token Cloudflare dla Let's Encrypt (DNS-01), raz
 ./bin/mise run cluster:down       # usunięcie klastra
 ./bin/mise exec -- kubectl get pods -A   # kubectl z przypiętej wersji, kubeconfig projektu

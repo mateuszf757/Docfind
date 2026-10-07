@@ -1,9 +1,15 @@
 name: ci
 
-# PR      → lint, testy, build obrazu i jego warunki; nic nie opuszcza pipeline'u
-# main    → dodatkowo publikacja obrazu otagowanego wersją i commitem
+# PR      → lint, testy, build obrazu i jego warunki, a potem efemeryczny
+#           klaster k3d z tym obrazem (archiwum z zadania build) i bramki
+#           klastrowe; nic nie opuszcza pipeline'u
+# main    → dodatkowo publikacja obrazu otagowanego wersją i commitem; klaster
+#           dostaje obraz z GHCR po digeście — dowód, że opublikowany obraz to
+#           obraz sprawdzony
 # tag v*  → build wydania: tylko czyste drzewo na tagu vX.Y.Z, obraz otagowany
 #           samą wersją (decyzja 30)
+# nocą    → to samo co PR, na main: seria biegów tego samego kodu mówi, czy
+#           bramka klastrowa migocze (okres próbny, decyzja 36)
 #
 # Publikacja niesie atestację pochodzenia, a digest opublikowanego obrazu jest
 # wyjściem zadania build i trafia do jego podsumowania — promuje się digest,
@@ -24,6 +30,10 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  # GitHub uruchamia harmonogram na domyślnej gałęzi, z opóźnieniem w godzinach
+  # szczytu; w repozytorium publicznym wyłącza go po 60 dniach bez aktywności.
+  schedule:
+    - cron: "17 3 * * *"
 
 # Akcje przypięte pełnym SHA commita, nie tagiem. Tag akcji jest przesuwalny —
 # tak w 2025 roku skompromitowano tj-actions/changed-files: napastnik przesunął
@@ -105,10 +115,12 @@ jobs:
       contents: read
       # Publikacja obrazu do GHCR — tylko przy push, ale zadanie jest jedno.
       packages: write
-    # Puste na PR-ach, bo nic nie jest publikowane.
+    # image i digest puste poza push, bo nic nie jest publikowane; config —
+    # digest konfiguracji obrazu z archiwum dla zadania cluster (PR, nocą).
     outputs:
       image: ${{ steps.publish.outputs.image }}
       digest: ${{ steps.publish.outputs.digest }}
+      config: ${{ steps.build.outputs.config }}
     env:
       # Zadania mise biegną tu z samym Go. Domyślnie `mise run` doinstalowałby
       # brakujące narzędzia (kubectl, helm, …) — z zapytaniami do API GitHuba,
@@ -143,9 +155,14 @@ jobs:
           driver-opts: image=${{ steps.pins.outputs.buildkit }}
 
       - name: build obrazu api
+        id: build
         env:
           # Na tagu v* to jest build wydania: brudne drzewo przerywa pipeline.
           RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
+          # Bez publikacji obraz idzie do zadania cluster jako archiwum
+          # `docker save` — w rejestrze go nie ma. dft zapisuje do wyjść
+          # kroku digest jego konfiguracji.
+          ARCHIVE: ${{ github.event_name != 'push' && format('{0}/image-api.tar', runner.temp) || '' }}
         run: ./bin/mise run build
 
       # Odświeżenie digestu python:3.14-alpine od Dependabota jest scalane
@@ -180,6 +197,19 @@ jobs:
       - name: powtarzalność builda
         run: ./bin/mise run check:reproducible
 
+      # Archiwum dopiero po wszystkich sprawdzeniach: zadanie cluster dostaje
+      # obraz, który je przeszedł, i porówna jego konfigurację z digestem
+      # z wyjść tego zadania. Jeden dzień — to tylko przekazanie między
+      # zadaniami tego samego biegu.
+      - name: archiwum obrazu dla zadania cluster
+        if: github.event_name != 'push'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: obraz-api
+          path: ${{ runner.temp }}/image-api.tar
+          retention-days: 1
+          if-no-files-found: error
+
       # Logowanie i publikacja tylko przy push, po wszystkich sprawdzeniach:
       # dane logowania leżą w ~/.docker/config.json od tego kroku do końca
       # zadania, więc nie ma ich tam, gdy biegną build, testy i bramki.
@@ -204,3 +234,95 @@ jobs:
           RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
           PUSH: "1"
         run: ./bin/mise run build
+
+  # Środowisko ci (deploy/environments/ci.yaml): efemeryczny klaster k3d na
+  # runnerze z obrazem z zadania build — nigdy budowanym od nowa — i te same
+  # bramki klastrowe co lokalnie: tożsamość na każdym podzie, drain każdego
+  # węzła z repliką, odnowienie certyfikatu pod ruchem. Bez sekretów: TLS na
+  # własnym CA, więc działa także na PR-ach od Dependabota i z forków.
+  # Okres próbny (decyzja 36): status nie jest jeszcze wymagany przez regułę
+  # main; `./bin/mise run ci:trial` mówi, kiedy można go dopisać. Klaster
+  # znika razem z maszyną runnera.
+  cluster:
+    needs: build
+    runs-on: ubuntu-24.04
+    # Typowy bieg: utworzenie klastra i platforma ~5 minut, bramki ~4.
+    timeout-minutes: 30
+    permissions:
+      # Tylko odczyt kodu: obraz przychodzi z artefaktu tego biegu albo
+      # z publicznego rejestru, a zadanie niczego nigdzie nie zapisuje.
+      contents: read
+    env:
+      # mise nakłada mise.ci.toml: DOCFIND_ENV=ci dla dft i KUBECONFIG
+      # klastra CI dla kubectl.
+      MISE_ENV: ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          # Bez tokenu w .git/config: domyślnie zostaje tam na całe zadanie
+          # i może go odczytać każdy późniejszy krok. Skrypty nie pushują.
+          persist-credentials: false
+
+      - name: narzędzia (mise)
+        env:
+          # Tylko w tym kroku, tylko do odczytu: mise sprawdza atestacje
+          # GitHuba przez API, a bez tokenu limit to 60 żądań na godzinę.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: ./bin/mise install
+
+      - name: archiwum obrazu z zadania build
+        if: github.event_name != 'push'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: obraz-api
+          path: ${{ runner.temp }}/obraz
+
+      # Klaster k3d z deploy/k3d/cluster.yaml z nazwą i portami z definicji,
+      # platforma, obraz i chart; na końcu tożsamość na każdym podzie.
+      # Archiwum musi mieć konfigurację obrazu sprawdzonego w zadaniu build.
+      - name: klaster i wdrożenie archiwum z zadania build
+        if: github.event_name != 'push'
+        env:
+          IMAGE_ARCHIVE: ${{ runner.temp }}/obraz/image-api.tar
+          CONFIG_DIGEST: ${{ needs.build.outputs.config }}
+        run: ./bin/mise run cluster:up -- --image-archive "$IMAGE_ARCHIVE" --config-digest "$CONFIG_DIGEST"
+
+      # Po publikacji: obraz z rejestru po digeście z wyjść zadania build,
+      # sprawdzony jak po publikacji (indeks z atestacją, jeden obraz).
+      - name: klaster i wdrożenie obrazu z GHCR po digeście
+        if: github.event_name == 'push'
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
+        run: ./bin/mise run cluster:up -- --image "$IMAGE"
+
+      - name: drain każdego węzła z repliką
+        run: ./bin/mise run cluster:drain
+
+      - name: odnowienie certyfikatu pod ruchem
+        run: ./bin/mise run cluster:tls
+
+      # Drain przeniósł repliki: nowe pody też mają mieć ten obraz.
+      - name: tożsamość na podach po drainach
+        run: ./bin/mise run cluster:identity
+
+      # Także po porażce — klaster znika z maszyną runnera, a przyczyna jest
+      # w jego stanie: zdarzenia, logi (także sprzed restartu), zasoby
+      # platformy, logi kontenerów węzłów.
+      - name: dowody z klastra
+        if: always()
+        timeout-minutes: 5
+        run: ./bin/mise run cluster:evidence
+
+      # Raporty bramek, logi sondy z czasami i dowody. Katalog .cache jest
+      # ukryty, stąd include-hidden-files; sekretów w nim nie ma — zadanie
+      # żadnych nie dostaje, a kubeconfig leży poza tym katalogiem.
+      - name: artefakt z dowodami
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dowody-cluster
+          path: .cache/reports/
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: warn

@@ -54,6 +54,9 @@ type Deployer struct {
 	// Inspect czyta publikację z rejestru; nil — registry.Inspect
 	// z uwierzytelnieniem z konfiguracji Dockera.
 	Inspect func(ctx context.Context, ref string) (registry.Inspected, error)
+	// LogDir — katalog na logi węzłów z tworzenia klastra; ten sam co
+	// raporty bramek, więc w CI trafiają razem do artefaktu z dowodami.
+	LogDir string
 }
 
 func (d Deployer) docker() docker.Client { return docker.Client{Runner: d.Runner} }
@@ -253,7 +256,7 @@ func (d Deployer) createCluster(ctx context.Context) error {
 		cli.Step("Docker rootless: kubelet z bramką KubeletInUserNamespace")
 	}
 
-	logDir := filepath.Join(cacheHome(), "docfind", fmt.Sprintf("k3d-create-%s", time.Now().UTC().Format("20060102T150405Z")))
+	logDir := filepath.Join(d.LogDir, fmt.Sprintf("k3d-create-%s-%s", d.Env.Cluster.Name, time.Now().UTC().Format("20060102T150405Z")))
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		return err
 	}
@@ -334,14 +337,6 @@ func printNodeErrors(dir string) {
 		}
 		fmt.Fprintf(cli.Err, "--- %s\n%s\n", strings.TrimSuffix(filepath.Base(file), ".log"), strings.Join(lines, "\n"))
 	}
-}
-
-func cacheHome() string {
-	if dir := os.Getenv("XDG_CACHE_HOME"); dir != "" {
-		return dir
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".cache")
 }
 
 var hostPort = regexp.MustCompile(`^127\.0\.0\.1:([0-9]+):([0-9]+)$`)

@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,11 +22,13 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/dnstoken"
 	"github.com/mateuszf757/Docfind/tools/internal/drain"
 	"github.com/mateuszf757/Docfind/tools/internal/env"
+	"github.com/mateuszf757/Docfind/tools/internal/evidence"
 	"github.com/mateuszf757/Docfind/tools/internal/github"
 	"github.com/mateuszf757/Docfind/tools/internal/kube"
 	"github.com/mateuszf757/Docfind/tools/internal/pins"
 	"github.com/mateuszf757/Docfind/tools/internal/registry"
 	"github.com/mateuszf757/Docfind/tools/internal/tlscheck"
+	"github.com/mateuszf757/Docfind/tools/internal/trial"
 )
 
 // environmentOf wczytuje definicję wybranego środowiska (DOCFIND_ENV, domyślnie dev).
@@ -83,8 +86,8 @@ func artifactArgs(args []string) (deploy.Artifact, error) {
 }
 
 func runCluster(ctx context.Context, e *environment, args []string) error {
-	const usage = "dft cluster <up [źródło obrazu]|down>"
-	if len(args) == 0 || (args[0] == "down" && len(args) > 1) {
+	const usage = "dft cluster <up [źródło obrazu]|down|evidence>"
+	if len(args) == 0 || (args[0] != "up" && len(args) > 1) {
 		return cli.Usage("użycie: %s", usage)
 	}
 	def, err := environmentOf(e)
@@ -95,7 +98,7 @@ func runCluster(ctx context.Context, e *environment, args []string) error {
 	if err != nil {
 		return err
 	}
-	d := deploy.Deployer{Root: e.root, Env: def, Runner: e.runner, Pins: p, Builder: builder(e), Service: "api", Image: imageName("api")}
+	d := deploy.Deployer{Root: e.root, Env: def, Runner: e.runner, Pins: p, Builder: builder(e), Service: "api", Image: imageName("api"), LogDir: reportDir(e)}
 	switch args[0] {
 	case "up":
 		art, err := artifactArgs(args[1:])
@@ -111,9 +114,44 @@ func runCluster(ctx context.Context, e *environment, args []string) error {
 			return err
 		}
 		return d.Down(ctx)
+	case "evidence":
+		return runEvidence(ctx, e, def)
 	default:
 		return cli.Usage("użycie: %s", usage)
 	}
+}
+
+// runEvidence zbiera dowody z klastra środowiska do katalogu raportów —
+// po biegu bramek, także po porażce. Braki ostrzegają, nie zmieniają kodu
+// wyjścia: krok dowodów nie może przykryć wyniku bramki.
+func runEvidence(ctx context.Context, e *environment, def env.Environment) error {
+	if err := def.RequireCluster(); err != nil {
+		return err
+	}
+	if err := requireTools("kubectl", "docker"); err != nil {
+		return err
+	}
+	collector := evidence.Collector{
+		Runner:     e.runner,
+		Target:     targetOf(e, def),
+		Cluster:    def.Cluster.Name,
+		Namespaces: []string{def.App.Namespace, def.Gateway.Namespace, "envoy-gateway-system", "cert-manager", "kube-system"},
+		Dir:        filepath.Join(reportDir(e), "evidence-"+def.Name),
+	}
+	if clients, err := connect(e, def); err != nil {
+		cli.Warn("klaster %s: %v", def.Cluster.Name, err)
+	} else {
+		collector.Core = clients.Core
+	}
+	missing, err := collector.Collect(ctx)
+	if err != nil {
+		return err
+	}
+	for _, m := range missing {
+		cli.Warn("dowody: %s", m)
+	}
+	cli.Step("dowody: %s", collector.Dir)
+	return nil
 }
 
 func runCheckDrain(ctx context.Context, e *environment, args []string) (err error) {
@@ -179,6 +217,7 @@ func runCheckDrain(ctx context.Context, e *environment, args []string) (err erro
 			LeaseDuration: 60 * time.Second,
 			LeaseRenew:    15 * time.Second,
 			RunID:         time.Now().UTC().Format("20060102t150405") + fmt.Sprintf("-%d", os.Getpid()),
+			ProbeLogDir:   reportDir(e),
 		},
 	}
 	report, err := gate.Run(ctx)
@@ -354,4 +393,36 @@ func runRepoSettings(ctx context.Context, e *environment, args []string) error {
 		return err
 	}
 	return github.Settings{Root: e.root, Runner: e.runner, DryRun: len(args) == 1}.Apply(ctx)
+}
+
+// runTrial mówi, czy zadanie CI skończyło okres próbny i jego status może
+// trafić do wymaganych w regule main (decyzja 36).
+func runTrial(ctx context.Context, e *environment, args []string) error {
+	const usage = "dft trial <zadanie> <N>"
+	if err := expectArgs(args, 2, 2, usage); err != nil {
+		return err
+	}
+	need, err := strconv.Atoi(args[1])
+	if err != nil || need < 1 {
+		return cli.Usage("użycie: %s — N to dodatnia liczba biegów", usage)
+	}
+	if err := requireTools("gh"); err != nil {
+		return err
+	}
+	job := args[0]
+	res, err := trial.Checker{Runner: e.runner, Workflow: "ci.yml", Job: job, Branch: "main", Events: []string{"push", "schedule"}, Limit: 50}.Streak(ctx)
+	if err != nil {
+		return err
+	}
+	for _, r := range res.Counted {
+		cli.Step("zielony: %s %s %.7s %s", r.CreatedAt, r.Event, r.HeadSHA, r.URL)
+	}
+	if res.Broken != nil {
+		cli.Step("serię przerywa: %s %s — %s (%s)", res.Broken.CreatedAt, res.Broken.Event, res.Reason, res.Broken.URL)
+	}
+	if res.Streak < need {
+		return cli.Unmet("okres próbny %s trwa: %d z %d zielonych biegów z rzędu", job, res.Streak, need)
+	}
+	cli.Step("%s: %d zielonych biegów z rzędu — status można dopisać do .github/rulesets/main.json i zastosować ./bin/mise run repo:settings", job, res.Streak)
+	return nil
 }
