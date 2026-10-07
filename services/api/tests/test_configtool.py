@@ -13,8 +13,6 @@ import pytest
 from docfind_api import configtool
 from tests.data import CONFIG_WITH_UNKNOWN_KEY_YAML, EXAMPLE_CONFIG_PATH
 
-SCHEMA_PATH = EXAMPLE_CONFIG_PATH.parent / "app.schema.json"
-
 
 def test_example_config_passes(capsys: pytest.CaptureFixture[str]) -> None:
     assert configtool.main(["check", str(EXAMPLE_CONFIG_PATH)]) == 0
@@ -32,14 +30,22 @@ def test_invalid_config_names_the_field(tmp_path: Path, capsys: pytest.CaptureFi
     assert "service.log_levl" in err
 
 
-def test_committed_schema_is_current() -> None:
-    """Schemat w repozytorium to dokładnie ten wygenerowany z modelu."""
-    assert configtool.main(["schema", "--check", str(SCHEMA_PATH)]) == 0
+# Schemat zapisany w repozytorium sprawdza bramka `dft test` (configtool
+# schema --check). Tu tylko logika narzędzia, na plikach tymczasowych — testy
+# biegną też w obrazie, który z deploy/config widzi tylko app.yml.example.
+def test_current_schema_passes(tmp_path: Path) -> None:
+    current = tmp_path / "app.schema.json"
+    current.write_text(configtool.schema_text(), encoding="utf-8")
+
+    assert configtool.main(["schema", "--check", str(current)]) == 0
 
 
 def test_stale_schema_is_rejected(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    text = configtool.schema_text()
+    stale_text = text.replace("DOCFIND", "STARY")
+    assert stale_text != text
     stale = tmp_path / "app.schema.json"
-    stale.write_text(SCHEMA_PATH.read_text(encoding="utf-8").replace("DOCFIND", "STARY"), "utf-8")
+    stale.write_text(stale_text, encoding="utf-8")
 
     assert configtool.main(["schema", "--check", str(stale)]) == 1
     assert "nieaktualny" in capsys.readouterr().err
