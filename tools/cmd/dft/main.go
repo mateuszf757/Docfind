@@ -49,14 +49,34 @@ var commands = map[string]command{
 		run:   runPins,
 	},
 	"check": {
-		usage: "dft check <versions|go|reproducible-tools|runtime|base|reproducible> [usługa]",
-		help:  "bramki: wersje, kod Go, powtarzalność narzędzi; obraz: Etap 1, baza, powtarzalność",
+		usage: "dft check <bramka> …",
+		help:  "bramki: versions, go, reproducible-tools, workflows, python, charts; obraz: runtime, base, reproducible, negatives, published; klaster: drain, tls, identity",
 		run:   runCheck,
 	},
 	"build": {
 		usage: "dft build [usługa]",
 		help:  "build obrazu z wersją z gita; RELEASE=1 wydanie, PUSH=1 publikacja, NO_CACHE=1 od zera",
 		run:   runBuild,
+	},
+	"test": {
+		usage: "dft test",
+		help:  "zadanie test z CI: wersje, workflowy, Python, charty, kod Go",
+		run:   runTest,
+	},
+	"cluster": {
+		usage: "dft cluster <up|down>",
+		help:  "klaster środowiska (DOCFIND_ENV, domyślnie dev): utworzenie, platforma, obraz, chart, tożsamość",
+		run:   runCluster,
+	},
+	"dns-token": {
+		usage: "dft dns-token",
+		help:  "token API Cloudflare do klastra (DNS-01), sprawdzony w API; bez echa, nigdy w argumentach",
+		run:   runDNSToken,
+	},
+	"repo-settings": {
+		usage: "dft repo-settings [--dry-run]",
+		help:  "rulesety, auto-merge i przypinanie akcji SHA w ustawieniach GitHuba (admin)",
+		run:   runRepoSettings,
 	},
 	"test-image": {
 		usage: "dft test-image [usługa]",

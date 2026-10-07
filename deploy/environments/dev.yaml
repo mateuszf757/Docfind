@@ -1,0 +1,47 @@
+# Środowisko dev — pętla wewnętrzna autora: lokalny klaster k3d, obraz
+# z drzewa roboczego. Definicja czytana przez dft (tools/internal/env)
+# zamiast stałych w kodzie bramek.
+name: dev
+# Etap cyklu wytwarzania: wytwarzanie | integracja | akceptacja | wydanie.
+stage: wytwarzanie
+
+cluster:
+  # k3d: klaster tworzy i usuwa `dft cluster up/down` z deploy/k3d/cluster.yaml,
+  # z nazwą i portami z tej definicji.
+  provider: k3d
+  name: docfind
+  context: k3d-docfind
+  # Względem korzenia repozytorium; ta sama ścieżka co KUBECONFIG w mise.toml.
+  kubeconfig: .cache/kubeconfig
+  # Strażnik porównuje adres serwera w kubeconfigu z tym — kontekst o tej
+  # nazwie wskazujący na inny klaster zostaje odrzucony przed operacją.
+  apiServer: https://127.0.0.1:6550
+  # Porty na 127.0.0.1 hosta (decyzja 17): API, HTTP i HTTPS load balancera.
+  ports:
+    api: 6550
+    http: 8080
+    https: 8443
+
+artifact:
+  # local — obraz budowany z drzewa roboczego i importowany do węzłów;
+  # registry — obraz z rejestru po digeście.
+  source: local
+
+app:
+  namespace: docfind
+  release: docfind
+
+gateway:
+  namespace: gateway
+  name: docfind
+  hostname: docfind.internal
+  issuer: docfind-internal-ca
+  # W dev host, wydawcę i dane ACME może nadpisać mise.local.toml
+  # (DOCFIND_HOSTNAME, DOCFIND_TLS_ISSUER, DOCFIND_ACME_EMAIL, DOCFIND_ACME_ZONE).
+  overridesFromEnvironment: true
+
+operations:
+  # Drain, wymuszone odnowienie certyfikatu, sabotaże:
+  # allowed — bez ograniczeń; locked — z blokadą (Lease) przed równoległym
+  # biegiem; forbidden — program odmawia.
+  destructive: allowed

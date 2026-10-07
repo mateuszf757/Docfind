@@ -2,7 +2,7 @@
 # kontenerze Dockera. Scheduler widzi trzy osobne węzły, więc kubectl drain,
 # rozkład podów między węzłami i PodDisruptionBudget działają naprawdę.
 #
-# Obraz k3s nie jest tu wpisany — podaje go ci/deploy-local.sh z ci/pins.env,
+# Obraz k3s nie jest tu wpisany — podaje go `dft cluster up` z ci/pins.env,
 # żeby wersja Kubernetesa była zapisana w jednym miejscu razem z kubectl
 # i schematem, względem którego kubeconform sprawdza manifesty.
 apiVersion: k3d.io/v1alpha5
@@ -43,16 +43,17 @@ options:
         nodeFilters: [server:*]
       # Wbudowany CoreDNS k3s ma jedną replikę i nie ma PodDisruptionBudget —
       # drain jego węzła odcina DNS całemu klastrowi na kilka sekund, co
-      # check-drain.sh złapał jako nieudane żądania (exit=28, dns=0). Skalowanie
+      # bramka drainu złapała jako nieudane żądania (exit=28, dns=0). Skalowanie
       # go ręcznie nie przetrwa restartu serwera, bo k3s ponownie aplikuje
-      # własne manifesty. CoreDNS instaluje więc deploy-local.sh z charta
+      # własne manifesty. CoreDNS instaluje więc `dft cluster up` z charta
       # i wartości w deploy/platform/coredns.
       - arg: --disable=coredns
         nodeFilters: [server:*]
   # Bez dopisywania do globalnego ~/.kube/config i bez przełączania bieżącego
   # kontekstu — lokalny klaster nie może przejąć kubectl, którym obsługuje się
-  # inne klastry. deploy-local.sh zapisuje dane dostępowe do kubeconfigu
-  # projektu (.cache/kubeconfig), który ustawiają ci/lib.sh i mise.toml.
+  # inne klastry. `dft cluster up` zapisuje dane dostępowe do kubeconfigu
+  # środowiska (.cache/kubeconfig dla dev), z którego dft łączy się jawnie
+  # wskazanym kontekstem, a mise.toml ustawia go dla ./bin/mise exec.
   kubeconfig:
     updateDefaultKubeconfig: false
     switchCurrentContext: false

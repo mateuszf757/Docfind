@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 
 	"github.com/mateuszf757/Docfind/tools/internal/cli"
@@ -15,7 +16,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/versions"
 )
 
-const checkUsage = "dft check <versions|go|reproducible-tools|runtime|base|reproducible|negatives> [usługa] | dft check published <obraz@digest> <digest konfiguracji>"
+const checkUsage = "dft check <versions|go|reproducible-tools|workflows|python|charts> | <runtime|base|reproducible|negatives> [usługa] | <drain|tls|identity> | published <obraz@digest> <digest konfiguracji>"
 
 func runCheck(ctx context.Context, env *environment, args []string) error {
 	if len(args) == 0 {
@@ -32,6 +33,20 @@ func runCheck(ctx context.Context, env *environment, args []string) error {
 		return runCheckPublished(ctx, env, args[1:])
 	case "negatives":
 		return runCheckNegatives(ctx, env, args[1:])
+	case "cluster-negatives":
+		return runCheckClusterNegatives(ctx, env, args[1:])
+	case "drain":
+		return runCheckDrain(ctx, env, args[1:])
+	case "tls":
+		return runCheckTLS(ctx, env, args[1:])
+	case "identity":
+		return runCheckIdentity(ctx, env, args[1:])
+	case "charts":
+		return runCheckCharts(ctx, env, args[1:])
+	case "workflows":
+		return runCheckWorkflows(ctx, env, args[1:])
+	case "python":
+		return runCheckPython(ctx, env, args[1:])
 	}
 	if err := expectArgs(args, 1, 1, checkUsage); err != nil {
 		return err
@@ -41,7 +56,7 @@ func runCheck(ctx context.Context, env *environment, args []string) error {
 		if err := requireTools("kubectl", "uv"); err != nil {
 			return err
 		}
-		return versions.Check(ctx, env.root, env.runner, runtime.Version())
+		return versions.Check(ctx, env.root, env.runner, runtime.Version(), clientGoVersion())
 	case "go":
 		if err := requireTools("go"); err != nil {
 			return err
@@ -108,4 +123,18 @@ func requireTools(names ...string) error {
 		return fmt.Errorf("brak w PATH: %s — uruchom przez ./bin/mise run …, które instaluje narzędzia z mise.lock", strings.Join(missing, ", "))
 	}
 	return nil
+}
+
+// clientGoVersion zwraca wersję k8s.io/client-go wkompilowaną w program.
+func clientGoVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	for _, dep := range info.Deps {
+		if dep.Path == "k8s.io/client-go" {
+			return dep.Version
+		}
+	}
+	return ""
 }

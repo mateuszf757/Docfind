@@ -17,7 +17,7 @@ stat -fc %T /sys/fs/cgroup                   # musi być cgroup2fs
 Wewnątrz węzła k3d widać to jako
 `kubelet is configured to not run on a host using cgroup v1`, ale sam k3d tego
 nie zgłasza — widzi tylko, że serwer API nie odpowiada, i czeka na niego bez
-końca. Bez kontroli w `ci/deploy-local.sh` wyglądało to jak bardzo powolny start
+końca. Bez kontroli w `dft cluster up` wyglądało to jak bardzo powolny start
 i trwało ponad 10 minut, zanim ktokolwiek zajrzał do logów węzła.
 
 Obejście przez flagę kubeleta `fail-cgroupv1=false` zostało sprawdzone i nie
@@ -99,7 +99,7 @@ sudo rm /etc/sysctl.d/99-rootless-ports.conf
 sudo sysctl -w net.ipv4.ip_unprivileged_port_start=1024
 ```
 
-Wszystkie trzy powyższe warunki sprawdza `ci/deploy-local.sh` przed utworzeniem
+Wszystkie trzy powyższe warunki sprawdza `dft cluster up` przed utworzeniem
 klastra i zgłasza je razem — dwa z nich wymagają restartu WSL, więc zgłaszanie
 po jednym kosztowałoby restart na każdy.
 
@@ -111,14 +111,14 @@ przechwytywaniu przyczyna ginęła dwa razy: raz, bo przechwytywany był tylko
 serwer, a padł agent; drugi raz, bo `docker logs -f` uruchomiony na kontenerze
 w stanie `Created` kończy się od razu z pustym plikiem.
 
-Dlatego `ci/deploy-local.sh` robi to sam: od chwili startu każdego kontenera
+Dlatego `dft cluster up` robi to sam: od chwili startu każdego kontenera
 węzła zapisuje jego log do `~/.cache/docfind/k3d-create-<czas>/` i przy porażce
 wypisuje z nich błędy. Logi zostają na dysku niezależnie od wyniku.
 
 ## Kubelet w przestrzeni nazw użytkownika (Docker rootless)
 
 **Sprawdzenie:** `docker info --format '{{.SecurityOptions}}'` — jeśli zawiera
-`name=rootless`, `ci/deploy-local.sh` dokłada kubeletowi bramkę
+`name=rootless`, `dft cluster up` dokłada kubeletowi bramkę
 `KubeletInUserNamespace=true`.
 
 **Dlaczego:** w rootless kubelet nie może zapisać globalnych sysctli jądra
@@ -154,7 +154,7 @@ sudo sysctl --system
 512 to wartość, którą dokumentacja kind podaje dla klastrów w kontenerach —
 około dwukrotny zapas ponad pełny stos z planu. To limit zasobu jądra, nie
 granica uprawnień: podnosi pamięć, jaką użytkownik może zająć na struktury
-inotify, a nie to, co może zrobić. `ci/deploy-local.sh` sprawdza go przy każdym
+inotify, a nie to, co może zrobić. `dft cluster up` sprawdza go przy każdym
 wdrożeniu i ostrzega powyżej 80% zużycia.
 
 ## Token API Cloudflare (Let's Encrypt)
@@ -169,7 +169,7 @@ wycieku przejąć każdą domenę na koncie.
 **Zapisanie w klastrze:**
 
 ```bash
-DOCFIND_ACME_ZONE=<strefa> ./bin/mise exec -- ci/set-dns-token.sh
+DOCFIND_ACME_ZONE=<strefa> ./bin/mise run dns-token
 ```
 
 Skrypt czyta token bez echa (albo ze standardowego wejścia, np. z menedżera
@@ -214,9 +214,9 @@ wersji i sprawdza jego sumę; wszystko ląduje w `.mise/` w repozytorium — bez
 sudo, bez menedżera pakietów systemu i bez zmian w konfiguracji powłoki.
 Drugi bieg niczego nie pobiera.
 
-Poza mise zostają: Docker, `uv` (wersja z Dockerfile — `dft check versions`
-ostrzega, gdy lokalna jest inna) i `python3` do skryptów w `ci/`, które
-jeszcze nie przeszły do Go. Go z systemu nie jest potrzebne ani używane:
+Poza mise zostają: Docker i `uv` (wersja z Dockerfile — `dft check versions`
+ostrzega, gdy lokalna jest inna). Systemowy `python3` nie jest potrzebny:
+narzędzia są w Go, a Python aplikacji uruchamia `uv`. Go z systemu nie jest potrzebne ani używane:
 `GOTOOLCHAIN=local` w `mise.toml` sprawia, że `go` nie pobiera innego
 toolchainu, nawet gdy zażąda go `tools/go.mod`.
 
@@ -226,8 +226,9 @@ kończy bramkę kodem 2. Instalacja gcc wymaga sudo, więc lokalnie nie jest
 wymagana — wyścig wyjdzie najpóźniej w zadaniu `test` w CI.
 
 **Kubeconfig:** klaster zapisuje dane dostępowe do `.cache/kubeconfig`
-w repozytorium, nie do `~/.kube/config` — ustawiają to `ci/lib.sh` dla skryptów
-i `mise.toml` dla `./bin/mise exec`. Kontekst `k3d-docfind` dopisany wcześniej do
+w repozytorium, nie do `~/.kube/config`. `dft` bierze ścieżkę i kontekst
+z definicji środowiska (`deploy/environments/dev.yaml`) i podaje je jawnie,
+a `mise.toml` ustawia `KUBECONFIG` dla `./bin/mise exec`. Kontekst `k3d-docfind` dopisany wcześniej do
 globalnego kubeconfigu można usunąć:
 `kubectl config delete-context k3d-docfind && kubectl config delete-cluster k3d-docfind && kubectl config delete-user admin@k3d-docfind`.
 

@@ -13,15 +13,15 @@
 #
 # Logika narzędzi i bramek jest w Go (tools/, program dft — decyzja 23).
 # Zadania wołają ci/dft, który buduje program z bieżącego drzewa i go
-# uruchamia; skrypty ci/*.sh, które jeszcze zostały, przechodzą do Go
-# w kolejnych zmianach. Zadania TOML biegną w `sh -o errexit -c` (dash, bez
-# pipefail), więc nie ma w nich nic poza wywołaniem programu.
+# uruchamia. Zadania TOML biegną w `sh -o errexit -c` (dash, bez pipefail),
+# więc nie ma w nich nic poza wywołaniem programu.
 #
 # Czego mise tu nie zarządza:
 # - uv — jedynym źródłem wersji jest Dockerfile, gdzie przypięcie digestem
 #   aktualizuje Dependabot. Dependabot nie obsługuje mise, więc druga kopia
 #   wersji tutaj rozjeżdżałaby się z Dockerfile przy każdej jego aktualizacji.
-#   CI instaluje wersję z Dockerfile, run-tests.sh ostrzega o innej lokalnie.
+#   CI instaluje wersję z Dockerfile, `dft check versions` ostrzega o innej
+#   lokalnie.
 # - Python — wersję do testów wybiera uv z services/api/.python-version,
 #   w produkcji decyduje obraz bazowy. Trzeci menedżer interpretera byłby
 #   trzecim miejscem, w którym wersja może się rozjechać.
@@ -57,10 +57,10 @@ actionlint = "1.7.12"
 # Audyt bezpieczeństwa workflowów: wstrzyknięcia w wyrażeniach, nadmiarowe
 # uprawnienia, zatruwanie cache, zbyt krótki cooldown Dependabota.
 zizmor = "1.30.1"
-# Do ci/apply-repo-settings.sh; gh z apt w Ubuntu 24.04 jest sprzed
+# Do `dft repo-settings`; gh z apt w Ubuntu 24.04 jest sprzed
 # `gh attestation verify`.
 gh = "2.101.0"
-# Do ci/check-tls.sh — `cmctl renew` wymusza odnowienie certyfikatu tak samo,
+# Do `dft check tls` — `cmctl renew` wymusza odnowienie certyfikatu tak samo,
 # jak zrobiłby to cert-manager przed jego wygaśnięciem.
 cmctl = "2.6.1"
 # Toolchain narzędzi i bramek z tools/ (decyzja 23). Ta sama wersja stoi
@@ -72,8 +72,9 @@ go = "1.27.1"
 [env]
 # Kubeconfig projektu zamiast globalnego ~/.kube/config. Lokalny klaster nie
 # dopisuje się do cudzych kontekstów i nie przełącza bieżącego, a kubectl
-# uruchomiony przez mise widzi tylko ten klaster. Tę samą ścieżkę ustawia
-# ci/lib.sh dla skryptów uruchamianych bez mise.
+# uruchomiony przez mise widzi tylko ten klaster. dft nie polega na tej
+# zmiennej: ścieżkę i kontekst bierze z definicji środowiska
+# (deploy/environments/) i podaje je kubectl i helmowi jawnie.
 KUBECONFIG = "{{config_root}}/.cache/kubeconfig"
 # Polecenie `go` nie pobiera innego toolchainu, gdy go.mod zażąda nowszego —
 # kończy się błędem. Przy domyślnym GOTOOLCHAIN=auto pobrałoby w trakcie biegu
@@ -90,12 +91,8 @@ GOPROXY = "https://proxy.golang.org"
 CGO_ENABLED = "0"
 
 [tasks.test]
-description = "Spójność wersji, lint, typy, testy, polityki, schemat, kod Go — to samo co zadanie test w CI"
-run = [
-    "ci/dft check versions",
-    "ci/run-tests.sh",
-    "ci/dft check go",
-]
+description = "Wersje, workflowy, Python, charty z politykami, kod Go — to samo co zadanie test w CI"
+run = "ci/dft test"
 
 [tasks."check:tools"]
 description = "Narzędzia z tools/ zbudowane z pamięcią podręczną i od zera dają te same bajty"
@@ -107,7 +104,11 @@ run = "ci/dft pins github-output"
 
 [tasks.schema]
 description = "Regeneracja deploy/config/app.schema.json z modelu Pydantic"
-run = "ci/gen-schema.sh"
+dir = "services/api"
+# Projekt nie jest instalowany do środowiska (tool.uv.package = false),
+# więc kod aplikacji jest na ścieżce przez PYTHONPATH — jak w obrazie.
+env = { PYTHONPATH = "src" }
+run = "uv run --frozen python -m docfind_api.configtool schema --write ../../deploy/config/app.schema.json"
 
 [tasks.build]
 description = "Build obrazu z wersją z gita; RELEASE=1 tylko czyste drzewo na tagu vX.Y.Z"
@@ -155,18 +156,36 @@ run = [
     { task = "check:reproducible" },
 ]
 
+# Zadania klastrowe działają na środowisku z DOCFIND_ENV (domyślnie dev,
+# deploy/environments/dev.yaml).
 [tasks."cluster:up"]
-description = "Klaster k3d (jeśli go nie ma) + build + helm upgrade --install"
-run = "ci/deploy-local.sh"
+description = "Klaster k3d (jeśli go nie ma), platforma, build, chart, tożsamość na każdym podzie"
+run = "ci/dft cluster up"
 
 [tasks."cluster:down"]
-description = "Usunięcie lokalnego klastra"
-run = "ci/deploy-local.sh --down"
+description = "Usunięcie klastra środowiska (tylko k3d z definicji)"
+run = "ci/dft cluster down"
 
 [tasks."cluster:tls"]
 description = "Warunek Etapu 3: odnowienie certyfikatu pod ruchem, bez ingerencji"
-run = "ci/check-tls.sh"
+run = "ci/dft check tls"
 
 [tasks."cluster:drain"]
-description = "Warunek zakończenia Etapu 2: drain węzła bez utraty żądania"
-run = "ci/check-drain.sh"
+description = "Warunek Etapu 2: drain każdego węzła z repliką bez utraty żądania (DRAIN_NODE — jeden węzeł)"
+run = "ci/dft check drain"
+
+[tasks."cluster:identity"]
+description = "Na każdym podzie obraz, wersja i commit z tego drzewa"
+run = "ci/dft check identity"
+
+[tasks."test:cluster"]
+description = "Warianty, które API server ma odrzucić (sonda bez securityContext) — na żywym klastrze"
+run = "ci/dft check cluster-negatives"
+
+[tasks."dns-token"]
+description = "Token API Cloudflare do klastra (DNS-01) — z terminala bez echa albo z potoku"
+run = "ci/dft dns-token"
+
+[tasks."repo:settings"]
+description = "Rulesety, auto-merge i przypinanie akcji SHA w ustawieniach GitHuba (admin; --dry-run — podgląd)"
+run = "ci/dft repo-settings"

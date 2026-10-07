@@ -51,7 +51,7 @@ spec:
         # nadaje mu requesty, ale bez limitu pamięci, a EnvoyProxy nie ma pola na
         # jego zasoby — stąd patch. Strategic merge scala kontenery po nazwie, więc
         # requesty od kontrolera zostają. Treści patcha nie sprawdza żaden schemat;
-        # sprawdza ją polityka na żywym podzie w ci/check-tls.sh i tak ten brak
+        # sprawdza ją polityka na żywym podzie w `dft check tls` i tak ten brak
         # został znaleziony.
         patch:
           type: StrategicMerge

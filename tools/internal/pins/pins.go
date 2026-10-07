@@ -54,7 +54,6 @@ var rules = map[string]rule{
 	"DF_ENVOY_GATEWAY_CHART_REF":     {regexp.MustCompile(`^oci://`), "referencja oci://"},
 	"DF_ENVOY_GATEWAY_CHART_VERSION": {regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`), "wersja vX.Y.Z"},
 	"DF_ENVOY_GATEWAY_CHART_SHA256":  {sha256Hex, "suma SHA-256"},
-	"DF_CURL_IMAGE":                  {pinnedImage, "obraz z digestem"},
 	"DF_BUILDKIT_IMAGE":              {pinnedImage, "obraz z digestem"},
 	"DF_REGISTRY_IMAGE":              {pinnedImage, "obraz z digestem"},
 	"DF_KUBECONFORM_SCHEMA_COMMIT":   {gitCommit, "pełny SHA commita"},

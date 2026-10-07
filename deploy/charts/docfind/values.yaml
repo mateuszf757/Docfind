@@ -31,7 +31,7 @@ api:
   terminationGracePeriodSeconds: 15
 
   # Treść app.yml. Waliduje ją ten sam model Pydantic co przy starcie
-  # aplikacji — run-tests.sh sprawdza wyrenderowany ConfigMap, więc zły
+  # aplikacji — `dft test` sprawdza wyrenderowany ConfigMap, więc zły
   # config zostaje odrzucony przed wdrożeniem, a nie w CrashLoopBackOff.
   config:
     service:

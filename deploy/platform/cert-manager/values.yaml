@@ -114,7 +114,7 @@ cainjector:
 # Obraz solvera HTTP-01. Nie używamy HTTP-01 (decyzja 4: klaster lokalny nie ma
 # wejścia z internetu), ale kontroler dostaje ten obraz jako argument i użyłby
 # go przy pierwszym takim wyzwaniu — więc też jest przypięty. Polityka w
-# run-tests.sh go nie widzi, bo w renderze to argument, nie kontener.
+# `dft test` go nie widzi, bo w renderze to argument, nie kontener.
 acmesolver:
   image:
     digest: sha256:699b40d622211ab7accad8a21b04c5fbaa1841ef7a12621e8de492dbe27b2503

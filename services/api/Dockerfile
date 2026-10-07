@@ -44,7 +44,7 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
 #
 # --frozen instaluje dokładnie uv.lock, bez rozwiązywania zależności od nowa.
 # Nie sprawdza przy tym, czy lock odpowiada pyproject.toml — to robi
-# `uv sync --locked` w ci/run-tests.sh, zanim obraz zostanie zbudowany.
+# `uv sync --locked` w `dft test`, zanim obraz zostanie zbudowany.
 # --no-dev pomija grupę dev (ruff, mypy, pytest). uv nie instaluje pipa do
 # venv — obraz bez pipa to obraz, w którym nie da się doinstalować pakietu
 # niewidocznego w gicie.

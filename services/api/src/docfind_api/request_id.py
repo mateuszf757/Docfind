@@ -5,7 +5,7 @@ z requestID: Generate) i zapisuje go w swoim logu dostępowym. Aplikacja
 odsyła go w nagłówku odpowiedzi i trzyma w request.state, skąd wezmą go
 jej własne logi. Dzięki temu jeden identyfikator łączy zgłoszenie klienta,
 wiersz logu proxy i wiersz logu aplikacji — a z zewnątrz da się sprawdzić,
-że nagłówek naprawdę dociera do backendu (ci/check-tls.sh).
+że nagłówek naprawdę dociera do backendu (`dft check tls`).
 
 Aplikacja niczego nie generuje: identyfikator, którego nie ma w logu proxy,
 niczego nie łączy. Żądanie bez nagłówka — na przykład sonda kubeleta albo

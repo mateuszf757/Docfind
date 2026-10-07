@@ -19,8 +19,9 @@ import (
 
 // Check porównuje wersje w repozytorium o korzeniu root. goVersion to wersja
 // Go, którą zbudowano program (runtime.Version()) — przy GOTOOLCHAIN=local
-// to wersja z mise.toml.
-func Check(ctx context.Context, root string, r proc.Runner, goVersion string) error {
+// to wersja z mise.toml. clientGo to wersja k8s.io/client-go wkompilowana
+// w program (z debug.ReadBuildInfo); pusta — sprawdzenie pominięte.
+func Check(ctx context.Context, root string, r proc.Runner, goVersion, clientGo string) error {
 	p, err := pins.Load(root)
 	if err != nil {
 		return err
@@ -57,6 +58,18 @@ func Check(ctx context.Context, root string, r proc.Runner, goVersion string) er
 		v.Fail("kubectl %s (mise.toml), a klaster i schematy to %s (%s)", kubectl, want, pins.File)
 	} else {
 		cli.Step("kubectl %s zgodny z klastrem", kubectl)
+	}
+
+	// client-go v0.X ↔ Kubernetes 1.X klastra. Biblioteka gwarantuje
+	// zgodność z klastrem tej samej wersji minor; aktualizacja k3s bez
+	// podbicia client-go (albo odwrotnie) wychodzi tutaj, a nie jako pole,
+	// którego bramka nie widzi.
+	if clientGo != "" {
+		if want := clientGoMinor(p.Get("DF_KUBERNETES_VERSION")); !strings.HasPrefix(clientGo, want) {
+			v.Fail("k8s.io/client-go %s, a klaster to Kubernetes %s — oczekiwano %sx (tools/go.mod)", clientGo, p.Get("DF_KUBERNETES_VERSION"), want)
+		} else {
+			cli.Step("client-go %s zgodny z klastrem", clientGo)
+		}
 	}
 
 	// Python: .python-version (testy) ↔ tag bazy w Dockerfile (produkcja).
@@ -111,4 +124,14 @@ func kubectlVersion(ctx context.Context, r proc.Runner) (string, error) {
 		return "", fmt.Errorf("kubectl version: brak clientVersion.gitVersion")
 	}
 	return version.ClientVersion.GitVersion, nil
+}
+
+// clientGoMinor zamienia wersję Kubernetesa 1.X.Y na przedrostek wersji
+// client-go v0.X.
+func clientGoMinor(kubernetes string) string {
+	parts := strings.Split(kubernetes, ".")
+	if len(parts) < 2 {
+		return "v0." + kubernetes
+	}
+	return "v0." + parts[1] + "."
 }
