@@ -218,10 +218,13 @@ podów.
 **Instalacja i sprawdzenie:** `./bin/mise install`
 
 `kubectl`, `k3d`, `helm`, `kubeconform`, `shellcheck`, `actionlint`, `zizmor`,
-`gh`, `cmctl` i `go` (toolchain narzędzi z `tools/`) w wersjach z `mise.toml`,
-weryfikowane względem sum SHA-256 dla każdej
+`gh`, `cmctl`, `osv-scanner` i `go` (toolchain narzędzi z `tools/`)
+w wersjach z `mise.toml`, weryfikowane względem sum SHA-256 dla każdej
 platformy zapisanych w `mise.lock` (`locked = true` odmawia instalacji
-czegokolwiek spoza lockfile'a). `bin/mise` pobiera samo mise w przypiętej
+czegokolwiek spoza lockfile'a), a te, które publikują podpis albo
+pochodzenie w formacie znanym mise, także względem nich (`provenance`
+w `mise.lock`). Bazy podatności OSV-Scanner pobiera przy każdym skanie do
+`.cache/osv-scanner/` (~40 MB). `bin/mise` pobiera samo mise w przypiętej
 wersji i sprawdza jego sumę; wszystko ląduje w `.mise/` w repozytorium — bez
 sudo, bez menedżera pakietów systemu i bez zmian w konfiguracji powłoki.
 Drugi bieg niczego nie pobiera.

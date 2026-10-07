@@ -15,6 +15,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 
+	"github.com/mateuszf757/Docfind/tools/internal/attest"
 	"github.com/mateuszf757/Docfind/tools/internal/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/env"
 	"github.com/mateuszf757/Docfind/tools/internal/proc"
@@ -153,38 +154,63 @@ func TestArchiveImage(t *testing.T) {
 
 func TestRegistryImage(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("d", 64)
-	inspect := func(version string) func(context.Context, string) (registry.Inspected, error) {
+	attested := []string{registry.ProvenancePredicates[0], registry.SBOMPredicate}
+	inspect := func(version string, predicates []string) func(context.Context, string) (registry.Inspected, error) {
 		return func(_ context.Context, ref string) (registry.Inspected, error) {
 			if ref != apiImage+"@"+digest {
 				return registry.Inspected{}, fmt.Errorf("nieoczekiwany ref %s", ref)
 			}
 			return registry.Inspected{
-				Published: registry.Published{Index: digest},
+				Published: registry.Published{Index: digest, Predicates: predicates},
 				Labels:    map[string]string{registry.VersionLabel: version, registry.RevisionLabel: commit},
 			}, nil
 		}
 	}
+	// signed — atestacja GitHuba z podanego źródła; zapamiętuje wymagany tag.
+	var askedSourceRef string
+	signed := func(sourceCommit string, refuse bool) func(context.Context, string, string) (attest.Result, error) {
+		return func(_ context.Context, ref, sourceRef string) (attest.Result, error) {
+			askedSourceRef = sourceRef
+			if refuse {
+				return attest.Result{}, cli.Unmet("atestacja GitHuba dla %s nie przeszła weryfikacji", ref)
+			}
+			return attest.Result{PredicateType: attest.ProvenanceV1, SourceRef: sourceRef, SourceCommit: sourceCommit}, nil
+		}
+	}
 	tests := []struct {
 		name, env, ref, version string
+		predicates              []string
+		attest                  func(context.Context, string, string) (attest.Result, error)
 		wantCode                int
 		wantImage               string
+		wantSourceRef           string
 	}{
-		{"obraz z main na staging", "staging", apiImage + "@" + digest, "0.3.1-dev.4+abc1234", cli.ExitOK, apiImage + ":0.3.1-dev.4-abc1234@" + digest},
-		{"tag w referencji niczego nie wybiera", "staging", apiImage + ":latest@" + digest, "0.3.1-dev.4+abc1234", cli.ExitOK, apiImage + ":0.3.1-dev.4-abc1234@" + digest},
-		{"wydanie na produkcję", "prod", apiImage + "@" + digest, "0.3.1", cli.ExitOK, apiImage + ":0.3.1@" + digest},
-		{"obraz z main na produkcję", "prod", apiImage + "@" + digest, "0.3.1-dev.4+abc1234", cli.ExitUnmet, ""},
-		{"obcy obraz", "staging", "docker.io/library/nginx@" + digest, "0.3.1", cli.ExitUnmet, ""},
-		{"tag zamiast digestu", "staging", apiImage + ":0.3.1", "0.3.1", cli.ExitFailure, ""},
+		{"obraz z main na staging", "staging", apiImage + "@" + digest, "0.3.1-dev.4+abc1234", attested, signed(commit, false), cli.ExitOK, apiImage + ":0.3.1-dev.4-abc1234@" + digest, ""},
+		{"tag w referencji niczego nie wybiera", "staging", apiImage + ":latest@" + digest, "0.3.1-dev.4+abc1234", attested, signed(commit, false), cli.ExitOK, apiImage + ":0.3.1-dev.4-abc1234@" + digest, ""},
+		{"wydanie na produkcję z tagu swojej wersji", "prod", apiImage + "@" + digest, "0.3.1", attested, signed(commit, false), cli.ExitOK, apiImage + ":0.3.1@" + digest, "refs/tags/v0.3.1"},
+		{"obraz z main na produkcję", "prod", apiImage + "@" + digest, "0.3.1-dev.4+abc1234", attested, signed(commit, false), cli.ExitUnmet, "", ""},
+		{"obcy obraz", "staging", "docker.io/library/nginx@" + digest, "0.3.1", attested, signed(commit, false), cli.ExitUnmet, "", ""},
+		{"tag zamiast digestu", "staging", apiImage + ":0.3.1", "0.3.1", attested, signed(commit, false), cli.ExitFailure, "", ""},
+		// Publikacje sprzed decyzji 37: pochodzenie bez SBOM.
+		{"atestacja bez SBOM na staging", "staging", apiImage + "@" + digest, "0.3.0", attested[:1], signed(commit, false), cli.ExitUnmet, "", ""},
+		{"bez atestacji GitHuba na staging", "staging", apiImage + "@" + digest, "0.3.1-dev.4+abc1234", attested, signed(commit, true), cli.ExitUnmet, "", ""},
+		{"podpis z innego commita niż etykieta", "staging", apiImage + "@" + digest, "0.3.1-dev.4+abc1234", attested, signed(strings.Repeat("e", 40), false), cli.ExitUnmet, "", ""},
+		// dev nie wymaga atestacji — autor może postawić wydanie sprzed niej.
+		{"wydanie sprzed SBOM w dev", "dev", apiImage + "@" + digest, "0.3.0", attested[:1], nil, cli.ExitOK, apiImage + ":0.3.0@" + digest, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			d := Deployer{Env: definition(t, tt.env), Image: apiImage, Inspect: inspect(tt.version)}
+			askedSourceRef = ""
+			d := Deployer{Env: definition(t, tt.env), Image: apiImage, Inspect: inspect(tt.version, tt.predicates), Attest: tt.attest}
 			got, err := d.registryImage(context.Background(), tt.ref)
 			if code := cli.ExitCode(err); code != tt.wantCode {
 				t.Fatalf("kod %d, oczekiwano %d (%v)", code, tt.wantCode, err)
 			}
 			if tt.wantImage != "" && (got.want.Image != tt.wantImage || got.digest != digest || got.load != "") {
 				t.Errorf("obraz %+v, oczekiwano %s", got, tt.wantImage)
+			}
+			if askedSourceRef != tt.wantSourceRef {
+				t.Errorf("wymagany tag źródła %q, oczekiwano %q", askedSourceRef, tt.wantSourceRef)
 			}
 		})
 	}

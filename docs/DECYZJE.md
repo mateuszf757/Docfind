@@ -1098,6 +1098,81 @@ obrazy systemowe k3s z archiwum airgap wydania (z sumą), reszta przez
 lustro albo z rejestru z logowaniem; gdy bramka nie przejdzie okresu
 próbnego — przyczyna przed wymaganiem, nie ponowienia.
 
+## 37. SBOM, atestacje GitHuba i skan podatności z polityką na zmienną bazę
+
+**Wybieram dwie atestacje i skaner, którego podpis sprawdza mise.**
+Publikacja niosła atestację BuildKitu z pochodzeniem, bez SBOM; nikt jej
+nie podpisywał, więc każdy z prawem zapisu do rejestru mógł ją podmienić.
+Teraz:
+
+- **SBOM** w atestacji BuildKitu z generatora przypiętego digestem
+  (`DF_SBOM_GENERATOR_IMAGE`, `buildkit-syft-scanner` 1.12.0 z syft
+  1.51.0). Domyślny generator to przesuwalny tag `stable-1` — ten sam commit
+  dostawałby SBOM z innej wersji syft. Weryfikacja publikacji w rejestrze
+  wymaga w manifeście atestacji pochodzenia SLSA i SBOM.
+- **Atestacja GitHuba** (Sigstore, `actions/attest`) po publikacji, w osobnym
+  zadaniu: `id-token: write` pozwala każdemu krokowi zadania wybić token
+  OIDC, więc w zadaniu jest tylko akcja i logowanie do rejestru. Atestacja
+  wiąże digest z workflowem `ci` i commitem podpisem z krótkotrwałym
+  certyfikatem i wpisem w publicznym dzienniku Rekor; kopia leży obok obrazu
+  w GHCR. Klient sprawdza ją tak samo jak `dft`:
+  `gh attestation verify oci://ghcr.io/mateuszf757/docfind-api@sha256:… --repo mateuszf757/Docfind`.
+- **Weryfikacja przed wdrożeniem z rejestru** na środowiskach
+  z `artifact.attested` (ci, staging, prod): pochodzenie i SBOM w rejestrze,
+  atestacja GitHuba z workflowu `ci` tego repozytorium, runner GitHuba
+  (nie self-hosted), commit z certyfikatu równy commitowi z etykiety obrazu;
+  wydanie — z tagu swojej wersji. `dft check attestation` robi to samo przed
+  promocją. Weryfikacja w klastrze (Kyverno `verifyImages`) — Etap 9–10.
+
+**Skaner.** Trivy odpada po kompromitacji z 19.03.2026 (E1). Grype
+i OSV-Scanner porównałem na obrazie API (0.0.0-dev.42): Grype — 37 trafień,
+9 HIGH, z czego jedno naprawialne (zlib CVE-2026-85091, poprawka 1.3.2-r1);
+OSV-Scanner — tylko to jedno, bo baza Alpine zna wyłącznie podatności
+z poprawką. Dla polityki „blokuje to, co da się naprawić" wynik ten sam.
+Rozstrzygnęła weryfikacja binarki: mise sprawdza pochodzenie SLSA
+OSV-Scannera przy `mise lock` i instalacji (zapisane w `mise.lock`), a dla
+Grype — samą sumę, bo rejestr aqua opisuje jego podpis w formacie, którego
+mise nie weryfikuje. Baza Grype zajęła 3 GB, bazy OSV dla Alpine i PyPI —
+40 MB.
+
+**Polityka.** Baza zmienia się codziennie, więc ten sam commit może jutro
+być czerwony. Blokuje podatność **naprawialna** (jest wersja z poprawką)
+o wadze **HIGH, CRITICAL albo nieznanej** — nieznana to nie bezpieczna —
+bez ważnego wyjątku:
+
+| Zdarzenie | Co blokuje |
+|---|---|
+| PR | tylko podatności, których nie ma w obrazie z `main` dla commita bazowego — ta sama migawka bazy dla obu skanów |
+| tag `v*` | każda — wydanie z naprawialną HIGH bez wyjątku nie trafi do promocji |
+| push na `main` | nic — raport w podsumowaniu biegu |
+| nocą | nic — raport do issue „Podatności w obrazie api (skan nocny)", zamykanego, gdy blokujących nie ma |
+
+Wyjątki leżą w `ci/vuln-exceptions.yaml`: podatność, pakiet, uzasadnienie
+i data nie dalsza niż 90 dni. Po dacie podatność znów blokuje, a wyjątek,
+któremu nic nie odpowiada, bramka zgłasza do usunięcia. Raport zapisuje,
+z jakiej bazy powstał: sumę i najnowszy wpis każdej bazy ekosystemu.
+govulncheck podlega tej samej polityce (wyjątki z zakresu `go`) — na nim
+obietnica z decyzji 23 się domknęła.
+
+Pierwszy wyjątek: zlib CVE-2026-85091. Wersja z poprawką jest w Alpine 3.24
+od 2026-10-06, ale nie ma jej jeszcze w żadnym obrazie
+`python:3.14-alpine` (najnowszy, z 2026-10-01, ma 1.3.2-r0). `apk upgrade`
+w Dockerfile złamałby powtarzalność builda (decyzja 21), a przypięcie wersji
+pakietu — build, gdy Alpine usunie ją z repozytorium. Poprawka przyjdzie
+z odświeżeniem digestu bazy przez Dependabota.
+
+**Co tracę:** dwa pobrania w każdym biegu — obraz generatora SBOM przy
+publikacji (Docker Hub) i bazy OSV (~40 MB) przy skanie. Podatności bez
+poprawki (w Grype: 8 HIGH w OpenSSL) nie blokują, a OSV-Scanner ich nawet nie
+wypisuje — polityka dotyczy tego, co da się zrobić. SBOM w atestacji ma czas
+buildu, więc atestacja nie jest powtarzalna (obraz jest).
+
+**Kiedy zmieniam zdanie:** gdy rejestr aqua opisze podpis Grype w formacie
+bundle (Grype 0.120 już tak podpisuje) — porównanie wraca, bo Grype ma
+pełniejsze dane o wagach. Gdy w klastrze pojawi się weryfikacja przy
+przyjęciu poda — atestacja GitHuba staje się warunkiem uruchomienia, nie
+tylko wdrożenia przez `dft`.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

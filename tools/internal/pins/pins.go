@@ -55,6 +55,7 @@ var rules = map[string]rule{
 	"DF_ENVOY_GATEWAY_CHART_VERSION": {regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`), "wersja vX.Y.Z"},
 	"DF_ENVOY_GATEWAY_CHART_SHA256":  {sha256Hex, "suma SHA-256"},
 	"DF_BUILDKIT_IMAGE":              {pinnedImage, "obraz z digestem"},
+	"DF_SBOM_GENERATOR_IMAGE":        {pinnedImage, "obraz z digestem"},
 	"DF_REGISTRY_IMAGE":              {pinnedImage, "obraz z digestem"},
 	"DF_KUBECONFORM_SCHEMA_COMMIT":   {gitCommit, "pełny SHA commita"},
 	"DF_BASE_ALPINE":                 {minorVersion, "wydanie X.Y"},

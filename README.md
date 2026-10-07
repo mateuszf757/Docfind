@@ -61,6 +61,12 @@ zero nieudanych), i sprząta po sobie także po przerwaniu.
 - build powtarzalny bajt w bajt, także między lokalnym BuildKitem a tym
   z CI — ten sam commit daje ten sam obraz i nie wywołuje rolloutu
   (decyzja 21, `dft check reproducible`)
+- publikacja z SBOM z przypiętego generatora i atestacją GitHuba (Sigstore);
+  wdrożenie z rejestru na `ci`, `staging` i `prod` sprawdza obie atestacje
+  i commit (decyzja 37)
+- skan podatności obrazu (OSV-Scanner): naprawialne HIGH/CRITICAL blokują
+  PR, jeśli PR je wnosi, i wydanie zawsze; nocą raport do issue; wyjątki
+  z uzasadnieniem i datą wygaśnięcia w `ci/vuln-exceptions.yaml`
 - efemeryczny klaster k3d w CI na każdym PR-ze, po scaleniu i nocą: obraz
   z zadania build (archiwum albo digest z GHCR), drain każdego węzła,
   odnowienie certyfikatu pod ruchem, tożsamość na podach, dowody z klastra
@@ -172,6 +178,8 @@ RELEASE=1 ./bin/mise run build    # build wydania — tylko czyste drzewo na tag
 ./bin/mise run check:runtime      # warunki zakończenia Etapu 1 (raport JSON w .cache/reports)
 ./bin/mise run test:negatives     # warianty, które bramki Etapu 1 muszą odrzucić
 ./bin/mise run check:reproducible # build z cache i od zera → identyczny obraz
+./bin/mise run check:vulns        # podatności obrazu: naprawialne HIGH/CRITICAL bez wyjątku blokują
+./bin/mise run check:attestation -- ghcr.io/mateuszf757/docfind-api@sha256:…   # atestacje przed promocją
 ./bin/mise run check:tools        # to samo dla narzędzi Go → identyczna binarka
 ./bin/mise exec -- ci/dft --help  # polecenia dft (wersja, tożsamość, bramki)
 

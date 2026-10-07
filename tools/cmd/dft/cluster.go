@@ -17,6 +17,7 @@ import (
 	"golang.org/x/term"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/mateuszf757/Docfind/tools/internal/attest"
 	"github.com/mateuszf757/Docfind/tools/internal/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/deploy"
 	"github.com/mateuszf757/Docfind/tools/internal/dnstoken"
@@ -24,6 +25,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/env"
 	"github.com/mateuszf757/Docfind/tools/internal/evidence"
 	"github.com/mateuszf757/Docfind/tools/internal/github"
+	"github.com/mateuszf757/Docfind/tools/internal/identity"
 	"github.com/mateuszf757/Docfind/tools/internal/kube"
 	"github.com/mateuszf757/Docfind/tools/internal/pins"
 	"github.com/mateuszf757/Docfind/tools/internal/registry"
@@ -98,7 +100,8 @@ func runCluster(ctx context.Context, e *environment, args []string) error {
 	if err != nil {
 		return err
 	}
-	d := deploy.Deployer{Root: e.root, Env: def, Runner: e.runner, Pins: p, Builder: builder(e), Service: "api", Image: imageName("api"), LogDir: reportDir(e)}
+	d := deploy.Deployer{Root: e.root, Env: def, Runner: e.runner, Pins: p, Builder: builder(e), Service: "api", Image: imageName("api"), LogDir: reportDir(e),
+		Attest: attestVerifier(e).Verify}
 	switch args[0] {
 	case "up":
 		art, err := artifactArgs(args[1:])
@@ -425,4 +428,14 @@ func runTrial(ctx context.Context, e *environment, args []string) error {
 	}
 	cli.Step("%s: %d zielonych biegów z rzędu — status można dopisać do .github/rulesets/main.json i zastosować ./bin/mise run repo:settings", job, res.Streak)
 	return nil
+}
+
+// attestVerifier — weryfikacja atestacji GitHuba obrazów z workflowu ci
+// repozytorium, z którego pochodzi kod (GITHUB_REPOSITORY w CI).
+func attestVerifier(e *environment) attest.Verifier {
+	repo := os.Getenv("GITHUB_REPOSITORY")
+	if repo == "" {
+		repo = identity.DefaultOwner + "/Docfind"
+	}
+	return attest.Verifier{Runner: e.runner, Repo: repo, Workflow: ".github/workflows/ci.yml"}
 }

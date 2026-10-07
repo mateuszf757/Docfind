@@ -3,6 +3,7 @@
 package gocheck
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,9 +18,11 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/mateuszf757/Docfind/tools/internal/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/vulns"
 )
 
 // Checker uruchamia bramki na module Go w ModuleDir.
@@ -33,6 +36,10 @@ type Checker struct {
 	Out, Err io.Writer
 	// LookPath — wyszukiwanie programu w PATH; nil oznacza exec.LookPath.
 	LookPath func(string) (string, error)
+	// Exceptions — wyjątki z zakresu go (ci/vuln-exceptions.yaml) i dzień,
+	// względem którego wygasają.
+	Exceptions []vulns.Exception
+	Today      time.Time
 }
 
 // All uruchamia wszystkie bramki poza powtarzalnością i zgłasza
@@ -134,20 +141,37 @@ func (c Checker) Test(ctx context.Context) error {
 
 // Vulncheck uruchamia govulncheck: podatności w modułach, do których kod
 // naprawdę sięga (analiza wywołań), a nie każde CVE w go.sum. Baza zmienia
-// się codziennie, więc ten sam commit może jutro być czerwony — polityka
-// progów i wyjątków przychodzi razem ze skanem obrazu.
+// się codziennie, więc obowiązuje ta sama polityka co przy skanie obrazu
+// (decyzja 37): blokuje osiągalna podatność z poprawką, chyba że ma ważny
+// wyjątek (zakres go); bez poprawki — ostrzeżenie.
 func (c Checker) Vulncheck(ctx context.Context) error {
-	err := c.goTool(ctx, nil, "tool", "govulncheck", "./...")
-	// govulncheck: 3 — znalezione podatności (wynik), inne niezerowe —
-	// awaria, np. brak dostępu do vuln.go.dev. Błąd awarii nie owija
-	// pierwotnego (%v, nie %w): ten niesie typ „warunek niespełniony"
-	// i kod wyjścia 1, a brak bazy podatności nie jest wynikiem.
-	if code := proc.ExitCode(err); code == 3 {
-		return cli.Unmet("govulncheck znalazł podatności w kodzie osiągalnym z tools/")
-	} else if code > 0 {
+	var out bytes.Buffer
+	_, err := c.Runner.Run(ctx, proc.Cmd{Name: "go", Args: []string{"tool", "govulncheck", "-format", "json", "./..."}, Dir: c.ModuleDir, Stdout: &out, Stderr: c.Err})
+	// Z -format json govulncheck kończy się kodem 0 także przy podatnościach
+	// — wynik niesie strumień. Niezerowy kod to awaria (np. brak dostępu do
+	// vuln.go.dev). Błąd awarii nie owija pierwotnego (%v, nie %w).
+	if err != nil {
 		return fmt.Errorf("govulncheck nie wykonał się — awaria narzędzia, nie wynik: %v", err)
 	}
-	return err
+	findings, err := vulns.ParseGovulncheck(&out)
+	if err != nil {
+		return err
+	}
+	evaluated, unused := vulns.Policy{Exceptions: c.Exceptions, Today: c.Today}.Evaluate(findings)
+	blocking := 0
+	for _, f := range evaluated {
+		if f.Blocking {
+			blocking++
+		}
+		fmt.Fprintf(cli.Out, "  %s %s (%s) poprawka: %s %s\n", f.ID, f.Package, f.Version, strings.Join(f.Fixed, ", "), f.Note)
+	}
+	for _, u := range unused {
+		cli.Warn("wyjątek %s (zakres go) nie pasuje do żadnej podatności — do usunięcia", u)
+	}
+	if blocking > 0 {
+		return cli.Unmet("govulncheck: %d osiągalnych podatności z poprawką bez wyjątku w kodzie z tools/", blocking)
+	}
+	return nil
 }
 
 func (c Checker) cCompiler(ctx context.Context) (string, bool) {

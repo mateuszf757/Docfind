@@ -50,7 +50,7 @@ var commands = map[string]command{
 	},
 	"check": {
 		usage: "dft check <bramka> …",
-		help:  "bramki: versions, go, reproducible-tools, workflows, python, charts; obraz: runtime, base, reproducible, negatives, published; klaster: drain, tls, identity",
+		help:  "bramki: versions, go, reproducible-tools, workflows, python, charts; obraz: runtime, base, reproducible, negatives, published, attestation, vulns; klaster: drain, tls, identity",
 		run:   runCheck,
 	},
 	"build": {
@@ -67,6 +67,11 @@ var commands = map[string]command{
 		usage: "dft cluster <up [--image <obraz>@sha256:… | --image-archive <plik> --config-digest sha256:…]|down|evidence>",
 		help:  "klaster środowiska (DOCFIND_ENV, domyślnie dev): utworzenie, platforma, obraz, chart, tożsamość; dowody do .cache/reports",
 		run:   runCluster,
+	},
+	"vulns-issue": {
+		usage: "dft vulns-issue <raport vulns-api.json>",
+		help:  "wynik nocnego skanu podatności jako issue: otwiera, aktualizuje albo zamyka (gh)",
+		run:   runVulnsIssue,
 	},
 	"trial": {
 		usage: "dft trial <zadanie> <N>",
