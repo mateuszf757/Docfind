@@ -240,6 +240,14 @@ func (r Repo) RequireClean(ctx context.Context) error {
 	return nil
 }
 
+var releaseVersion = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+
+// IsRelease mówi, czy wersja to wersja wydania X.Y.Z — bez części
+// przedwydaniowej i metadanych, które ma każdy build spoza tagu (decyzja 30).
+func IsRelease(version string) bool {
+	return releaseVersion.MatchString(version)
+}
+
 // DockerTag zamienia wersję na tag obrazu. SemVer dopuszcza „+" w metadanych
 // builda, tag w rejestrze nie — każdy znak spoza [A-Za-z0-9._-] staje się
 // myślnikiem. Tożsamość w version.json zostaje pełna; to tylko etykieta.

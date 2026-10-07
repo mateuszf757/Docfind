@@ -97,6 +97,10 @@ type Artifact struct {
 	// ReleasesOnly — tylko obrazy wydań (wersja X.Y.Z bez części
 	// przedwydaniowej): na produkcję trafia digest wydania, nie obraz z main.
 	ReleasesOnly bool `json:"releasesOnly,omitempty"`
+	// Attested — obraz z rejestru musi mieć w atestacji BuildKitu pochodzenie
+	// i SBOM oraz atestację GitHuba (Sigstore) z workflowu ci tego
+	// repozytorium (decyzja 37); wydanie — z tagu swojej wersji.
+	Attested bool `json:"attested,omitempty"`
 }
 
 // App — release aplikacji.
@@ -325,6 +329,8 @@ func (e Environment) Validate() error {
 		check(s == SourceRegistry || c.Provider == ProviderK3d, "artifact.sources: %s wymaga klastra k3d (import do węzłów)", s)
 	}
 	check(!e.Artifact.ReleasesOnly || slices.Equal(e.Artifact.Sources, []string{SourceRegistry}), "artifact.releasesOnly — wydania przychodzą tylko z rejestru")
+	check(!e.Artifact.Attested || slices.Contains(e.Artifact.Sources, SourceRegistry), "artifact.attested — atestacje mają tylko obrazy z rejestru")
+	check(!e.Artifact.ReleasesOnly || e.Artifact.Attested, "artifact.releasesOnly bez artifact.attested — wydanie bez sprawdzonej atestacji")
 
 	check(e.App.Namespace != "" && e.App.Release != "", "app.namespace i app.release wymagane")
 	g := e.Gateway

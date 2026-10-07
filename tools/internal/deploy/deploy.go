@@ -30,6 +30,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 
+	"github.com/mateuszf757/Docfind/tools/internal/attest"
 	"github.com/mateuszf757/Docfind/tools/internal/build"
 	"github.com/mateuszf757/Docfind/tools/internal/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/docker"
@@ -57,6 +58,9 @@ type Deployer struct {
 	// LogDir — katalog na logi węzłów z tworzenia klastra; ten sam co
 	// raporty bramek, więc w CI trafiają razem do artefaktu z dowodami.
 	LogDir string
+	// Attest weryfikuje atestację GitHuba obrazu z rejestru (środowiska
+	// z artifact.attested); sourceRef — wymagany tag źródła albo pusty.
+	Attest func(ctx context.Context, ref, sourceRef string) (attest.Result, error)
 }
 
 func (d Deployer) docker() docker.Client { return docker.Client{Runner: d.Runner} }
@@ -568,8 +572,6 @@ func (d Deployer) archiveImage(art Artifact, tmp string) (image, error) {
 	return image{tag: tag, load: load, want: kube.Expected{Image: ref.String(), Version: version, Commit: commit}}, nil
 }
 
-var releaseVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
-
 // registryImage sprawdza publikację w rejestrze (indeks z atestacją, jeden
 // obraz) i bierze wersję i commit z etykiet obrazu. Węzły pobierają obraz
 // po digeście — tag w rejestrze da się nadpisać, digest nie.
@@ -597,8 +599,31 @@ func (d Deployer) registryImage(ctx context.Context, ref string) (image, error) 
 	if version == "" || commit == "" {
 		return image{}, cli.Unmet("%s: obraz bez etykiet wersji i commita", ref)
 	}
-	if d.Env.Artifact.ReleasesOnly && !releaseVersion.MatchString(version) {
+	if d.Env.Artifact.ReleasesOnly && !identity.IsRelease(version) {
 		return image{}, cli.Unmet("środowisko %s przyjmuje tylko wydania, a %s to wersja %s", d.Env.Name, ref, version)
+	}
+	if d.Env.Artifact.Attested {
+		if err := registry.RequireAttestations(published.Published); err != nil {
+			return image{}, err
+		}
+		if d.Attest == nil {
+			return image{}, errors.New("środowisko wymaga atestacji, a wdrożenie nie ma weryfikatora")
+		}
+		// Wydanie musi pochodzić z tagu swojej wersji — obraz z main o tej
+		// samej treści ma inny digest (decyzja 30), ale tag można by też
+		// przesunąć na inny commit; podpis mówi, z którego zbudowano.
+		sourceRef := ""
+		if d.Env.Artifact.ReleasesOnly {
+			sourceRef = "refs/tags/v" + version
+		}
+		verified, err := d.Attest(ctx, ref, sourceRef)
+		if err != nil {
+			return image{}, err
+		}
+		if verified.SourceCommit != "" && verified.SourceCommit != commit {
+			return image{}, cli.Unmet("atestacja GitHuba mówi o commicie %s, a obraz deklaruje %s", verified.SourceCommit, commit)
+		}
+		cli.Step("atestacja GitHuba: %s z %s, bieg %s", verified.PredicateType, verified.SourceRef, verified.Run)
 	}
 	tag := identity.DockerTag(version)
 	cli.Step("rejestr: %s, atestacja obecna, wersja %s, commit %s", published.Index, version, shortCommit(commit))

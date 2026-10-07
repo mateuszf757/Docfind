@@ -11,9 +11,12 @@ name: ci
 # nocą    → to samo co PR, na main: seria biegów tego samego kodu mówi, czy
 #           bramka klastrowa migocze (okres próbny, decyzja 36)
 #
-# Publikacja niesie atestację pochodzenia, a digest opublikowanego obrazu jest
-# wyjściem zadania build i trafia do jego podsumowania — promuje się digest,
-# nie tag.
+# Publikacja niesie atestację BuildKitu (pochodzenie i SBOM z przypiętego
+# generatora), a zadanie attest dodaje atestację GitHuba (Sigstore). Digest
+# opublikowanego obrazu jest wyjściem zadania build i trafia do jego
+# podsumowania — promuje się digest, nie tag. Zadanie vulns skanuje obraz
+# (decyzja 37): na PR-ze blokuje nowe naprawialne HIGH/CRITICAL, na tagu
+# każdą bez wyjątku, na main i nocą tylko raportuje — nocą do issue.
 #
 # Build obrazu biegnie także na PR-ach, bo zmiana zależności albo obrazu
 # bazowego sprawdzona samymi testami jednostkowymi trafiłaby do main, zanim
@@ -235,6 +238,145 @@ jobs:
           PUSH: "1"
         run: ./bin/mise run build
 
+  # Atestacja GitHuba (Sigstore) opublikowanego obrazu: podpis krótkotrwałym
+  # certyfikatem wystawionym temu workflowowi, wpis w publicznym dzienniku
+  # Rekor, kopia obok obrazu w GHCR. Osobne zadanie, bo id-token: write
+  # pozwala każdemu krokowi zadania wybić token OIDC — tu jest tylko akcja
+  # atestacji i logowanie do rejestru.
+  attest:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      # Token OIDC — tożsamość workflowu dla certyfikatu Sigstore.
+      id-token: write
+      # Zapis atestacji w API atestacji GitHuba.
+      attestations: write
+      # Kopia atestacji obok obrazu w GHCR (push-to-registry).
+      packages: write
+    steps:
+      - name: logowanie do GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ needs.build.outputs.image }}
+          subject-digest: ${{ needs.build.outputs.digest }}
+          push-to-registry: true
+          # Rekordy przechowywania istnieją tylko dla repozytoriów organizacji
+          # i wymagałyby uprawnienia artifact-metadata.
+          create-storage-record: false
+
+  # Podatności obrazu (decyzja 37): OSV-Scanner z bazami pobranymi raz na
+  # bieg, polityka i wyjątki z datą w dft. Na PR-ze punktem odniesienia jest
+  # obraz z main dla commita bazowego — blokuje tylko to, co PR wnosi.
+  vulns:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      # Tylko Go (dft) i OSV-Scanner — reszta narzędzi niepotrzebna.
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Bez tokenu w .git/config: domyślnie zostaje tam na całe zadanie
+          # i może go odczytać każdy późniejszy krok. Skrypty nie pushują.
+          persist-credentials: false
+
+      # mise sprawdza sumę z mise.lock i pochodzenie SLSA OSV-Scannera.
+      - name: Go i OSV-Scanner (mise)
+        run: ./bin/mise install go osv-scanner
+
+      - name: archiwum obrazu z zadania build
+        if: github.event_name != 'push'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: obraz-api
+          path: ${{ runner.temp }}/obraz
+
+      - name: skan obrazu z PR-a względem obrazu z main
+        if: github.event_name == 'pull_request'
+        env:
+          IMAGE_ARCHIVE: ${{ runner.temp }}/obraz/image-api.tar
+          CONFIG_DIGEST: ${{ needs.build.outputs.config }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: ./bin/mise run check:vulns -- --image-archive "$IMAGE_ARCHIVE" --config-digest "$CONFIG_DIGEST" --baseline-commit "$BASE_SHA"
+
+      - name: skan nocny obrazu z main (raport)
+        if: github.event_name == 'schedule'
+        env:
+          IMAGE_ARCHIVE: ${{ runner.temp }}/obraz/image-api.tar
+          CONFIG_DIGEST: ${{ needs.build.outputs.config }}
+        run: ./bin/mise run check:vulns -- --image-archive "$IMAGE_ARCHIVE" --config-digest "$CONFIG_DIGEST" --report-only
+
+      - name: skan opublikowanego obrazu z main (raport)
+        if: github.event_name == 'push' && github.ref_type == 'branch'
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
+        run: ./bin/mise run check:vulns -- --image "$IMAGE" --report-only
+
+      # Wydanie z naprawialną HIGH/CRITICAL bez wyjątku nie przechodzi —
+      # i nie trafi do promocji.
+      - name: skan obrazu wydania
+        if: github.ref_type == 'tag'
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
+        run: ./bin/mise run check:vulns -- --image "$IMAGE"
+
+      # Raport z wersją baz — także po porażce. Katalog .cache jest ukryty;
+      # w raporcie nie ma sekretów.
+      - name: raport podatności
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: raport-podatnosci
+          path: .cache/reports/vulns-api.json
+          include-hidden-files: true
+          retention-days: 30
+          if-no-files-found: warn
+
+  # Nocą wynik skanu idzie do issue, a nie na czerwono na main: podatność
+  # opublikowana w nocy w pakiecie obrazu nie jest porażką ostatniego commita.
+  vulns-issue:
+    needs: vulns
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # Otwarcie, aktualizacja albo zamknięcie issue nocnego skanu.
+      issues: write
+    env:
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Bez tokenu w .git/config: domyślnie zostaje tam na całe zadanie
+          # i może go odczytać każdy późniejszy krok. Skrypty nie pushują.
+          persist-credentials: false
+
+      - name: Go i gh (mise)
+        run: ./bin/mise install go gh
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: raport-podatnosci
+          path: ${{ runner.temp }}/raport
+
+      - name: issue skanu nocnego
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPORT: ${{ runner.temp }}/raport/vulns-api.json
+        run: ./bin/mise run vulns:issue -- "$REPORT"
+
   # Środowisko ci (deploy/environments/ci.yaml): efemeryczny klaster k3d na
   # runnerze z obrazem z zadania build — nigdy budowanym od nowa — i te same
   # bramki klastrowe co lokalnie: tożsamość na każdym podzie, drain każdego
@@ -244,7 +386,10 @@ jobs:
   # main; `./bin/mise run ci:trial` mówi, kiedy można go dopisać. Klaster
   # znika razem z maszyną runnera.
   cluster:
-    needs: build
+    needs: [build, attest]
+    # Na PR-ze i nocą attest jest pominięte (nic nie opublikowano) — cluster
+    # i tak rusza; po publikacji czeka na atestację, którą sprawdza.
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.attest.result != 'failure' }}
     runs-on: ubuntu-24.04
     # Typowy bieg: utworzenie klastra i platforma ~5 minut, bramki ~4.
     timeout-minutes: 30
@@ -252,6 +397,8 @@ jobs:
       # Tylko odczyt kodu: obraz przychodzi z artefaktu tego biegu albo
       # z publicznego rejestru, a zadanie niczego nigdzie nie zapisuje.
       contents: read
+      # Odczyt atestacji GitHuba obrazu z GHCR (gh attestation verify).
+      attestations: read
     env:
       # mise nakłada mise.ci.toml: DOCFIND_ENV=ci dla dft i KUBECONFIG
       # klastra CI dla kubectl.
@@ -290,10 +437,13 @@ jobs:
 
       # Po publikacji: obraz z rejestru po digeście z wyjść zadania build,
       # sprawdzony jak po publikacji (indeks z atestacją, jeden obraz).
+      # Środowisko ci wymaga atestacji (artifact.attested): pochodzenie i SBOM
+      # w rejestrze i atestacja GitHuba z tego workflowu — gh czyta ją z API.
       - name: klaster i wdrożenie obrazu z GHCR po digeście
         if: github.event_name == 'push'
         env:
           IMAGE: ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
+          GH_TOKEN: ${{ github.token }}
         run: ./bin/mise run cluster:up -- --image "$IMAGE"
 
       - name: drain każdego węzła z repliką

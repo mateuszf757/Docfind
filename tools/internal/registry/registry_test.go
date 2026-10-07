@@ -2,9 +2,11 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,6 +17,9 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/static"
+	"github.com/google/go-containerregistry/pkg/v1/tarball"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 
 	"github.com/mateuszf757/Docfind/tools/internal/cli"
 )
@@ -62,9 +67,27 @@ func configOf(t *testing.T, img v1.Image) string {
 // wskazującą na digest obrazu, któremu ma ją przypisać.
 func attestedIndex(t *testing.T, img v1.Image, attestationFor v1.Hash) v1.ImageIndex {
 	t.Helper()
+	return attestedIndexWith(t, img, attestationFor, ProvenancePredicates[0], SBOMPredicate)
+}
+
+// attestedIndexWith — jak attestedIndex, z manifestem atestacji, którego
+// warstwy niosą podane typy predykatów (jak u BuildKitu: warstwa na predykat).
+func attestedIndexWith(t *testing.T, img v1.Image, attestationFor v1.Hash, predicates ...string) v1.ImageIndex {
+	t.Helper()
+	attestation := empty.Image
+	for _, predicate := range predicates {
+		var err error
+		attestation, err = mutate.Append(attestation, mutate.Addendum{
+			Layer:       static.NewLayer([]byte(`{"predicateType":"`+predicate+`"}`), types.MediaType("application/vnd.in-toto+json")),
+			Annotations: map[string]string{PredicateTypeAnnotation: predicate},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	return mutate.AppendManifests(empty.Index,
 		mutate.IndexAddendum{Add: img, Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: "linux", Architecture: "amd64"}}},
-		mutate.IndexAddendum{Add: randomImage(t), Descriptor: v1.Descriptor{
+		mutate.IndexAddendum{Add: attestation, Descriptor: v1.Descriptor{
 			Platform: &v1.Platform{OS: "unknown", Architecture: "unknown"},
 			Annotations: map[string]string{
 				ReferenceTypeAnnotation:   AttestationType,
@@ -156,6 +179,25 @@ func TestVerifyPublished(t *testing.T) {
 			wantMsg:  "ma 2 manifestów obrazu",
 		},
 		{
+			// Tak wyglądała publikacja przed decyzją 37: pochodzenie bez SBOM.
+			name: "atestacja bez SBOM",
+			ref: func(t *testing.T) string {
+				return pushIndex(t, repo, attestedIndexWith(t, img, digestOf(t, img), ProvenancePredicates[0]))
+			},
+			config:   configOf(t, img),
+			wantCode: cli.ExitUnmet,
+			wantMsg:  "bez SBOM",
+		},
+		{
+			name: "atestacja bez pochodzenia",
+			ref: func(t *testing.T) string {
+				return pushIndex(t, repo, attestedIndexWith(t, img, digestOf(t, img), SBOMPredicate))
+			},
+			config:   configOf(t, img),
+			wantCode: cli.ExitUnmet,
+			wantMsg:  "bez pochodzenia SLSA",
+		},
+		{
 			name:     "inna konfiguracja niż w obrazie sprawdzonym",
 			ref:      func(t *testing.T) string { return pushIndex(t, repo, attestedIndex(t, other, digestOf(t, other))) },
 			config:   configOf(t, img),
@@ -211,5 +253,29 @@ func TestInspectLabels(t *testing.T) {
 	}
 	if got.Config != configOf(t, img) || got.Index != ref[strings.Index(ref, "@")+1:] {
 		t.Errorf("digesty: %+v (ref %s)", got.Published, ref)
+	}
+}
+
+// TestSaveImage: obraz z indeksu (platforma linux/amd64) trafia do archiwum
+// tej samej konfiguracji; brak obrazu to ErrNotFound — punkt odniesienia
+// skanu może nie istnieć i to nie jest awaria.
+func TestSaveImage(t *testing.T) {
+	repo := testRegistry(t)
+	img := randomImage(t)
+	ref := pushIndex(t, repo, attestedIndex(t, img, digestOf(t, img)))
+	path := filepath.Join(t.TempDir(), "obraz.tar")
+	if err := SaveImage(ref, path, remote.WithContext(context.Background())); err != nil {
+		t.Fatal(err)
+	}
+	saved, err := tarball.ImageFromPath(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := saved.ConfigName(); c.String() != configOf(t, img) {
+		t.Errorf("konfiguracja %s, oczekiwano %s", c, configOf(t, img))
+	}
+	err = SaveImage(repo+":nie-ma", path, remote.WithContext(context.Background()))
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("brak obrazu: %v", err)
 	}
 }

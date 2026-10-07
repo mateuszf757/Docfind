@@ -21,6 +21,10 @@ artifact:
   # archiwum (obrazu nie ma w rejestrze), na main i tagu digest z GHCR —
   # dowód, że opublikowany obraz to obraz sprawdzony.
   sources: [archive, registry]
+  # Po scaleniu i na tagu obraz z GHCR musi mieć pochodzenie i SBOM
+  # w rejestrze i atestację GitHuba z tego biegu — koniec łańcucha sprawdzony
+  # przy każdej publikacji, a nie dopiero przy wydaniu.
+  attested: true
 
 app:
   namespace: docfind

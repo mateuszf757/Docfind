@@ -208,7 +208,8 @@ func TestBuildPush(t *testing.T) {
 		verified = append(verified, ref, cfg)
 		return registry.Published{Index: digest, Config: cfg}, nil
 	}
-	res, err := b.Build(context.Background(), Options{Root: root, Service: "api", Image: image, Push: true})
+	generator := "docker/buildkit-syft-scanner:1.12.0@sha256:" + strings.Repeat("e", 64)
+	res, err := b.Build(context.Background(), Options{Root: root, Service: "api", Image: image, Push: true, SBOMGenerator: generator})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +218,7 @@ func TestBuildPush(t *testing.T) {
 		t.Fatalf("buildów %d, oczekiwano 2 (kopia lokalna i publikacja)", len(builds))
 	}
 	push := strings.Join(builds[1], " ")
-	for _, want := range []string{"--provenance=mode=max", "--output type=image,push=true,rewrite-timestamp=true,unpack=false"} {
+	for _, want := range []string{"--provenance=mode=max", "--attest type=sbom,generator=" + generator, "--output type=image,push=true,rewrite-timestamp=true,unpack=false"} {
 		if !strings.Contains(push, want) {
 			t.Errorf("publikacja bez %q:\n%s", want, push)
 		}
@@ -227,5 +228,20 @@ func TestBuildPush(t *testing.T) {
 	}
 	if res.Published == nil || res.Config != config {
 		t.Errorf("wynik %+v", res)
+	}
+}
+
+// TestBuildPushRequiresSBOMGenerator: bez przypiętego generatora publikacja
+// nie rusza — domyślny generator BuildKitu to przesuwalny tag.
+func TestBuildPushRequiresSBOMGenerator(t *testing.T) {
+	quiet(t)
+	root := gitRepo(t)
+	f := &fakeDocker{driver: "docker-container", reportCommit: commitOf(t, root), savedConfigID: "sha256:" + strings.Repeat("c", 64)}
+	_, err := newBuilder(t, root, f).Build(context.Background(), Options{Root: root, Service: "api", Image: image, Push: true})
+	if err == nil || !strings.Contains(err.Error(), "generatora SBOM") {
+		t.Fatalf("publikacja bez generatora: %v", err)
+	}
+	if n := len(f.built()); n != 1 {
+		t.Errorf("buildów %d, oczekiwano 1 (tylko kopia lokalna)", n)
 	}
 }

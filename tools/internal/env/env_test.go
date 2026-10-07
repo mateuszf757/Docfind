@@ -198,6 +198,8 @@ func TestReadRejects(t *testing.T) {
 		{"prod", "operacja bez klastra", "allowed: []", "allowed: [deploy]", "środowisko bez klastra nie ma operacji"},
 		{"prod", "klaster bez dostawcy z nazwą", "  provider: none", "  provider: none\n  name: prod", "cluster.provider=none"},
 		{"prod", "wydanie spoza rejestru", "  sources: [registry]", "  sources: [local, registry]", "releasesOnly"},
+		{"prod", "wydanie bez atestacji", "  attested: true\n", "", "releasesOnly bez artifact.attested"},
+		{"ci", "atestacja bez rejestru", "  sources: [archive, registry]", "  sources: [archive]", "atestacje mają tylko obrazy z rejestru"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

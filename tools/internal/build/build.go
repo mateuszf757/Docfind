@@ -13,7 +13,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 
 	"github.com/mateuszf757/Docfind/tools/internal/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/docker"
@@ -38,6 +37,9 @@ type Options struct {
 	// Archive — ścieżka, pod którą zapisać obraz (`docker save`) dla zadania,
 	// które wdroży go na klaster bez rejestru (PR: obrazu tam nie ma).
 	Archive string
+	// SBOMGenerator — obraz skanera, z którego BuildKit robi SBOM do
+	// atestacji przy publikacji (DF_SBOM_GENERATOR_IMAGE z ci/pins.env).
+	SBOMGenerator string
 	// Out i Err — wyjście BuildKitu.
 	Out, Err io.Writer
 }
@@ -66,8 +68,6 @@ type Builder struct {
 	// z uwierzytelnieniem z konfiguracji Dockera.
 	Verify func(ctx context.Context, ref, config string) (registry.Published, error)
 }
-
-var releaseVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 
 // Build buduje obraz usługi, sprawdza jego tożsamość i — przy Push —
 // publikuje go i sprawdza w rejestrze.
@@ -99,7 +99,7 @@ func (b Builder) Build(ctx context.Context, opts Options) (Result, error) {
 	// Build wydania to build wydanej wersji: Version daje samo X.Y.Z tylko na
 	// commicie z tagiem vX.Y.Z (decyzja 30). Commit bez tagu albo tag w innej
 	// postaci dałby obraz wydania z wersją deweloperską.
-	if opts.Release && !releaseVersion.MatchString(version) {
+	if opts.Release && !identity.IsRelease(version) {
 		return res, cli.Unmet("build wydania wymaga commita z tagiem vX.Y.Z, a wersja to %s", version)
 	}
 	cli.Step("usługa=%s wersja=%s tag=%s commit=%s", opts.Service, version, res.Tag, commit[:12])
@@ -200,6 +200,9 @@ func (b Builder) verifyIdentity(ctx context.Context, ref, wantCommit string) err
 // kopii lokalnej; że to ta sama zawartość, rozstrzyga rejestr, nie BuildKit.
 // mode=max zapisuje pełną definicję builda — build argi nie są sekretami.
 func (b Builder) publish(ctx context.Context, opts Options, res Result, buildArgs, tags []string, contextDir string) (Result, error) {
+	if opts.SBOMGenerator == "" {
+		return res, errors.New("publikacja bez generatora SBOM — brak DF_SBOM_GENERATOR_IMAGE")
+	}
 	tmp, err := os.MkdirTemp("", "dft-build-")
 	if err != nil {
 		return res, err
@@ -219,7 +222,10 @@ func (b Builder) publish(ctx context.Context, opts Options, res Result, buildArg
 	cli.Step("publikacja do %s", opts.Image)
 	metadata := filepath.Join(tmp, "push.json")
 	args := append([]string{"buildx", "build"}, buildArgs...)
-	args = append(args, "--provenance=mode=max", "--output", "type=image,push=true,rewrite-timestamp=true,unpack=false")
+	// SBOM z generatora przypiętego digestem — domyślny to przesuwalny tag,
+	// więc ten sam commit mógłby dostać SBOM z innej wersji syft (decyzja 37).
+	args = append(args, "--provenance=mode=max", "--attest", "type=sbom,generator="+opts.SBOMGenerator,
+		"--output", "type=image,push=true,rewrite-timestamp=true,unpack=false")
 	args = append(args, tags...)
 	args = append(args, "--metadata-file", metadata, contextDir)
 	if err := b.Docker.Stream(ctx, opts.Out, opts.Err, args...); err != nil {
@@ -241,7 +247,7 @@ func (b Builder) publish(ctx context.Context, opts Options, res Result, buildArg
 		return res, err
 	}
 	res.Published = &published
-	cli.Step("rejestr: atestacja pochodzenia obecna, konfiguracja zgodna z obrazem sprawdzonym (%s)", config)
+	cli.Step("rejestr: atestacja z pochodzeniem i SBOM (%v), konfiguracja zgodna z obrazem sprawdzonym (%s)", published.Predicates, config)
 	cli.Step("opublikowano %s@%s", opts.Image, digest)
 	return res, nil
 }

@@ -63,6 +63,12 @@ gh = "2.101.0"
 # Do `dft check tls` — `cmctl renew` wymusza odnowienie certyfikatu tak samo,
 # jak zrobiłby to cert-manager przed jego wygaśnięciem.
 cmctl = "2.6.1"
+# Skaner podatności obrazu (decyzja 37) — nie Trivy (kompromitacja
+# z 19.03.2026, E1). mise sprawdza sumę z mise.lock i pochodzenie SLSA
+# binarki (multiple.intoto.jsonl z wydania) — przy `mise lock` i przy
+# instalacji. Grype odpadł na tym: rejestr aqua opisuje jego podpis
+# w formacie, którego mise nie weryfikuje, więc zostałaby sama suma.
+osv-scanner = "2.6.0"
 # Toolchain narzędzi i bramek z tools/ (decyzja 23). Ta sama wersja stoi
 # w dyrektywie `go` w tools/go.mod — pilnuje tego `dft check versions`.
 # Aktualizacja: wersja tutaj, `./bin/mise lock`, w tools/
@@ -140,6 +146,18 @@ description = "Build z pamięcią podręczną i od zera muszą dać identyczny o
 usage = 'arg "[service]" default="api" help="Usługa z services/"'
 run = 'ci/dft check reproducible "${usage_service}"'
 
+[tasks."check:vulns"]
+description = "Podatności obrazu (OSV-Scanner): naprawialne HIGH/CRITICAL bez wyjątku blokują; --image, --image-archive, --baseline-commit, --report-only"
+run = "ci/dft check vulns"
+
+[tasks."check:attestation"]
+description = "Przed promocją: atestacja BuildKitu (pochodzenie, SBOM) i atestacja GitHuba opublikowanego obrazu <obraz@sha256:…>"
+run = "ci/dft check attestation"
+
+[tasks."vulns:issue"]
+description = "Wynik nocnego skanu podatności jako issue (otwarcie, aktualizacja, zamknięcie)"
+run = "ci/dft vulns-issue"
+
 [tasks.ci]
 description = "Cały pipeline po kolei, jak w CI (bez publikacji)"
 # Tablica biegnie sekwencyjnie i zatrzymuje się na pierwszym błędzie. Nie
@@ -154,6 +172,7 @@ run = [
     { task = "check:runtime" },
     { task = "test:negatives" },
     { task = "check:reproducible" },
+    { task = "check:vulns" },
 ]
 
 # Zadania klastrowe działają na środowisku z DOCFIND_ENV (domyślnie dev,

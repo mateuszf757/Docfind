@@ -14,6 +14,8 @@ artifact:
   # digesty, bo niosą różne wersje).
   sources: [registry]
   releasesOnly: true
+  # Atestacja GitHuba z tagu wersji obrazu (refs/tags/vX.Y.Z).
+  attested: true
 
 app:
   namespace: docfind

@@ -10,13 +10,15 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/mateuszf757/Docfind/tools/internal/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/gocheck"
 	"github.com/mateuszf757/Docfind/tools/internal/versions"
+	"github.com/mateuszf757/Docfind/tools/internal/vulns"
 )
 
-const checkUsage = "dft check <versions|go|reproducible-tools|workflows|python|charts> | <runtime|base|reproducible|negatives> [usługa] | <drain|tls|identity> | published <obraz@digest> <digest konfiguracji>"
+const checkUsage = "dft check <versions|go|reproducible-tools|workflows|python|charts> | <runtime|base|reproducible|negatives> [usługa] | <drain|tls|identity> | published <obraz@digest> <digest konfiguracji> | attestation <obraz@digest> | vulns [źródło obrazu]"
 
 func runCheck(ctx context.Context, env *environment, args []string) error {
 	if len(args) == 0 {
@@ -47,6 +49,10 @@ func runCheck(ctx context.Context, env *environment, args []string) error {
 		return runCheckWorkflows(ctx, env, args[1:])
 	case "python":
 		return runCheckPython(ctx, env, args[1:])
+	case "vulns":
+		return runCheckVulns(ctx, env, args[1:])
+	case "attestation":
+		return runCheckAttestation(ctx, env, args[1:])
 	}
 	if err := expectArgs(args, 1, 1, checkUsage); err != nil {
 		return err
@@ -61,7 +67,11 @@ func runCheck(ctx context.Context, env *environment, args []string) error {
 		if err := requireTools("go"); err != nil {
 			return err
 		}
-		return goChecker(env).All(ctx)
+		c, err := goChecker(env)
+		if err != nil {
+			return err
+		}
+		return c.All(ctx)
 	case "reproducible-tools":
 		if err := requireTools("go"); err != nil {
 			return err
@@ -72,7 +82,12 @@ func runCheck(ctx context.Context, env *environment, args []string) error {
 	}
 }
 
-func goChecker(env *environment) gocheck.Checker {
+func goChecker(env *environment) (gocheck.Checker, error) {
+	today := time.Now().UTC()
+	exceptions, err := vulns.LoadExceptions(filepath.Join(env.root, vulns.ExceptionsFile), today)
+	if err != nil {
+		return gocheck.Checker{}, err
+	}
 	return gocheck.Checker{
 		ModuleDir: filepath.Join(env.root, "tools"),
 		Runner:    env.runner,
@@ -81,7 +96,9 @@ func goChecker(env *environment) gocheck.Checker {
 		RequireRace: os.Getenv("CI") == "true",
 		Out:         os.Stdout,
 		Err:         os.Stderr,
-	}
+		Exceptions:  vulns.InScope(exceptions, vulns.ScopeGo),
+		Today:       today,
+	}, nil
 }
 
 func checkReproducibleTools(ctx context.Context, env *environment) (err error) {
@@ -91,7 +108,11 @@ func checkReproducibleTools(ctx context.Context, env *environment) (err error) {
 	}
 	defer func() { err = errors.Join(err, os.RemoveAll(tmp)) }()
 
-	binaries, err := goChecker(env).Reproducible(ctx, tmp)
+	c, err := goChecker(env)
+	if err != nil {
+		return err
+	}
+	binaries, err := c.Reproducible(ctx, tmp)
 	if len(binaries) > 0 {
 		var table strings.Builder
 		table.WriteString("### Powtarzalność narzędzi Go\n\n| Program | SHA-256 |\n|---|---|\n")

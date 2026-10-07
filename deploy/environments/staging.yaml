@@ -22,6 +22,8 @@ cluster:
 
 artifact:
   sources: [registry]
+  # Pochodzenie i SBOM w rejestrze, atestacja GitHuba z workflowu ci.
+  attested: true
 
 app:
   namespace: docfind

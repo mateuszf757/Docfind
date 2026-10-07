@@ -339,3 +339,14 @@ func TestImageName(t *testing.T) {
 		}
 	}
 }
+
+func TestIsRelease(t *testing.T) {
+	for version, want := range map[string]bool{
+		"0.3.0": true, "10.20.30": true,
+		"0.3.1-dev.4+abc1234": false, "0.3.0-dirty": false, "01.2.3": false, "0.3": false, "v0.3.0": false,
+	} {
+		if got := IsRelease(version); got != want {
+			t.Errorf("IsRelease(%q) = %v, oczekiwano %v", version, got, want)
+		}
+	}
+}

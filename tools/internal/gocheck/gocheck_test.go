@@ -4,13 +4,16 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mateuszf757/Docfind/tools/internal/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/vulns"
 )
 
 func silence(t *testing.T) {
@@ -49,6 +52,24 @@ func TestGofmt(t *testing.T) {
 	}
 }
 
+// reachable — ustalenie govulncheck na poziomie symbolu, z poprawką.
+const reachable = `{"finding":{"osv":"GO-2026-0001","fixed_version":"v0.36.6","trace":[{"module":"k8s.io/client-go","version":"v0.36.5","function":"Do"}]}}`
+
+// TestVulncheckException: ważny wyjątek z zakresu go zdejmuje blokadę,
+// przeterminowany — nie.
+func TestVulncheckException(t *testing.T) {
+	silence(t)
+	f := &proc.Fake{Responses: map[string]proc.FakeResponse{"go tool govulncheck -format json ./...": {Stdout: reachable}}}
+	today := time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)
+	for expires, want := range map[string]int{"2026-10-20": cli.ExitOK, "2026-10-07": cli.ExitUnmet} {
+		c := Checker{ModuleDir: "/m", Runner: f, Today: today, Out: io.Discard, Err: io.Discard,
+			Exceptions: []vulns.Exception{{ID: "GO-2026-0001", Package: "k8s.io/client-go", Expires: expires, Reason: "aktualizacja client-go czeka na k3s 1.37", Scope: vulns.ScopeGo}}}
+		if code := cli.ExitCode(c.Vulncheck(context.Background())); code != want {
+			t.Errorf("wyjątek do %s: kod %d, oczekiwano %d", expires, code, want)
+		}
+	}
+}
+
 func TestGoToolExitCodes(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -59,19 +80,20 @@ func TestGoToolExitCodes(t *testing.T) {
 		{"vet bez uwag", proc.FakeResponse{}, Checker.Vet, cli.ExitOK},
 		{"vet z uwagami", proc.FakeResponse{Code: 1}, Checker.Vet, cli.ExitUnmet},
 		{"go nie uruchamia się", proc.FakeResponse{Err: errors.New("brak go")}, Checker.Vet, cli.ExitFailure},
-		{"govulncheck: podatności", proc.FakeResponse{Code: 3}, Checker.Vulncheck, cli.ExitUnmet},
+		{"govulncheck: osiągalna z poprawką", proc.FakeResponse{Stdout: reachable}, Checker.Vulncheck, cli.ExitUnmet},
 		{"govulncheck: brak bazy", proc.FakeResponse{Code: 1}, Checker.Vulncheck, cli.ExitFailure},
-		{"govulncheck: czysto", proc.FakeResponse{}, Checker.Vulncheck, cli.ExitOK},
+		{"govulncheck: nieczytelny wynik", proc.FakeResponse{Stdout: "nie JSON"}, Checker.Vulncheck, cli.ExitFailure},
+		{"govulncheck: czysto", proc.FakeResponse{Stdout: `{"config":{}}`}, Checker.Vulncheck, cli.ExitOK},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &proc.Fake{Responses: map[string]proc.FakeResponse{
-				"go vet ./...":              tt.resp,
-				"go tool govulncheck ./...": tt.resp,
-				"go tool staticcheck ./...": tt.resp,
-				"go env CC":                 {Stdout: "gcc"},
-				"go test -race ./...":       tt.resp,
-				"go test ./...":             tt.resp,
+				"go vet ./...":                           tt.resp,
+				"go tool govulncheck -format json ./...": tt.resp,
+				"go tool staticcheck ./...":              tt.resp,
+				"go env CC":                              {Stdout: "gcc"},
+				"go test -race ./...":                    tt.resp,
+				"go test ./...":                          tt.resp,
 			}}
 			err := tt.run(Checker{ModuleDir: "/m", Runner: f}, context.Background())
 			if code := cli.ExitCode(err); code != tt.wantCode {

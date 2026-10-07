@@ -8,6 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
+
+	"github.com/google/go-containerregistry/pkg/name"
 
 	"github.com/mateuszf757/Docfind/tools/internal/basecheck"
 	"github.com/mateuszf757/Docfind/tools/internal/build"
@@ -70,6 +73,13 @@ func runBuild(ctx context.Context, env *environment, args []string) error {
 		if opts.Archive, err = filepath.Abs(path); err != nil {
 			return err
 		}
+	}
+	if opts.Push {
+		p, err := pins.Load(env.root)
+		if err != nil {
+			return err
+		}
+		opts.SBOMGenerator = p.Get("DF_SBOM_GENERATOR_IMAGE")
 	}
 	if err := requireTools("docker"); err != nil {
 		return err
@@ -281,6 +291,49 @@ func runCheckPublished(ctx context.Context, env *environment, args []string) err
 	}
 	cli.Step("rejestr: indeks %s, obraz %s, atestacja %s, konfiguracja %s", published.Index, published.Image, published.Attestation, published.Config)
 	return nil
+}
+
+// runCheckAttestation sprawdza opublikowany obraz przed promocją
+// (decyzja 37): w rejestrze indeks z jednym obrazem i atestacją BuildKitu
+// z pochodzeniem i SBOM, a do tego atestacja GitHuba (Sigstore) z workflowu
+// ci tego repozytorium. Wydanie (wersja X.Y.Z w etykiecie) musi pochodzić
+// z tagu swojej wersji.
+func runCheckAttestation(ctx context.Context, env *environment, args []string) error {
+	if err := expectArgs(args, 1, 1, "dft check attestation <obraz@sha256:…>"); err != nil {
+		return err
+	}
+	if err := requireTools("gh"); err != nil {
+		return err
+	}
+	ref, err := name.NewDigest(args[0])
+	if err != nil {
+		return cli.Usage("obraz %q: oczekiwano repozytorium@sha256:…", args[0])
+	}
+	plain := ref.Context().Name() + "@" + ref.DigestStr()
+	inspected, err := registry.Inspect(plain, registry.Options(ctx)...)
+	if err != nil {
+		return err
+	}
+	if err := registry.RequireAttestations(inspected.Published); err != nil {
+		return err
+	}
+	version, commit := inspected.Labels[registry.VersionLabel], inspected.Labels[registry.RevisionLabel]
+	cli.Step("rejestr: wersja %s, commit %.12s, atestacja %v", version, commit, inspected.Predicates)
+	sourceRef := ""
+	if identity.IsRelease(version) {
+		sourceRef = "refs/tags/v" + version
+	}
+	verified, err := attestVerifier(env).Verify(ctx, plain, sourceRef)
+	if err != nil {
+		return err
+	}
+	if verified.SourceCommit != commit {
+		return cli.Unmet("atestacja GitHuba mówi o commicie %s, a obraz deklaruje %s", verified.SourceCommit, commit)
+	}
+	cli.Step("atestacja GitHuba: %s z %s (%.12s), %s, bieg %s", verified.PredicateType, verified.SourceRef, verified.SourceCommit, verified.Runner, verified.Run)
+	return writeReport(env, "attestation-"+strings.TrimPrefix(ref.DigestStr(), "sha256:")[:12], map[string]any{
+		"image": plain, "version": version, "commit": commit, "registry": inspected.Published, "github": verified,
+	})
 }
 
 // runCheckClusterNegatives uruchamia warianty negatywne na żywym klastrze

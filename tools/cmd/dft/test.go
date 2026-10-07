@@ -34,7 +34,13 @@ func runTest(ctx context.Context, e *environment, args []string) error {
 		{"workflowy i skrypty", func() error { return checkWorkflows(ctx, e) }},
 		{"Python aplikacji", func() error { return checkPython(ctx, e) }},
 		{"charty", func() error { return checkCharts(ctx, e) }},
-		{"kod Go", func() error { return goChecker(e).All(ctx) }},
+		{"kod Go", func() error {
+			c, err := goChecker(e)
+			if err != nil {
+				return err
+			}
+			return c.All(ctx)
+		}},
 	}
 	for _, step := range steps {
 		cli.Step("— %s —", step.name)
