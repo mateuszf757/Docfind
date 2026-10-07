@@ -16,9 +16,9 @@ FROM ghcr.io/astral-sh/uv:0.12.21@sha256:a7aed3216253ee804de3e2d8afa5073baa1a177
 
 FROM python:3.14-alpine@sha256:9e9fde4d32eedce0b661d9ab91e826b62dddf28e928c230ec55f1866cac66b01 AS builder
 
-# Czas ostatniego commita (ci/lib.sh). Python, widząc tę zmienną, kompiluje
-# pliki .pyc w trybie z sumą kontrolną zamiast z czasem modyfikacji źródła,
-# więc bytecode też jest powtarzalny.
+# Czas ostatniego commita (tools/internal/identity). Python, widząc tę
+# zmienną, kompiluje pliki .pyc w trybie z sumą kontrolną zamiast z czasem
+# modyfikacji źródła, więc bytecode też jest powtarzalny.
 ARG SOURCE_DATE_EPOCH
 
 WORKDIR /build

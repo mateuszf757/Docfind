@@ -2,7 +2,7 @@
 # kontenerze Dockera. Scheduler widzi trzy osobne węzły, więc kubectl drain,
 # rozkład podów między węzłami i PodDisruptionBudget działają naprawdę.
 #
-# Obraz k3s nie jest tu wpisany — podaje go ci/deploy-local.sh z ci/lib.sh,
+# Obraz k3s nie jest tu wpisany — podaje go ci/deploy-local.sh z ci/pins.env,
 # żeby wersja Kubernetesa była zapisana w jednym miejscu razem z kubectl
 # i schematem, względem którego kubeconform sprawdza manifesty.
 apiVersion: k3d.io/v1alpha5

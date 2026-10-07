@@ -30,6 +30,10 @@ zero nieudanych, proxy podaje nowy certyfikat bez restartu.
   z tym, że to obraz przetestowany; digest w wyjściach zadania `build`
   (korekta decyzji 21); po wdrożeniu `/version` sprawdzany na każdym podzie
 - wersje z tagów `vX.Y.Z`, numer minor to etap (decyzja 30)
+- logika narzędzi i bramek przechodzi z Basha do Go (`tools/`, program `dft`):
+  wersja z gita jest już liczona w Go i testowana na prawdziwych
+  repozytoriach, przypięcia są plikiem danych `ci/pins.env`, a binarka
+  narzędzi jest powtarzalna bajt w bajt (decyzja 23)
 
 Etap 2 — usługa na Kubernetesie. Drain każdego węzła z repliką API:
 1358 żądań w trzech przebiegach, zero nieudanych.
@@ -79,7 +83,9 @@ deploy/charts/     Chart Helma docfind
 deploy/charts/platform/  Chart platformy: Gateway, TLS, wydawcy certyfikatów
 deploy/platform/   Wartości komponentów platformy (CoreDNS, cert-manager, Envoy Gateway)
 deploy/k3d/        Definicja lokalnego klastra (1 serwer, 2 węzły robocze)
-ci/                Skrypty budowania, testów, wdrożenia i warunków zakończenia
+tools/             Narzędzia i bramki w Go: program dft (tools/cmd/dft), logika w tools/internal
+ci/                Wejścia: ci/dft (buduje i uruchamia dft), ci/pins.env (przypięcia),
+                   skrypty jeszcze nieprzeniesione do Go
 bin/mise           Launcher mise w przypiętej wersji — narzędzia i zadania (mise.toml)
 tests/corpus/      Deterministyczny korpus dla testów e2e
 docs/              DECYZJE.md i dokumentacja operacyjna
@@ -144,19 +150,22 @@ docker buildx imagetools inspect ghcr.io/mateuszf757/docfind-api:0.3.1 --format 
 
 Wymagania i sposób ich sprawdzenia: [docs/WYMAGANIA.md](docs/WYMAGANIA.md).
 Potrzebne są Docker, [uv](https://docs.astral.sh/uv/) i Python 3; resztę
-narzędzi instaluje `./bin/mise` w wersjach i z sumami z `mise.lock`, do
-katalogu `.mise/` w repozytorium — bez globalnej instalacji i bez sudo.
+narzędzi, w tym Go dla `tools/`, instaluje `./bin/mise` w wersjach i z sumami
+z `mise.lock`, do katalogu `.mise/` w repozytorium — bez globalnej instalacji
+i bez sudo.
 
 ```bash
 ./bin/mise install                # narzędzia z mise.lock
 ./bin/mise tasks                  # lista zadań
-./bin/mise run test               # lint, typy, testy, polityki — jak zadanie test w CI
+./bin/mise run test               # wersje, lint, typy, testy, polityki, kod Go — jak zadanie test w CI
 ./bin/mise run ci                 # cały pipeline po kolei, jak w CI (bez publikacji)
 ./bin/mise run build              # build obrazu z wersją z gita
 RELEASE=1 ./bin/mise run build    # build wydania — tylko czyste drzewo na tagu vX.Y.Z
 ./bin/mise run test:image         # testy jednostkowe w obrazie na musl
 ./bin/mise run check:runtime      # warunki zakończenia Etapu 1
 ./bin/mise run check:reproducible # build z cache i od zera → identyczny obraz
+./bin/mise run check:tools        # to samo dla narzędzi Go → identyczna binarka
+./bin/mise exec -- ci/dft --help  # polecenia dft (wersja, tożsamość, bramki)
 
 ./bin/mise run cluster:up         # klaster k3d + build + helm upgrade --install
 ./bin/mise run cluster:drain      # warunek zakończenia Etapu 2
@@ -166,9 +175,12 @@ RELEASE=1 ./bin/mise run build    # build wydania — tylko czyste drzewo na tag
 ./bin/mise exec -- kubectl get pods -A   # kubectl z przypiętej wersji, kubeconfig projektu
 ```
 
-Zadania tylko wołają skrypty z `ci/` — każdy działa też bez mise, jeśli
-narzędzia są w PATH. Klaster zapisuje dane dostępowe do `.cache/kubeconfig`,
-nie do `~/.kube/config`; `./bin/mise exec` ustawia `KUBECONFIG` sam.
+Zadania wołają `ci/dft` — program w Go z `tools/`, budowany z bieżącego drzewa
+przy każdym wywołaniu (bez zmian w kodzie nic się nie kompiluje) — i skrypty
+z `ci/`, które jeszcze czekają na przeniesienie do Go. Bez mise działają, jeśli
+w PATH są Go 1.27.1 i pozostałe narzędzia. Klaster zapisuje dane dostępowe do
+`.cache/kubeconfig`, nie do `~/.kube/config`; `./bin/mise exec` ustawia
+`KUBECONFIG` sam.
 
 Podgląd działającej usługi. Konfiguracja jest wymagana — bez niej kontener
 świadomie odmawia startu:

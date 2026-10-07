@@ -5,9 +5,10 @@
 # bazowego — są scalane automatycznie (.github/workflows/dependabot-auto-merge.yml),
 # reszta czeka na przegląd.
 #
-# Poza jego zasięgiem zostają przypięcia w ci/lib.sh (k3s, BuildKit, obraz
-# sondy, chart CoreDNS, commit schematów kubeconform) i narzędzia w mise.toml
-# — Dependabot nie obsługuje mise. Te aktualizuje się ręcznie, razem z sumami.
+# Poza jego zasięgiem zostają przypięcia w ci/pins.env (k3s, BuildKit, obraz
+# sondy, charty, commit schematów kubeconform) i narzędzia w mise.toml, w tym
+# toolchain Go — Dependabot nie obsługuje mise. Te aktualizuje się ręcznie,
+# razem z sumami.
 #
 # Grupy są rozdzielone według typu zmiany, bo auto-merge patrzy na najwyższą
 # zmianę w PR-ze: grupa łącząca minor i patch dawałaby "minor" i żadna łatka
@@ -24,7 +25,8 @@
 # Rozróżnienie dni według typu zmiany (semver-*-days) Dependabot przyjmuje tylko
 # dla części ekosystemów — dla github-actions i docker odrzucił je przy parsowaniu,
 # choć schemat dependabot.yml ze schemastore ich nie zabrania. Tam jest więc
-# default-days, obejmujące wszystkie typy zmian.
+# default-days, obejmujące wszystkie typy zmian. Dla uv i gomod dokumentacja
+# opcji Dependabota je wymienia.
 #
 # Po każdej zmianie tego pliku trzeba sprawdzić, czy Dependabot go przyjął
 # (Insights → Dependency graph → Dependabot): lokalnie nie ma walidatora, który
@@ -66,4 +68,25 @@ updates:
       python-patch:
         update-types: [patch]
       python-minor:
+        update-types: [minor]
+
+  # Moduły Go narzędzi z tools/ (go.mod, go.sum), razem z narzędziami
+  # przypiętymi dyrektywą tool (staticcheck, govulncheck). Toolchain Go jest
+  # w mise.toml, a `dft check versions` pilnuje, żeby dyrektywa go w go.mod
+  # była z nim zgodna. Aktualizacja, która podniesie dyrektywę go (moduł
+  # wymaga nowszego Go), kończy się czerwonym CI — przy GOTOOLCHAIN=local
+  # go nie pobiera po cichu nowszego toolchainu.
+  - package-ecosystem: gomod
+    directory: /tools
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+      semver-patch-days: 7
+      semver-minor-days: 7
+      semver-major-days: 14
+    groups:
+      go-patch:
+        update-types: [patch]
+      go-minor:
         update-types: [minor]

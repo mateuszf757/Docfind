@@ -7,7 +7,7 @@
 # odświeżenie jest scalane automatycznie jak łatka (decyzja 22). Zwykle to
 # łatka Pythona albo pakietów Alpine — ale pod tym samym tagiem pojawia się
 # też nowe wydanie Alpine: nowy musl, nowy OpenSSL, a to nie jest łatka.
-# Skrypt porównuje obraz z wydaniem Alpine z ci/lib.sh (DF_BASE_ALPINE)
+# Skrypt porównuje obraz z wydaniem Alpine z ci/pins.env (DF_BASE_ALPINE)
 # i z Pythonem z services/api/.python-version. Nowe wydanie zatrzymuje build,
 # dopóki człowiek nie podbije wartości w tym samym PR-ze.
 #
@@ -23,7 +23,7 @@ repo_root=$(git rev-parse --show-toplevel)
 source "$repo_root/ci/lib.sh"
 
 service="${1:-api}"
-image="$(df_image_name "$service"):$(df_docker_tag "$(df_version)")"
+image="$("$DF_DFT" identity image "$service"):$("$DF_DFT" identity docker-tag)"
 
 command -v docker >/dev/null || { echo "BŁĄD: brak docker w PATH" >&2; exit 2; }
 
@@ -51,7 +51,7 @@ fi
 failures=0
 
 if [[ "${alpine%.*}" != "$DF_BASE_ALPINE" ]]; then
-  echo "NIESPEŁNIONE: obraz stoi na Alpine $alpine, a zapisane jest $DF_BASE_ALPINE (DF_BASE_ALPINE w ci/lib.sh)." >&2
+  echo "NIESPEŁNIONE: obraz stoi na Alpine $alpine, a zapisane jest $DF_BASE_ALPINE (DF_BASE_ALPINE w ci/pins.env)." >&2
   echo "  Nowe wydanie Alpine przyszło pod tym samym tagiem bazy. Sprawdź zmiany musl i OpenSSL," >&2
   echo "  potem podbij DF_BASE_ALPINE w tym samym PR-ze." >&2
   failures=$((failures + 1))

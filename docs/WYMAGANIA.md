@@ -205,16 +205,25 @@ hosta.
 
 **Instalacja i sprawdzenie:** `./bin/mise install`
 
-`kubectl`, `k3d`, `helm`, `kubeconform`, `shellcheck`, `actionlint`, `zizmor`
-i `gh` w wersjach z `mise.toml`, weryfikowane względem sum SHA-256 dla każdej
+`kubectl`, `k3d`, `helm`, `kubeconform`, `shellcheck`, `actionlint`, `zizmor`,
+`gh`, `cmctl` i `go` (toolchain narzędzi z `tools/`) w wersjach z `mise.toml`,
+weryfikowane względem sum SHA-256 dla każdej
 platformy zapisanych w `mise.lock` (`locked = true` odmawia instalacji
 czegokolwiek spoza lockfile'a). `bin/mise` pobiera samo mise w przypiętej
 wersji i sprawdza jego sumę; wszystko ląduje w `.mise/` w repozytorium — bez
 sudo, bez menedżera pakietów systemu i bez zmian w konfiguracji powłoki.
 Drugi bieg niczego nie pobiera.
 
-Poza mise zostają: Docker, `uv` (wersja z Dockerfile — `run-tests.sh`
-ostrzega, gdy lokalna jest inna) i `python3` do skryptów w `ci/`.
+Poza mise zostają: Docker, `uv` (wersja z Dockerfile — `dft check versions`
+ostrzega, gdy lokalna jest inna) i `python3` do skryptów w `ci/`, które
+jeszcze nie przeszły do Go. Go z systemu nie jest potrzebne ani używane:
+`GOTOOLCHAIN=local` w `mise.toml` sprawia, że `go` nie pobiera innego
+toolchainu, nawet gdy zażąda go `tools/go.mod`.
+
+**Detektor wyścigów (`go test -race`)** wymaga kompilatora C (cgo). Bez gcc
+testy biegną bez niego, z ostrzeżeniem; w CI (`CI=true`) brak kompilatora
+kończy bramkę kodem 2. Instalacja gcc wymaga sudo, więc lokalnie nie jest
+wymagana — wyścig wyjdzie najpóźniej w zadaniu `test` w CI.
 
 **Kubeconfig:** klaster zapisuje dane dostępowe do `.cache/kubeconfig`
 w repozytorium, nie do `~/.kube/config` — ustawiają to `ci/lib.sh` dla skryptów

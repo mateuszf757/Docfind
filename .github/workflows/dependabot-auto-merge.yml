@@ -51,36 +51,43 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # update-type to najwyższa zmiana w PR-ze, także grupowym — dlatego
-      # grupy w dependabot.yml są rozdzielone na patch i minor.
+      # grupy w dependabot.yml są rozdzielone na patch i minor. Łatki modułów
+      # Go z tools/ (ekosystem gomod) też są tu łatkami: narzędzia nie trafiają
+      # do klienta, a zadanie test buduje je i testuje przed scaleniem.
       #
       # Odświeżenie digestu bez zmiany tagu (python:3.14-alpine@sha256:A → B)
       # fetch-metadata klasyfikuje błędnie jako semver-major, z poprzednią
-      # wersją w postaci skróconego digestu w backtickach
-      # (dependabot/fetch-metadata#726). To zwykle łatka Pythona albo Alpine,
-      # więc jest traktowane jak łatka; nowe wydanie Alpine pod tym samym tagiem
-      # zatrzymuje ci/check-image-base.sh w zadaniu build.
+      # wersją w postaci skróconego digestu w backtickach, np. `e1b523f`
+      # (dependabot/fetch-metadata#726, w 3.1.0 wciąż otwarte). To zwykle
+      # łatka Pythona albo Alpine, więc jest traktowane jak łatka; nowe wydanie
+      # Alpine pod tym samym tagiem zatrzymuje bramka bazy obrazu w zadaniu build.
+      #
+      # Klasyfikacja jest wyrażeniem GitHub Actions, a nie logiką w powłoce
+      # (decyzja 23): krok niczego nie rozstrzyga, tylko przepisuje wynik.
+      # Przeniesienie jej do Go wymagałoby budowania kodu z repozytorium
+      # w workflowie, który dziś nie pobiera ani jednego pliku z repozytorium,
+      # a potem trzyma klucz aplikacji z prawem zapisu.
       #
       # Metadane idą przez zmienne środowiskowe, nie są wstawiane do skryptu —
       # nazwa zależności pochodzi z PR-a, a więc z zewnątrz.
       - name: klasyfikacja aktualizacji
         id: kind
         env:
+          KIND: >-
+            ${{
+              (steps.metadata.outputs.update-type == 'version-update:semver-patch' && 'patch')
+              || (steps.metadata.outputs.package-ecosystem == 'docker'
+                  && startsWith(steps.metadata.outputs.previous-version, '`')
+                  && endsWith(steps.metadata.outputs.previous-version, '`')
+                  && 'digest')
+              || 'review'
+            }}
           UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
-          ECOSYSTEM: ${{ steps.metadata.outputs.package-ecosystem }}
           PREVIOUS: ${{ steps.metadata.outputs.previous-version }}
           DEPENDENCIES: ${{ steps.metadata.outputs.dependency-names }}
         run: |
-          # Skrócony digest przychodzi w backtickach (\140); porównujemy bez nich.
-          previous=$(printf '%s' "$PREVIOUS" | tr -d '\140')
-          if [[ "$UPDATE_TYPE" == "version-update:semver-patch" ]]; then
-            kind="patch"
-          elif [[ "$ECOSYSTEM" == "docker" && "$previous" =~ ^[0-9a-f]{7,64}$ ]]; then
-            kind="digest"
-          else
-            kind="review"
-          fi
-          echo "kind=$kind" >> "$GITHUB_OUTPUT"
-          echo "$DEPENDENCIES: update-type='$UPDATE_TYPE', poprzednio '$previous' → $kind"
+          echo "kind=$KIND" >> "$GITHUB_OUTPUT"
+          echo "$DEPENDENCIES: update-type='$UPDATE_TYPE', poprzednio '$PREVIOUS' → $KIND"
 
       - name: czy jest aplikacja do scalania
         id: app

@@ -1,5 +1,5 @@
 # cert-manager — wystawianie i odnawianie certyfikatów (decyzja 4).
-# Wersja charta i suma: ci/lib.sh (DF_CERT_MANAGER_CHART_*).
+# Wersja charta i suma: ci/pins.env (DF_CERT_MANAGER_CHART_*).
 #
 # Ten sam wzór co przy CoreDNS: domyślny chart ma jedną replikę i wyłączone
 # PodDisruptionBudget. Dla cert-managera ważniejszy od kontrolera jest webhook —
