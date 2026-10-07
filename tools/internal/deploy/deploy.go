@@ -477,7 +477,7 @@ func (d Deployer) platform(ctx context.Context, c *kube.Clients) error {
 	// statusie Challenge.
 	if strings.HasPrefix(gw.Issuer, "letsencrypt") {
 		if _, err := c.Core.CoreV1().Secrets("cert-manager").Get(ctx, "cloudflare-api-token", metav1.GetOptions{}); apierrors.IsNotFound(err) {
-			return cli.Unmet("wydawca %s wymaga tokenu Cloudflare w klastrze — ./bin/mise run dns-token", gw.Issuer)
+			return cli.Unmet("wydawca %s wymaga tokenu Cloudflare w klastrze — %s", gw.Issuer, d.Env.Run("dns-token"))
 		} else if err != nil {
 			return err
 		}
