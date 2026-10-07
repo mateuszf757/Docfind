@@ -65,21 +65,43 @@ func runBuild(ctx context.Context, env *environment, args []string) error {
 			return err
 		}
 	}
+	// ARCHIVE=<plik> — obraz zapisany do archiwum dla wdrożenia bez rejestru.
+	if path := os.Getenv("ARCHIVE"); path != "" {
+		if opts.Archive, err = filepath.Abs(path); err != nil {
+			return err
+		}
+	}
 	if err := requireTools("docker"); err != nil {
 		return err
 	}
 	res, err := builder(env).Build(ctx, opts)
-	if err != nil || res.Published == nil {
+	if err != nil {
 		return err
 	}
-	// Digest, nie tag, identyfikuje opublikowany obraz — tag można nadpisać.
-	// Kolejne zadania i środowiska promują ten digest zamiast budować od nowa.
-	digest := res.Published.Index
-	if path := os.Getenv("GITHUB_OUTPUT"); path != "" {
-		if err := appendFile(path, fmt.Sprintf("image=%s\ndigest=%s\n", res.Image, digest)); err != nil {
+	// Digest konfiguracji identyfikuje sprawdzony obraz niezależnie od drogi:
+	// zadanie, które wdroży archiwum, porówna go z tym, co dostało.
+	outputs := ""
+	if opts.Archive != "" {
+		outputs += fmt.Sprintf("archive=%s\nconfig=%s\n", opts.Archive, res.Config)
+	}
+	if res.Published != nil {
+		// Digest, nie tag, identyfikuje opublikowany obraz — tag można
+		// nadpisać. Kolejne zadania i środowiska promują ten digest zamiast
+		// budować od nowa.
+		outputs += fmt.Sprintf("image=%s\ndigest=%s\n", res.Image, res.Published.Index)
+		if opts.Archive == "" {
+			outputs += fmt.Sprintf("config=%s\n", res.Config)
+		}
+	}
+	if path := os.Getenv("GITHUB_OUTPUT"); path != "" && outputs != "" {
+		if err := appendFile(path, outputs); err != nil {
 			return fmt.Errorf("GITHUB_OUTPUT: %w", err)
 		}
 	}
+	if res.Published == nil {
+		return nil
+	}
+	digest := res.Published.Index
 	return appendSummary(fmt.Sprintf("### Opublikowany obraz %s\n\n| Wersja | Obraz | Konfiguracja |\n|---|---|---|\n| %s | `%s@%s` | `%s` |\n",
 		svc, res.Version, res.Image, digest, res.Config))
 }

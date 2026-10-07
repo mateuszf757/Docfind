@@ -4,7 +4,9 @@
 #
 # Obraz k3s nie jest tu wpisany — podaje go `dft cluster up` z ci/pins.env,
 # żeby wersja Kubernetesa była zapisana w jednym miejscu razem z kubectl
-# i schematem, względem którego kubeconform sprawdza manifesty.
+# i schematem, względem którego kubeconform sprawdza manifesty. Nazwę klastra
+# i porty na hoście podaje definicja środowiska (deploy/environments/) —
+# wartości poniżej to te z dev; mapowanie spoza 127.0.0.1 dft odrzuca.
 apiVersion: k3d.io/v1alpha5
 kind: Simple
 metadata:

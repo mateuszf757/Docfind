@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	stdflag "flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/google/go-containerregistry/pkg/name"
 	"golang.org/x/term"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -20,6 +24,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/github"
 	"github.com/mateuszf757/Docfind/tools/internal/kube"
 	"github.com/mateuszf757/Docfind/tools/internal/pins"
+	"github.com/mateuszf757/Docfind/tools/internal/registry"
 	"github.com/mateuszf757/Docfind/tools/internal/tlscheck"
 )
 
@@ -29,7 +34,11 @@ func environmentOf(e *environment) (env.Environment, error) {
 	if err != nil {
 		return env.Environment{}, err
 	}
-	cli.Step("środowisko %s (%s), kontekst %s", def.Name, def.Stage, def.Cluster.Context)
+	if def.Cluster.Provider == env.ProviderNone {
+		cli.Step("środowisko %s (%s), bez klastra", def.Name, def.Stage)
+	} else {
+		cli.Step("środowisko %s (%s), kontekst %s", def.Name, def.Stage, def.Cluster.Context)
+	}
 	return def, nil
 }
 
@@ -37,10 +46,46 @@ func targetOf(e *environment, def env.Environment) kube.Target {
 	return kube.Target{Kubeconfig: def.KubeconfigPath(e.root), Context: def.Cluster.Context, APIServer: def.Cluster.APIServer}
 }
 
+// connect łączy się z klastrem środowiska przez strażnika: klaster musi być
+// w definicji, a kubeconfig wskazywać jego kontekst i serwer.
+func connect(e *environment, def env.Environment) (*kube.Clients, error) {
+	if err := def.RequireCluster(); err != nil {
+		return nil, err
+	}
+	return kube.Connect(targetOf(e, def))
+}
+
+// artifactArgs czyta, skąd wziąć obraz: bez flag — build z drzewa;
+// --image repozytorium@sha256:… — z rejestru; --image-archive i
+// --config-digest — archiwum z zadania build.
+func artifactArgs(args []string) (deploy.Artifact, error) {
+	const usage = "dft cluster up [--image <obraz>@sha256:… | --image-archive <plik.tar> --config-digest sha256:…]"
+	fs := stdflag.NewFlagSet("cluster up", stdflag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var art deploy.Artifact
+	fs.StringVar(&art.Ref, "image", "", "")
+	fs.StringVar(&art.Archive, "image-archive", "", "")
+	fs.StringVar(&art.ConfigDigest, "config-digest", "", "")
+	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
+		return art, cli.Usage("użycie: %s", usage)
+	}
+	switch {
+	case art.Ref != "" && art.Archive == "" && art.ConfigDigest == "":
+		art.Source = env.SourceRegistry
+	case art.Ref == "" && art.Archive != "" && art.ConfigDigest != "":
+		art.Source = env.SourceArchive
+	case art.Ref == "" && art.Archive == "" && art.ConfigDigest == "":
+		art.Source = env.SourceLocal
+	default:
+		return art, cli.Usage("użycie: %s", usage)
+	}
+	return art, nil
+}
+
 func runCluster(ctx context.Context, e *environment, args []string) error {
-	const usage = "dft cluster <up|down>"
-	if err := expectArgs(args, 1, 1, usage); err != nil {
-		return err
+	const usage = "dft cluster <up [źródło obrazu]|down>"
+	if len(args) == 0 || (args[0] == "down" && len(args) > 1) {
+		return cli.Usage("użycie: %s", usage)
 	}
 	def, err := environmentOf(e)
 	if err != nil {
@@ -53,10 +98,14 @@ func runCluster(ctx context.Context, e *environment, args []string) error {
 	d := deploy.Deployer{Root: e.root, Env: def, Runner: e.runner, Pins: p, Builder: builder(e), Service: "api", Image: imageName("api")}
 	switch args[0] {
 	case "up":
-		if err := requireTools("k3d", "kubectl", "helm", "docker", "go"); err != nil {
+		art, err := artifactArgs(args[1:])
+		if err != nil {
 			return err
 		}
-		return d.Up(ctx)
+		if err := requireTools("k3d", "kubectl", "helm", "docker"); err != nil {
+			return err
+		}
+		return d.Up(ctx, art)
 	case "down":
 		if err := requireTools("k3d"); err != nil {
 			return err
@@ -75,14 +124,14 @@ func runCheckDrain(ctx context.Context, e *environment, args []string) (err erro
 	if err != nil {
 		return err
 	}
-	if !def.AllowsDestructive() {
-		return cli.Unmet("środowisko %s nie dopuszcza operacji niszczących (operations.destructive=%s) — drain odmówiony", def.Name, def.Operations.Destructive)
+	if err := def.Require(env.OpDrain); err != nil {
+		return err
 	}
 	if err := requireTools("kubectl", "go", "k3d"); err != nil {
 		return err
 	}
 	target := targetOf(e, def)
-	clients, err := kube.Connect(target)
+	clients, err := connect(e, def)
 	if err != nil {
 		return err
 	}
@@ -155,7 +204,7 @@ func runCheckTLS(ctx context.Context, e *environment, args []string) error {
 		return err
 	}
 	target := targetOf(e, def)
-	clients, err := kube.Connect(target)
+	clients, err := connect(e, def)
 	if err != nil {
 		return err
 	}
@@ -169,7 +218,7 @@ func runCheckTLS(ctx context.Context, e *environment, args []string) error {
 			HTTPPort:         def.Cluster.Ports.HTTP,
 			HTTPSPort:        def.Cluster.Ports.HTTPS,
 			RenewProduction:  renewProduction,
-			AllowRenewal:     def.AllowsDestructive(),
+			AllowRenewal:     def.Allows(env.OpTLSRenew),
 			MinRequests:      50,
 			KubectlArgs:      target.KubectlArgs(),
 		},
@@ -191,16 +240,7 @@ func runCheckIdentity(ctx context.Context, e *environment, args []string) error 
 	if err != nil {
 		return err
 	}
-	clients, err := kube.Connect(targetOf(e, def))
-	if err != nil {
-		return err
-	}
-	repo := repoOf(e)
-	version, err := repo.Version(ctx)
-	if err != nil {
-		return err
-	}
-	commit, err := repo.Commit(ctx)
+	clients, err := connect(e, def)
 	if err != nil {
 		return err
 	}
@@ -219,11 +259,45 @@ func runCheckIdentity(ctx context.Context, e *environment, args []string) error 
 			}
 		}
 	}
-	results, err := kube.VerifyDeployment(ctx, clients.Core, def.App.Namespace, deployment, "api", kube.Expected{Image: image, Version: version, Commit: commit})
+	want, err := expectedIdentity(ctx, e, image)
+	if err != nil {
+		return err
+	}
+	results, err := kube.VerifyDeployment(ctx, clients.Core, def.App.Namespace, deployment, "api", want)
 	if reportErr := writeReport(e, "identity-"+def.Name, results); reportErr != nil {
 		return errors.Join(err, reportErr)
 	}
 	return err
+}
+
+// expectedIdentity — czego oczekiwać od podów z obrazem image. Obraz po
+// digeście pochodzi z rejestru i niesie wersję i commit w etykietach; to,
+// co tam leży, jest punktem odniesienia. Obraz z tagiem lokalnym zbudowano
+// z drzewa roboczego — punktem odniesienia jest git.
+func expectedIdentity(ctx context.Context, e *environment, image string) (kube.Expected, error) {
+	if strings.Contains(image, "@") {
+		// repozytorium:tag@digest — tag jest tylko etykietą, pobiera się digest.
+		ref, err := name.NewDigest(image)
+		if err != nil {
+			return kube.Expected{}, fmt.Errorf("obraz %q: %w", image, err)
+		}
+		published, err := registry.Inspect(ref.Context().Name()+"@"+ref.DigestStr(), registry.Options(ctx)...)
+		if err != nil {
+			return kube.Expected{}, err
+		}
+		cli.Step("punkt odniesienia: etykiety obrazu w rejestrze (%s)", ref.DigestStr())
+		return kube.Expected{Image: image, Version: published.Labels[registry.VersionLabel], Commit: published.Labels[registry.RevisionLabel]}, nil
+	}
+	repo := repoOf(e)
+	version, err := repo.Version(ctx)
+	if err != nil {
+		return kube.Expected{}, err
+	}
+	commit, err := repo.Commit(ctx)
+	if err != nil {
+		return kube.Expected{}, err
+	}
+	return kube.Expected{Image: image, Version: version, Commit: commit}, nil
 }
 
 func runDNSToken(ctx context.Context, e *environment, args []string) error {
@@ -232,6 +306,9 @@ func runDNSToken(ctx context.Context, e *environment, args []string) error {
 	}
 	def, err := environmentOf(e)
 	if err != nil {
+		return err
+	}
+	if err := def.Require(env.OpDNSToken); err != nil {
 		return err
 	}
 	var token string
@@ -255,7 +332,7 @@ func runDNSToken(ctx context.Context, e *environment, args []string) error {
 	if err := (dnstoken.Verifier{BaseURL: dnstoken.DefaultAPI}).Verify(ctx, token, def.Gateway.ACMEZone); err != nil {
 		return err
 	}
-	clients, err := kube.Connect(targetOf(e, def))
+	clients, err := connect(e, def)
 	if err != nil {
 		return err
 	}

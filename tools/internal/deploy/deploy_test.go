@@ -1,14 +1,24 @@
 package deploy
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/google/go-containerregistry/pkg/name"
+	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/mutate"
+	"github.com/google/go-containerregistry/pkg/v1/random"
+	"github.com/google/go-containerregistry/pkg/v1/tarball"
+
 	"github.com/mateuszf757/Docfind/tools/internal/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/env"
+	"github.com/mateuszf757/Docfind/tools/internal/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/registry"
 )
 
 const repoRoot = "../../.."
@@ -54,5 +64,168 @@ func TestK3dConfigRejectsWildcard(t *testing.T) {
 		if cli.ExitCode(err) != cli.ExitUnmet {
 			t.Errorf("%s: przyjęte (%v)", mutation.to, err)
 		}
+	}
+}
+
+const apiImage = "ghcr.io/mateuszf757/docfind-api"
+
+func definition(t *testing.T, name string) env.Environment {
+	t.Helper()
+	for _, key := range []string{"DOCFIND_HOSTNAME", "DOCFIND_TLS_ISSUER", "DOCFIND_ACME_EMAIL", "DOCFIND_ACME_ZONE"} {
+		t.Setenv(key, "")
+	}
+	e, err := env.Load(repoRoot, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return e
+}
+
+func labelled(t *testing.T, labels map[string]string) v1.Image {
+	t.Helper()
+	img, err := random.Image(256, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img, err = mutate.Config(img, v1.Config{Labels: labels})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return img
+}
+
+// saved zapisuje obraz jak `docker save` i zwraca ścieżkę i digest konfiguracji.
+func saved(t *testing.T, img v1.Image) (string, string) {
+	t.Helper()
+	tag, err := name.NewTag(apiImage + ":0.0.0-dev.1-abc1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "image.tar")
+	if err := tarball.WriteToFile(path, tag, img); err != nil {
+		t.Fatal(err)
+	}
+	config, err := img.ConfigName()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path, config.String()
+}
+
+var commit = strings.Repeat("c", 40)
+
+func TestArchiveImage(t *testing.T) {
+	d := Deployer{Env: definition(t, "ci"), Image: apiImage}
+	img := labelled(t, map[string]string{registry.VersionLabel: "0.0.0-dev.1+abc1234", registry.RevisionLabel: commit})
+	path, config := saved(t, img)
+
+	got, err := d.archiveImage(Artifact{Source: env.SourceArchive, Archive: path, ConfigDigest: config}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRef := apiImage + ":local-" + strings.TrimPrefix(config, "sha256:")[:12]
+	if got.want.Image != wantRef || got.want.Version != "0.0.0-dev.1+abc1234" || got.want.Commit != commit || got.digest != "" {
+		t.Errorf("obraz z archiwum: %+v, oczekiwano %s", got, wantRef)
+	}
+	// Archiwum do importu niesie nowy tag, a obraz zostaje ten sam.
+	loaded, err := tarball.ImageFromPath(got.load, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := loaded.ConfigName(); c.String() != config {
+		t.Errorf("archiwum do importu: konfiguracja %s, oczekiwano %s", c, config)
+	}
+
+	t.Run("inna konfiguracja niż sprawdzona w zadaniu build", func(t *testing.T) {
+		_, err := d.archiveImage(Artifact{Source: env.SourceArchive, Archive: path, ConfigDigest: "sha256:" + strings.Repeat("0", 64)}, t.TempDir())
+		if cli.ExitCode(err) != cli.ExitUnmet || !strings.Contains(err.Error(), "zadanie build sprawdziło") {
+			t.Errorf("podmienione archiwum przyjęte: %v", err)
+		}
+	})
+	t.Run("obraz bez etykiet", func(t *testing.T) {
+		path, config := saved(t, labelled(t, nil))
+		_, err := d.archiveImage(Artifact{Source: env.SourceArchive, Archive: path, ConfigDigest: config}, t.TempDir())
+		if cli.ExitCode(err) != cli.ExitUnmet {
+			t.Errorf("obraz bez wersji przyjęty: %v", err)
+		}
+	})
+}
+
+func TestRegistryImage(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("d", 64)
+	inspect := func(version string) func(context.Context, string) (registry.Inspected, error) {
+		return func(_ context.Context, ref string) (registry.Inspected, error) {
+			if ref != apiImage+"@"+digest {
+				return registry.Inspected{}, fmt.Errorf("nieoczekiwany ref %s", ref)
+			}
+			return registry.Inspected{
+				Published: registry.Published{Index: digest},
+				Labels:    map[string]string{registry.VersionLabel: version, registry.RevisionLabel: commit},
+			}, nil
+		}
+	}
+	tests := []struct {
+		name, env, ref, version string
+		wantCode                int
+		wantImage               string
+	}{
+		{"obraz z main na staging", "staging", apiImage + "@" + digest, "0.3.1-dev.4+abc1234", cli.ExitOK, apiImage + ":0.3.1-dev.4-abc1234@" + digest},
+		{"tag w referencji niczego nie wybiera", "staging", apiImage + ":latest@" + digest, "0.3.1-dev.4+abc1234", cli.ExitOK, apiImage + ":0.3.1-dev.4-abc1234@" + digest},
+		{"wydanie na produkcję", "prod", apiImage + "@" + digest, "0.3.1", cli.ExitOK, apiImage + ":0.3.1@" + digest},
+		{"obraz z main na produkcję", "prod", apiImage + "@" + digest, "0.3.1-dev.4+abc1234", cli.ExitUnmet, ""},
+		{"obcy obraz", "staging", "docker.io/library/nginx@" + digest, "0.3.1", cli.ExitUnmet, ""},
+		{"tag zamiast digestu", "staging", apiImage + ":0.3.1", "0.3.1", cli.ExitFailure, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			d := Deployer{Env: definition(t, tt.env), Image: apiImage, Inspect: inspect(tt.version)}
+			got, err := d.registryImage(context.Background(), tt.ref)
+			if code := cli.ExitCode(err); code != tt.wantCode {
+				t.Fatalf("kod %d, oczekiwano %d (%v)", code, tt.wantCode, err)
+			}
+			if tt.wantImage != "" && (got.want.Image != tt.wantImage || got.digest != digest || got.load != "") {
+				t.Errorf("obraz %+v, oczekiwano %s", got, tt.wantImage)
+			}
+		})
+	}
+}
+
+// TestUpRefusesBeforeTouchingAnything: odmowy z definicji padają, zanim
+// cokolwiek zostanie uruchomione — Fake bez nagranych odpowiedzi zawiódłby
+// przy pierwszym poleceniu.
+func TestUpRefusesBeforeTouchingAnything(t *testing.T) {
+	tests := []struct {
+		name, env string
+		art       Artifact
+		want      string
+	}{
+		{"build z drzewa na ci", "ci", Artifact{Source: env.SourceLocal}, "nie przyjmuje obrazu ze źródła local"},
+		{"archiwum na staging", "staging", Artifact{Source: env.SourceArchive, Archive: "x.tar", ConfigDigest: "sha256:x"}, "nie przyjmuje obrazu ze źródła archive"},
+		{"Let's Encrypt bez adresu ACME", "staging", Artifact{Source: env.SourceRegistry, Ref: apiImage + "@sha256:" + strings.Repeat("d", 64)}, "DOCFIND_ACME_EMAIL"},
+		{"produkcja bez klastra", "prod", Artifact{Source: env.SourceRegistry}, "tylko klastry k3d"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &proc.Fake{}
+			d := Deployer{Root: repoRoot, Env: definition(t, tt.env), Runner: fake, Image: apiImage}
+			err := d.Up(context.Background(), tt.art)
+			if cli.ExitCode(err) != cli.ExitUnmet || !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("oczekiwano odmowy z %q, jest %v", tt.want, err)
+			}
+			if len(fake.Calls) > 0 {
+				t.Errorf("przed odmową uruchomiono %v", fake.Calls)
+			}
+		})
+	}
+}
+
+func TestDownRequiresPermission(t *testing.T) {
+	fake := &proc.Fake{}
+	d := Deployer{Root: repoRoot, Env: definition(t, "staging"), Runner: fake}
+	if err := d.Down(context.Background()); cli.ExitCode(err) != cli.ExitUnmet || !strings.Contains(err.Error(), "cluster-delete") {
+		t.Errorf("usunięcie stagingu: %v", err)
+	}
+	if len(fake.Calls) > 0 {
+		t.Errorf("uruchomiono %v", fake.Calls)
 	}
 }

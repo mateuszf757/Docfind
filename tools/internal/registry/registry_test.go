@@ -189,3 +189,27 @@ func TestVerifyPublished(t *testing.T) {
 		})
 	}
 }
+
+// TestInspectLabels: wdrożenie po digeście bierze wersję i commit z etykiet
+// konfiguracji obrazu w rejestrze — z tego, co tam leży, a nie z gita.
+func TestInspectLabels(t *testing.T) {
+	repo := testRegistry(t)
+	img, err := mutate.Config(randomImage(t), v1.Config{Labels: map[string]string{
+		VersionLabel:  "0.3.0",
+		RevisionLabel: strings.Repeat("a", 40),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := pushIndex(t, repo, attestedIndex(t, img, digestOf(t, img)))
+	got, err := Inspect(ref, remote.WithContext(context.Background()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Labels[VersionLabel] != "0.3.0" || got.Labels[RevisionLabel] != strings.Repeat("a", 40) {
+		t.Errorf("etykiety: %v", got.Labels)
+	}
+	if got.Config != configOf(t, img) || got.Index != ref[strings.Index(ref, "@")+1:] {
+		t.Errorf("digesty: %+v (ref %s)", got.Published, ref)
+	}
+}
