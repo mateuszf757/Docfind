@@ -19,6 +19,7 @@ from docfind_api.config import (
 )
 from tests.conftest import WriteConfigFile
 from tests.data import (
+    CONFIG_WITH_DELAY_ON_REAL_BACKEND_YAML,
     CONFIG_WITH_FRACTIONAL_GRACE_YAML,
     CONFIG_WITH_REAL_BACKEND_YAML,
     CONFIG_WITH_UNKNOWN_KEY_YAML,
@@ -48,6 +49,7 @@ def test_minimal_config_fills_defaults(given_config_file: WriteConfigFile) -> No
     assert config.service.keep_alive_seconds == 5
     assert config.service.docs is False
     assert config.llm.backend is LlmBackend.STUB
+    assert config.llm.stub_delay_ms == 0
     assert config.elasticsearch.alias == "docfind"
 
 
@@ -134,3 +136,22 @@ def test_fractional_grace_period_is_rejected(given_config_file: WriteConfigFile)
         load_config()
 
     assert "service.shutdown_grace_seconds" in str(caught.value)
+
+
+def test_stub_delay_is_rejected_for_real_backend(given_config_file: WriteConfigFile) -> None:
+    """Opóźnienie zaślepki przy prawdziwym modelu nic nie symuluje — dokłada
+    czas do prawdziwej odpowiedzi, więc pozostawione po teście psułoby produkcję."""
+    given_config_file(CONFIG_WITH_DELAY_ON_REAL_BACKEND_YAML)
+
+    with pytest.raises(ConfigError, match="stub_delay_ms dotyczy tylko backendu 'stub'"):
+        load_config()
+
+
+def test_negative_stub_delay_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="greater than or equal to 0"):
+        AppConfig.model_validate(
+            {
+                "elasticsearch": {"url": "http://elasticsearch:9200", "alias": "docfind"},
+                "llm": {"stub_delay_ms": -1},
+            }
+        )

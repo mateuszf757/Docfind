@@ -103,7 +103,7 @@ func printIdentity(ctx context.Context, env *environment, args []string) error {
 		if err := expectArgs(rest, 1, 1, identityUsage); err != nil {
 			return err
 		}
-		value = identity.ImageName(os.Getenv("GITHUB_REPOSITORY_OWNER"), rest[0])
+		value = imageName(rest[0])
 	case "require-clean":
 		if err := expectArgs(rest, 0, 0, identityUsage); err != nil {
 			return err
@@ -114,4 +114,10 @@ func printIdentity(ctx context.Context, env *environment, args []string) error {
 	}
 	_, err := fmt.Fprintln(cli.Out, value)
 	return err
+}
+
+// imageName zwraca nazwę obrazu usługi; DF_IMAGE_REGISTRY zastępuje GHCR
+// (test publikacji na rejestrze tymczasowym).
+func imageName(service string) string {
+	return identity.ImageName(os.Getenv("DF_IMAGE_REGISTRY"), os.Getenv("GITHUB_REPOSITORY_OWNER"), service)
 }

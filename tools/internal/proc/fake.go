@@ -51,3 +51,10 @@ func (f *Fake) Run(_ context.Context, c Cmd) (Result, error) {
 	}
 	return result, nil
 }
+
+// RunnerFunc zamienia funkcję w Runner — dla testów, w których odpowiedź
+// zależy od argumentów (np. plik wskazany w poleceniu ma powstać).
+type RunnerFunc func(ctx context.Context, c Cmd) (Result, error)
+
+// Run wywołuje funkcję.
+func (f RunnerFunc) Run(ctx context.Context, c Cmd) (Result, error) { return f(ctx, c) }

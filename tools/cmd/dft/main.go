@@ -49,9 +49,19 @@ var commands = map[string]command{
 		run:   runPins,
 	},
 	"check": {
-		usage: "dft check <versions|go|reproducible-tools>",
-		help:  "bramki: spójność wersji, jakość kodu Go, powtarzalność binarek",
+		usage: "dft check <versions|go|reproducible-tools|runtime|base|reproducible> [usługa]",
+		help:  "bramki: wersje, kod Go, powtarzalność narzędzi; obraz: Etap 1, baza, powtarzalność",
 		run:   runCheck,
+	},
+	"build": {
+		usage: "dft build [usługa]",
+		help:  "build obrazu z wersją z gita; RELEASE=1 wydanie, PUSH=1 publikacja, NO_CACHE=1 od zera",
+		run:   runBuild,
+	},
+	"test-image": {
+		usage: "dft test-image [usługa]",
+		help:  "testy jednostkowe w obrazie na musl — ta sama baza co produkcja",
+		run:   runTestImage,
 	},
 }
 

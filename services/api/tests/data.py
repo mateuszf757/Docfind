@@ -40,6 +40,26 @@ elasticsearch:
 """
 """Najmniejsza konfiguracja, jaka przechodzi walidację — reszta ma domyślne."""
 
+CONFIG_WITH_STUB_DELAY_YAML: Final = """
+elasticsearch:
+  url: http://elasticsearch:9200
+  alias: docfind
+llm:
+  stub_delay_ms: 1500
+"""
+"""Zaślepka udająca czas odpowiedzi modelu — dla bramek żądania w locie."""
+
+CONFIG_WITH_DELAY_ON_REAL_BACKEND_YAML: Final = """
+elasticsearch:
+  url: http://elasticsearch:9200
+  alias: docfind
+llm:
+  backend: ollama
+  endpoint: http://ollama:11434
+  stub_delay_ms: 100
+"""
+"""Opóźnienie zaślepki przy prawdziwym backendzie — ma być odrzucone."""
+
 CONFIG_WITH_UNKNOWN_KEY_YAML: Final = """
 elasticsearch:
   url: http://elasticsearch:9200

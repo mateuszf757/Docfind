@@ -35,3 +35,6 @@ llm:
   # model: llama3.1:8b
   max_context: 8192
   max_fragments: 8
+  # Tylko backend stub: sztuczne opóźnienie odpowiedzi w milisekundach, żeby
+  # bramki miały żądanie w locie (zamykanie przy SIGTERM, drain). W produkcji 0.
+  # stub_delay_ms: 0

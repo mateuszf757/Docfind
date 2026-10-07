@@ -328,10 +328,14 @@ func TestDockerTag(t *testing.T) {
 }
 
 func TestImageName(t *testing.T) {
-	if got := ImageName("MateuszF757", "api"); got != "ghcr.io/mateuszf757/docfind-api" {
-		t.Errorf("ImageName = %q", got)
+	tests := []struct{ registry, owner, want string }{
+		{"", "MateuszF757", "ghcr.io/mateuszf757/docfind-api"},
+		{"", "", "ghcr.io/mateuszf757/docfind-api"},
+		{"127.0.0.1:5000/docfind/", "MateuszF757", "127.0.0.1:5000/docfind/docfind-api"},
 	}
-	if got := ImageName("", "api"); got != "ghcr.io/mateuszf757/docfind-api" {
-		t.Errorf("ImageName bez właściciela = %q", got)
+	for _, tt := range tests {
+		if got := ImageName(tt.registry, tt.owner, "api"); got != tt.want {
+			t.Errorf("ImageName(%q, %q) = %q, oczekiwano %q", tt.registry, tt.owner, got, tt.want)
+		}
 	}
 }
