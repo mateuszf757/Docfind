@@ -18,8 +18,12 @@ func run(id int64, event string, attempt int) string {
 }
 
 func jobs(cluster string) string {
-	if cluster == "" {
-		return `{"jobs":[{"name":"test","conclusion":"success"},{"name":"build","conclusion":"failure"}]}`
+	switch cluster {
+	case "":
+		return `{"jobs":[{"name":"test","conclusion":"success"},{"name":"build","conclusion":"failure"},{"name":"cluster","conclusion":"skipped"}]}`
+	case "brak":
+		// Bieg sprzed dodania zadania cluster do workflowu.
+		return `{"jobs":[{"name":"test","conclusion":"success"},{"name":"build","conclusion":"success"}]}`
 	}
 	return `{"jobs":[{"name":"test","conclusion":"success"},{"name":"build","conclusion":"success"},{"name":"cluster","conclusion":"` + cluster + `"}]}`
 }
@@ -61,6 +65,16 @@ func TestStreak(t *testing.T) {
 			},
 			wantStreak: 1,
 			wantReason: "bieg ponowiony (podejście 2)",
+		},
+		{
+			// Bez jobsPath(3): Fake zawiódłby przy zapytaniu o starszy bieg.
+			name: "bieg sprzed dodania zadania kończy przegląd",
+			responses: map[string]proc.FakeResponse{
+				runsPath:    {Stdout: runsJSON(run(5, "schedule", 1), run(4, "push", 1), run(3, "push", 1))},
+				jobsPath(5): {Stdout: jobs("success")},
+				jobsPath(4): {Stdout: jobs("brak")},
+			},
+			wantStreak: 1,
 		},
 		{
 			name: "przekroczony limit czasu to porażka",

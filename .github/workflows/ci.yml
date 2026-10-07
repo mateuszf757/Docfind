@@ -7,7 +7,8 @@ name: ci
 #           dostaje obraz z GHCR po digeście — dowód, że opublikowany obraz to
 #           obraz sprawdzony
 # tag v*  → build wydania: tylko czyste drzewo na tagu vX.Y.Z, obraz otagowany
-#           samą wersją (decyzja 30)
+#           samą wersją (decyzja 30); po bramkach promocja digestu na prod
+#           po zgodzie autora (zadanie promote, decyzja 38)
 # nocą    → to samo co PR, na main: seria biegów tego samego kodu mówi, czy
 #           bramka klastrowa migocze (okres próbny, decyzja 36)
 #
@@ -248,6 +249,9 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # Strona atestacji digestu — link w zapisie promocji (zadanie promote).
+    outputs:
+      url: ${{ steps.attest.outputs.attestation-url }}
     permissions:
       # Token OIDC — tożsamość workflowu dla certyfikatu Sigstore.
       id-token: write
@@ -264,6 +268,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        id: attest
         with:
           subject-name: ${{ needs.build.outputs.image }}
           subject-digest: ${{ needs.build.outputs.digest }}
@@ -376,6 +381,44 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPORT: ${{ runner.temp }}/raport/vulns-api.json
         run: ./bin/mise run vulns:issue -- "$REPORT"
+
+  # Promocja wydania na prod (decyzja 38): ten sam digest, który przeszedł
+  # build, atestację, bramki klastrowe i skan podatności, po zgodzie autora
+  # w Environment production (recenzent, tylko tagi v* — .github/environments).
+  # Zadanie z environment: zapisuje wdrożenie (GitHub Deployment z linkiem do
+  # atestacji digestu). Do Etapu 10 nie ma klastra klienta — po weryfikacji
+  # zadanie podaje instalację, a nie instaluje.
+  promote:
+    needs: [build, attest, cluster, vulns]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: ${{ needs.attest.outputs.url }}
+    permissions:
+      contents: read
+      # Odczyt atestacji GitHuba obrazu (gh attestation verify).
+      attestations: read
+      # Odczyt reguł środowiska production: dft odmawia, gdy nie wymaga zgody.
+      actions: read
+    env:
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Bez tokenu w .git/config: domyślnie zostaje tam na całe zadanie
+          # i może go odczytać każdy późniejszy krok. Skrypty nie pushują.
+          persist-credentials: false
+
+      - name: Go i gh (mise)
+        run: ./bin/mise install go gh
+
+      - name: weryfikacja i zapis promocji
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
+          GH_TOKEN: ${{ github.token }}
+        run: ./bin/mise run promote -- "$IMAGE"
 
   # Środowisko ci (deploy/environments/ci.yaml): efemeryczny klaster k3d na
   # runnerze z obrazem z zadania build — nigdy budowanym od nowa — i te same

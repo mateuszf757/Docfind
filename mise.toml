@@ -154,6 +154,10 @@ run = "ci/dft check vulns"
 description = "Przed promocją: atestacja BuildKitu (pochodzenie, SBOM) i atestacja GitHuba opublikowanego obrazu <obraz@sha256:…>"
 run = "ci/dft check attestation"
 
+[tasks.promote]
+description = "Promocja digestu wydania na prod (decyzja 38): wydanie, atestacje, zapis i instalacja dla klienta"
+run = "ci/dft promote"
+
 [tasks."vulns:issue"]
 description = "Wynik nocnego skanu podatności jako issue (otwarcie, aktualizacja, zamknięcie)"
 run = "ci/dft vulns-issue"
@@ -211,9 +215,9 @@ description = "Token API Cloudflare do klastra (DNS-01) — z terminala bez echa
 run = "ci/dft dns-token"
 
 [tasks."ci:trial"]
-description = "Okres próbny zadania cluster: 10 zielonych biegów z rzędu na main (push, nocą), bez ponowień — potem status do rulesetu"
-run = "ci/dft trial cluster 10"
+description = "Okres próbny zadań cluster i vulns: po 10 zielonych biegów z rzędu na main (push, nocą), bez ponowień — potem statusy do rulesetu"
+run = "ci/dft trial 10 cluster vulns"
 
 [tasks."repo:settings"]
-description = "Rulesety, auto-merge i przypinanie akcji SHA w ustawieniach GitHuba (admin; --dry-run — podgląd)"
+description = "Rulesety, środowiska GitHuba, auto-merge i przypinanie akcji SHA w ustawieniach repozytorium (admin; --dry-run — podgląd)"
 run = "ci/dft repo-settings"
