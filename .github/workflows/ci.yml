@@ -71,7 +71,7 @@ jobs:
 
       # Wersja uv z Dockerfile — jedynego miejsca, w którym uv jest przypięty
       # i które aktualizuje Dependabot. Bez tego setup-uv bierze najnowszego.
-      # Czyta ją dft, a nie `source ci/lib.sh` w powłoce (decyzja 23).
+      # Czyta ją dft, a nie źródłowany skrypt Basha (decyzja 23).
       - name: przypięte wersje
         id: pins
         run: ./bin/mise run pins

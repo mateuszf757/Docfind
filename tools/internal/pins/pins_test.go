@@ -51,9 +51,9 @@ func TestParseRejects(t *testing.T) {
 		{
 			name: "obraz bez digestu",
 			mutate: func(s string) string {
-				return strings.Replace(s, "DF_CURL_IMAGE=curlimages/curl:8.16.0@sha256:463eaf6072688fe96ac64fa623fe73e1dbe25d8ad6c34404a669ad3ce1f104b6", "DF_CURL_IMAGE=curlimages/curl:8.16.0", 1)
+				return strings.Replace(s, "DF_BUILDKIT_IMAGE=moby/buildkit:v0.33.0@sha256:6c2fa84a6b61ccd72899dde4239f8d5717f05f9a8ca6f3cad185fb1a95a94de3", "DF_BUILDKIT_IMAGE=moby/buildkit:v0.33.0", 1)
 			},
-			want: "DF_CURL_IMAGE=curlimages/curl:8.16.0 — oczekiwano: obraz z digestem",
+			want: "DF_BUILDKIT_IMAGE=moby/buildkit:v0.33.0 — oczekiwano: obraz z digestem",
 		},
 		{
 			name: "URL charta bez wersji",

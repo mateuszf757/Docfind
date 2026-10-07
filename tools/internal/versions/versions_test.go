@@ -92,6 +92,7 @@ func TestCheck(t *testing.T) {
 		kubectl  string
 		uv       string
 		goVer    string
+		clientGo string
 		wantCode int
 		wantText string
 	}{
@@ -120,6 +121,12 @@ func TestCheck(t *testing.T) {
 			wantText: "program zbudowany przez go1.99.0",
 		},
 		{
+			name:     "client-go z innej wersji minor niż klaster",
+			clientGo: "v0.37.1",
+			wantCode: cli.ExitUnmet,
+			wantText: "k8s.io/client-go v0.37.1",
+		},
+		{
 			name:     "inny lokalny uv to tylko ostrzeżenie",
 			uv:       "uv 0.0.1 (x86_64-unknown-linux-gnu)",
 			wantCode: cli.ExitOK,
@@ -139,7 +146,11 @@ func TestCheck(t *testing.T) {
 			if gv == "" {
 				gv = goVersion(t)
 			}
-			err := Check(context.Background(), root, runner(t, tt.kubectl, tt.uv), gv)
+			clientGo := tt.clientGo
+			if clientGo == "" {
+				clientGo = "v0.36.5"
+			}
+			err := Check(context.Background(), root, runner(t, tt.kubectl, tt.uv), gv, clientGo)
 			if code := cli.ExitCode(err); code != tt.wantCode {
 				t.Fatalf("kod %d, oczekiwano %d (%v)\n%s", code, tt.wantCode, err, out)
 			}

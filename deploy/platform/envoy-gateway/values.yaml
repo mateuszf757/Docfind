@@ -4,8 +4,8 @@
 # Chart instaluje kontroler. Pody proxy Envoy, przez które płynie ruch, tworzy
 # kontroler w trakcie działania, z zasobu EnvoyProxy w charcie
 # deploy/charts/platform — tam są ich repliki, zasoby i PDB. W `helm template`
-# tych podów nie widać, więc polityki z run-tests.sh sprawdzają je na klastrze
-# (ci/check-tls.sh).
+# tych podów nie widać, więc polityki z zadania test sprawdzają je na klastrze
+# (`dft check tls`).
 
 global:
   images:

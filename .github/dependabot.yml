@@ -18,7 +18,7 @@
 # po 14. Skompromitowane wydania — jak tj-actions/changed-files w 2025 — bywają
 # wykrywane i wycofywane w ciągu godzin albo dni; automatyczne scalanie świeżo
 # wydanej łatki oznaczałoby zaufanie jej, zanim ktokolwiek ją obejrzał.
-# Wcześniej łatki czekały 3 dni; zizmor (run-tests.sh) wymaga co najmniej 7,
+# Wcześniej łatki czekały 3 dni; zizmor (dft test) wymaga co najmniej 7,
 # a koszt jest mały, bo aktualizacje bezpieczeństwa (z alertów Dependabota)
 # cooldownem nie są objęte.
 #

@@ -2,7 +2,7 @@
 # w k3s. Wersja charta i suma: ci/pins.env (DF_COREDNS_CHART_*).
 #
 # Wbudowany CoreDNS k3s ma jedną replikę i nie ma PodDisruptionBudget. Drain
-# jego węzła odciął DNS całemu klastrowi na kilka sekund i check-drain.sh
+# jego węzła odciął DNS całemu klastrowi na kilka sekund i bramka drainu
 # zobaczył to jako nieudane żądania do API, choć samo API przeszło drain czysto.
 # DNS jest zależnością każdego poda — musi być odporny co najmniej tak jak
 # najbardziej odporna usługa, która z niego korzysta.

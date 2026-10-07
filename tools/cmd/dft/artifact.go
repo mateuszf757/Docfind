@@ -256,6 +256,25 @@ func runCheckPublished(ctx context.Context, env *environment, args []string) err
 	return nil
 }
 
+// runCheckClusterNegatives uruchamia warianty negatywne na żywym klastrze
+// środowiska (go test -tags cluster): to, co API server ma odrzucić.
+func runCheckClusterNegatives(ctx context.Context, env *environment, args []string) error {
+	if err := expectArgs(args, 0, 0, "dft check cluster-negatives"); err != nil {
+		return err
+	}
+	if err := requireTools("go"); err != nil {
+		return err
+	}
+	_, err := env.runner.Run(ctx, proc.Cmd{
+		Name: "go", Args: []string{"test", "-tags", "cluster", "-count=1", "-run", "Rejected$", "./..."},
+		Dir: filepath.Join(env.root, "tools"), Stdout: os.Stdout, Stderr: os.Stderr,
+	})
+	if proc.ExitCode(err) > 0 {
+		return cli.Unmet("warianty negatywne na klastrze: API server przyjął coś, co miał odrzucić — wyżej wynik go test")
+	}
+	return err
+}
+
 // runCheckNegatives uruchamia warianty negatywne bramek artefaktu na
 // prawdziwym obrazie: testy z tagiem docker (go test -tags docker), które
 // muszą zostać odrzucone. Bez Dockera nie mają czego sprawdzić, więc nie są

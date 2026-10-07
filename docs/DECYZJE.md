@@ -84,7 +84,8 @@ z internetu. Własne CA: samopodpisany wydawca → certyfikat główny (ECDSA P-
 pięć lat) → wydawca CA. Let's Encrypt staging i produkcja przez DNS-01
 w Cloudflare dla `local.docfind.lol`: certyfikat w 40–80 s, łańcuch produkcyjny
 zweryfikowany względem systemowego magazynu zaufania. Wymuszone odnowienie pod
-ruchem (`ci/check-tls.sh`): własne CA 59 żądań i staging 126 żądań — zero
+ruchem (wtedy `ci/check-tls.sh`, dziś `dft check tls`): własne CA 59 żądań
+i staging 126 żądań — zero
 nieudanych, proxy podaje nowy certyfikat bez restartu. Na produkcji odnowienie
 nie jest wymuszane, bo limit to 5 identycznych certyfikatów na tydzień;
 lokalnie domyślny jest staging (`mise.local.toml`).
@@ -207,7 +208,7 @@ pozwoliłoby dowolnej przestrzeni nazw przejąć ruch dla dowolnej nazwy hosta.
 kontroler tworzy w trakcie działania — ich repliki, zasoby i PDB ustawia się
 w zasobie EnvoyProxy, a czego tam nie ma (zasoby shutdown-managera), przez patch
 na wygenerowanym Deploymencie. Tych podów nie widać w `helm template`, więc
-polityki sprawdzam także na żywym klastrze (`ci/check-tls.sh`). Część
+polityki sprawdzam także na żywym klastrze (`dft check tls`). Część
 ustawień — limit bezczynności połączeń do backendu — to CRD specyficzne dla
 Envoy Gateway; u klienta z inną implementacją Gateway API wyłącza się je
 wartością `route.envoyGatewayPolicies`.
@@ -370,7 +371,7 @@ sekrety każdego pipeline'u z `@v…`. Binarki i charty były już weryfikowane
 sumą; obrazy i akcje nie, co było niespójne. Teraz: obrazy narzędzi, k3s, bazy
 w Dockerfile i obraz CoreDNS mają digest indeksu (działa na każdej
 architekturze), akcje pełne SHA z komentarzem wersji. Polityka w
-`ci/check_policy.py` odrzuca obraz komponentu platformy bez digestu.
+`tools/internal/policy` odrzuca obraz komponentu platformy bez digestu.
 
 **Luki znalezione po wprowadzeniu.** Przypięcie objęło to, co projekt pobiera
 sam, ale nie to, co w trakcie biegu pobierały za niego narzędzia:
@@ -461,7 +462,7 @@ przegląd. Warunki, bez których to byłoby niebezpieczne albo nie działało:
 
 - **Bramka.** `--auto` czeka tylko na sprawdzenia *wymagane* przez regułę
   gałęzi. Reguła `main` (`.github/rulesets/main.json`, stosowana przez
-  `ci/apply-repo-settings.sh`) wymaga zadań `test` i `build`, przypiętych do
+  `./bin/mise run repo:settings`) wymaga zadań `test` i `build`, przypiętych do
   aplikacji GitHub Actions, żeby status nie mógł zgłosić ktoś inny.
 - **Build na PR-ach.** Wcześniej zadanie `build` biegło tylko po scaleniu — PR #7
   od Dependabota zmienił obraz builda i wszedł do `main`, zanim ktokolwiek
@@ -495,7 +496,7 @@ przegląd. Warunki, bez których to byłoby niebezpieczne albo nie działało:
   podnosi wymaganą wersję Go, kończy się czerwonym CI (`GOTOOLCHAIN=local`),
   a nie cichym pobraniem toolchainu.
 - **Cooldown.** Nowa wersja jest proponowana dopiero 7 dni po wydaniu, major po
-  14. Pierwotnie łatki czekały 3 dni; zizmor w `run-tests.sh` wymaga co
+  14. Pierwotnie łatki czekały 3 dni; zizmor w `dft test` wymaga co
   najmniej 7, a koszt jest mały — aktualizacje bezpieczeństwa z alertów
   Dependabota cooldownem nie są objęte. Skompromitowane wydania bywają
   wycofywane w ciągu godzin albo dni — automat scalający świeże wydanie ufałby
@@ -503,7 +504,7 @@ przegląd. Warunki, bez których to byłoby niebezpieczne albo nie działało:
 
 Workflow używa `pull_request`, nie `pull_request_target`, `GITHUB_TOKEN` ma
 w nim tylko odczyt, a metadane PR-a idą przez zmienne środowiskowe zamiast do
-skryptu. Workflowy sprawdzają actionlint i zizmor w `run-tests.sh`.
+skryptu. Workflowy sprawdzają actionlint i zizmor w `dft test`.
 
 **Co tracę:** łatka, której testy nie pokrywają, wejdzie bez ludzkiego oka —
 bramka jest tak dobra jak CI, a CI nie ćwiczy jeszcze aplikacji na klastrze
@@ -592,9 +593,13 @@ Układ:
   dostają wartości przez `./bin/mise run pins` zamiast `source ci/lib.sh`
   w `bash -c`, a skrypty bashowe do czasu przeniesienia — przez `source`.
 
-Przenoszenie idzie etapami i stary skrypt znika dopiero po parytecie: ten sam
+Przenoszenie szło etapami i stary skrypt znikał dopiero po parytecie: ten sam
 werdykt starego i nowego kodu na tym samym wejściu, różnice wyjaśnione.
-Pierwsza przeszła tożsamość artefaktu (`tools/internal/identity`, decyzja 30).
+Kolejno: tożsamość artefaktu (`tools/internal/identity`, decyzja 30), bramki
+artefaktu (build, baza, testy na musl, warunki Etapu 1, powtarzalność),
+bramki klastrowe, wdrożenie, polityki i schematy CRD. W `ci/` zostały
+`ci/dft` — wejście, które buduje i uruchamia program — i dane `ci/pins.env`;
+Python biegnie tylko przy kodzie aplikacji (`docfind_api.configtool`, testy).
 
 **Co tracę:** toolchain i `go.sum` do utrzymania — wersji Go nie podbija
 Dependabot, robię to ręcznie w `mise.toml` i `go.mod`. Kompilację w CI bez
@@ -666,10 +671,20 @@ diagnostyki muszą być `async def`. Swagger UI trzeba włączyć w konfiguracji
 **Wybieram mniej wygodne, bo bezpieczniejsze.** k3d dopisywał klaster do
 `~/.kube/config` i przełączał bieżący kontekst — każdy `kubectl` w dowolnym
 terminalu wskazywał nagle na lokalny klaster, a skrypty dziedziczyły kontekst
-z powłoki. `check-drain.sh` sprawdzał kontekst przed drainem, reszta skryptów
-nie. Teraz dane dostępowe trafiają do `.cache/kubeconfig`, który ustawia
-`ci/lib.sh` dla każdego skryptu i `mise.toml` dla `./bin/mise exec`, a
-`deploy-local.sh` odtwarza ten plik z k3d przy każdym uruchomieniu.
+z powłoki. Dawny `check-drain.sh` sprawdzał kontekst przed drainem, reszta
+skryptów nie. Teraz dane dostępowe trafiają do `.cache/kubeconfig`, który
+`dft cluster up` odtwarza z k3d przy każdym uruchomieniu, a `mise.toml`
+ustawia dla `./bin/mise exec`.
+
+Od przejścia na Go (decyzja 23) narzędzia nie biorą kubeconfigu ani kontekstu
+z otoczenia w ogóle: ścieżkę, nazwę kontekstu i adres serwera API podaje
+definicja środowiska (`deploy/environments/`), klienci łączą się jawnie
+wskazanym kontekstem, a `kubectl`, `helm` i `cmctl` dostają `--kubeconfig`
+i `--context` w argumentach. Przed każdą operacją strażnik sprawdza dwie
+rzeczy: bieżący kontekst w pliku to kontekst środowiska (ręczne przełączenie
+znaczy, że ktoś pracuje tym plikiem na innym klastrze) i kontekst wskazuje
+na serwer z definicji — kontekst o tej samej nazwie z innym adresem przeszedłby
+samo porównanie nazw. Oba warianty są odrzucane przed drainem (kod 1).
 
 **Co tracę:** zwykłe `kubectl` w terminalu nie widzi lokalnego klastra —
 trzeba `./bin/mise exec -- kubectl …` albo `export KUBECONFIG=$PWD/.cache/kubeconfig`.
@@ -695,11 +710,11 @@ ma 3.12.
 **Co tracę:** trzy rzeczy. Kod może używać składni tylko dla 3.14 (ruff już zdjął
 nawiasy w `except OSError, json.JSONDecodeError:`), więc uruchomiony systemowym
 `python3` kończy się `SyntaxError` — testy tylko przez `uv run` albo
-`./bin/mise run test`, a edytor musi wskazywać `.venv` usługi. Wstawki Pythona
-w skryptach bashowych, które jeszcze nie przeszły do Go (decyzja 23), biegną na
-systemowym `python3` i zostają na 3.12 — pilnuje tego `ci/ruff.toml`;
-`compare_oci.py` przeszedł do Go razem z bramką powtarzalności. Pierwsza synchronizacja na nowej maszynie potrzebuje
-sieci, bo pobiera interpreter.
+`./bin/mise run test`, a edytor musi wskazywać `.venv` usługi. Skrypty
+narzędzi nie używają już systemowego `python3` — wstawki i skrypty Pythona
+z `ci/` przeszły do Go (decyzja 23), a Python zostaje tylko przy kodzie
+aplikacji, uruchamiany przez `uv`. Pierwsza synchronizacja na nowej maszynie
+potrzebuje sieci, bo pobiera interpreter.
 
 **Kiedy zmieniam zdanie:** gdy zależność nie ma kół musllinux dla bieżącej wersji
 Pythona (build etapu test w `dft test-image` przerwie się, bo w obrazie nie ma
@@ -718,7 +733,8 @@ w trybie `-strict` potrzebuje schematu dla każdego zasobu, także z CRD
 (Gateway, HTTPRoute, Certificate, EnvoyProxy). Gotowe katalogi schematów CRD
 nie nadążają za wydaniami, więc walidacja względem starszej wersji
 przepuszczałaby pola, których API server nie przyjmie, albo odrzucała nowe.
-`ci/crd_schemas.py` generuje schematy z CRD wyrenderowanych z przypiętych
+`tools/internal/crdschema` (wcześniej `ci/crd_schemas.py`) generuje schematy
+z CRD wyrenderowanych z przypiętych
 chartów, z `additionalProperties: false` wszędzie, gdzie CRD nie dopuszcza
 nieznanych pól — literówka w polu zasobu jest błędem, tak jak dla zasobów
 wbudowanych. Sprawdzone w obie strony: literówka `requestId` i zła wartość enuma
@@ -810,15 +826,18 @@ pomijać.
 
 ## 31. Pod Security `restricted` na przestrzeni nazw aplikacji
 
-**Wybieram regułę w API serverze, nie tylko w CI.** `check_policy.py` pilnuje
-tego, co przechodzi przez pipeline. Pod utworzony skryptem — jak sonda drainu,
+**Wybieram regułę w API serverze, nie tylko w CI.** Polityki z zadania test
+(dziś `tools/internal/policy`) pilnują tego, co przechodzi przez pipeline. Pod utworzony skryptem — jak sonda drainu,
 która nie miała `securityContext` — nie przechodził przez nic. Przestrzeń nazw
 `docfind` dostaje etykiety Pod Security Admission `enforce` i `warn` na poziomie
 `restricted`, z wersją profilu przypiętą do wersji klastra (`v1.36` z
-`DF_KUBERNETES_VERSION`). Nadaje je `deploy-local.sh`, tak jak etykietę
+`DF_KUBERNETES_VERSION`). Nadaje je `dft cluster up`, tak jak etykietę
 dopuszczającą trasy, bo to zgoda platformy, a nie aplikacji. Spec poda API
 spełniał profil od Etapu 1. Sonda dostała `securityContext` w tej samej
-zmianie, więc regresja wychodzi przy `kubectl apply`, a nie w audycie.
+zmianie, więc regresja wychodzi przy jej tworzeniu, a nie w audycie. Sonda
+w Go (decyzja 34) spełnia profil z konstrukcji — obraz bez bazy, numeryczny
+UID — a `./bin/mise run test:cluster` sprawdza na żywym klastrze, że API server
+odrzuca ją bez `securityContext` („violates PodSecurity restricted:v1.36").
 
 **Co tracę:** w `docfind` nie uruchomię już doraźnie poda bez pełnego
 `securityContext`. `kubectl run -it --image=busybox` i kontener debugujący
@@ -880,6 +899,20 @@ biblioteka niesie założenia o środowisku, które tu nie zachodzą.
   z 18 do 60 modułów, `go mod graph` z 47 do 110 linii; do binarki trafia
   9 modułów zewnętrznych, w tym `docker/cli` (tylko konfiguracja
   i pomocnicy uwierzytelnienia) i logrus. Aktualizuje Dependabot (`gomod`).
+- **API Kubernetesa — client-go v0.36.5** (minor równy klastrowi 1.36;
+  `dft check versions` pilnuje zgodności). Typowane obiekty zamiast JSON-a
+  z `kubectl -o json`, jawny kontekst z definicji środowiska, Lease i patch
+  węzła bez podprocesów, fałszywy clientset w testach (blokada, naprawa po
+  przerwanym biegu, tożsamość na podach przez proxy API servera). Koszt:
+  lista modułów 60 → 110, `go mod graph` 110 → 397 linii, zimny build ~25 s
+  na 6 CPU; client-go trzeba podbijać razem z k3s.
+- **Eksmisja przy drainie — `kubectl drain`, nie `k8s.io/kubectl/pkg/drain`.**
+  To ten sam kod (kubectl go używa), ale jako biblioteka podwaja listę modułów
+  (68 → 128 w module próbnym) i wciąga kustomize, cobra i blackfriday — dla
+  jednej pętli eksmisji z poszanowaniem PDB. Cordon, adnotacje i uncordon robi
+  client-go; `kubectl drain` dostaje SIGTERM przy przerwaniu.
+- **Helm, k3d, cmctl — CLI** z wersjami z `mise.lock`; SDK Helma to setki
+  modułów, a k3d i cmctl są interfejsem, którego używa też człowiek.
 
 Publikacja sprawdzona tak jak przy wprowadzeniu atestacji: builder
 `docker-container` z BuildKitem przypiętym digestem, tymczasowy rejestr na
@@ -896,10 +929,51 @@ wyjścia CLI (np. `docker buildx inspect`) jest kruche wobec zmian formatu;
 nowego formatu.
 
 **Kiedy zmieniam zdanie:** dla Dockera — gdy SDK zacznie respektować kontekst
-CLI albo narzędzia przestaną budować przez buildx. Dla rejestru — gdy
+CLI albo narzędzia przestaną budować przez buildx. Dla client-go — gdy
+aktualizacje za wersją klastra zaczną kosztować więcej niż typowane obiekty
+dają (decyzja 23). Dla drainu — gdy `kubectl drain` przestanie wystarczać
+(np. drain z własną kolejnością eksmisji); wtedy `pkg/drain` mimo kosztu. Dla rejestru — gdy
 go-containerregistry przestanie być utrzymywane albo jego zależności zaczną
 dawać więcej łatek niż sam rejestr; wtedy własny klient OCI z uwierzytelnieniem
 tylko tokenem (CI) i anonimowo (GHCR publiczny).
+
+## 34. Sonda drainu w Go, drain każdego węzła, blokada z odnawianiem
+
+**Wybieram drugi artefakt zamiast pętli powłoki w obrazie curl.** Sonda
+bramki drainu była podem `curlimages/curl` z pętlą `sh`: nowy proces curl na
+każde żądanie. Pętla w powłoce łamie zasady z decyzji 23, a jeden długo
+żyjący proces curl (`--rate`, zakres w URL) nie jest zamiennikiem: libcurl
+trzyma odpowiedzi DNS przez 60 s, a CLI nie ma opcji, żeby to wyłączyć —
+test przestałby widzieć awarię DNS przy drainie węzła z CoreDNS, czyli błąd,
+dla którego powstała decyzja 18. Sonda jest teraz programem w Go
+(`tools/cmd/drain-probe`, tylko biblioteka standardowa): nowe połączenie
+i nowe rozwiązanie nazwy na każde żądanie, czasy faz z `httptrace` na
+zegarze monotonicznym, linia JSON na żądanie; werdykt wydaje `dft` po
+przeczytaniu logu. Obraz składa go-containerregistry z jednej warstwy, bez
+bazy i bez BuildKitu, ze stałymi czasami — ta sama binarka daje ten sam
+digest — i importuje do węzłów jak obraz API w dev.
+
+Przy okazji bramka robi to, co README obiecywało, a żaden program nie
+odtwarzał: drenuje **każdy węzeł, który w trakcie biegu miał replikę**
+(3 drainy, 1385 żądań, zero nieudanych — jednym poleceniem zamiast trzech
+ręcznych biegów). Wymaga PodDisruptionBudget, który dopuszcza zakłócenie.
+Stan zewnętrzny jest sprzątany także po SIGINT i SIGTERM (węzeł wraca do
+przyjmowania podów w ~1 s), a na wypadek SIGKILL węzeł odcięty przez bramkę
+dostaje adnotację z identyfikatorem biegu, sonda — etykietę, a bieg trzyma
+Lease odnawiany co 15 s z czasem życia 60 s. Kolejny bieg po wygaśnięciu
+blokady przejmuje ją, przywraca węzeł i usuwa osieroconą sondę; cordon bez
+adnotacji (cudzy) zostawia i odmawia.
+
+**Co tracę:** drugi artefakt do budowania i kiedyś do publikacji
+(podpis, skan, digest w repozytorium — gdy bramki zaczną biec na stagingu
+z CronJoba). Sondę trzeba utrzymywać jak kod produkcyjny. Bieg zabity
+SIGKILL-em blokuje kolejne przez do 60 s. Bramka dalej nie przywraca rozkładu
+podów po drainach (`ScheduleAnyway`) — gdy repliki skończą na jednym węźle,
+odmawia, zamiast drenować.
+
+**Kiedy zmieniam zdanie:** gdy obraz z narzędziem sieciowym bez pamięci
+podręcznej DNS będzie dostępny jako przypięty, utrzymywany artefakt — wtedy
+sonda wraca do cudzego obrazu, a analiza zostaje w Go.
 
 ## Czego bym dziś nie powtórzył
 
@@ -972,3 +1046,11 @@ zgadzać z gitem", a `/version` jednego poda tylko wypisywał. Dziś twierdzenie
 o artefakcie sprawdza skrypt na artefakcie w miejscu docelowym, przy każdym
 przebiegu: rejestr przy publikacji, każdy pod po wdrożeniu, API server przy
 tworzeniu poda.
+
+**Narzędzie, które buforuje to, co testuję.** Przy przenoszeniu sondy drainu
+pierwszy pomysł był prosty: jeden proces curl z `--rate` zamiast pętli
+powłoki. Działałby i dawał zielone wyniki — bo libcurl pamięta odpowiedź DNS
+przez minutę, więc drain węzła z jedynym podem CoreDNS przestałby być
+widoczny. Bramka, która przechodzi, bo narzędzie omija badany mechanizm, jest
+gorsza niż brak bramki. Dziś przy każdym kliencie w teście sprawdzam, co
+trzyma między żądaniami: połączenia, DNS, sesje TLS.

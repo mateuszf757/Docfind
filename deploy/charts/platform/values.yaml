@@ -41,7 +41,7 @@ acme:
   # Strefa DNS, dla której wydawca rozwiązuje wyzwania — np. example.com.
   dnsZone: ""
   # Secret z tokenem API Cloudflare w przestrzeni nazw cert-managera.
-  # Tworzy go ci/set-dns-token.sh — nigdy git (decyzja 5).
+  # Tworzy go `./bin/mise run dns-token` — nigdy git (decyzja 5).
   tokenSecretName: cloudflare-api-token
 
 # Pody proxy Envoy. Tworzy je kontroler Envoy Gateway na podstawie zasobu

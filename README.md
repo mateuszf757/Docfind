@@ -36,7 +36,9 @@ zero nieudanych, proxy podaje nowy certyfikat bez restartu.
   narzędzi jest powtarzalna bajt w bajt (decyzja 23)
 
 Etap 2 — usługa na Kubernetesie. Drain każdego węzła z repliką API:
-1358 żądań w trzech przebiegach, zero nieudanych.
+1358 żądań w trzech przebiegach, zero nieudanych; dziś jeden bieg
+`cluster:drain` drenuje kolejno każdy węzeł, który ma replikę (1385 żądań,
+zero nieudanych), i sprząta po sobie także po przerwaniu.
 
 - chart Helma z dwiema replikami, PDB, rozłożeniem na węzły i preStop
 - własny CoreDNS z charta w dwóch replikach — wbudowany w k3s odcinał DNS
@@ -44,7 +46,7 @@ Etap 2 — usługa na Kubernetesie. Drain każdego węzła z repliką API:
 - klaster lokalny wystawiony wyłącznie na loopback, bez rozluźniania
   zabezpieczeń hosta (decyzja 17)
 - manifesty sprawdzane kubeconformem i politykami jako kodem
-  (`ci/check_policy.py`) — poprawne względem schematu nie znaczy zgodne
+  (`tools/internal/policy`) — poprawne względem schematu nie znaczy zgodne
   z decyzjami
 - wszystko z zewnątrz przypięte niezmiennie: narzędzia sumą w `mise.lock`,
   charty sumą, obrazy i BuildKit digestem, akcje GitHuba SHA commita, runner
@@ -84,8 +86,8 @@ deploy/charts/platform/  Chart platformy: Gateway, TLS, wydawcy certyfikatów
 deploy/platform/   Wartości komponentów platformy (CoreDNS, cert-manager, Envoy Gateway)
 deploy/k3d/        Definicja lokalnego klastra (1 serwer, 2 węzły robocze)
 tools/             Narzędzia i bramki w Go: program dft (tools/cmd/dft), logika w tools/internal
-ci/                Wejścia: ci/dft (buduje i uruchamia dft), ci/pins.env (przypięcia),
-                   skrypty jeszcze nieprzeniesione do Go
+ci/                ci/dft (buduje i uruchamia dft) i ci/pins.env (przypięcia)
+deploy/environments/  Definicje środowisk czytane przez dft (dev: lokalny k3d)
 bin/mise           Launcher mise w przypiętej wersji — narzędzia i zadania (mise.toml)
 tests/corpus/      Deterministyczny korpus dla testów e2e
 docs/              DECYZJE.md i dokumentacja operacyjna
@@ -100,7 +102,8 @@ skryptem — raz i po każdej zmianie reguł, przez osobę z uprawnieniami admin
 
 ```bash
 ./bin/mise exec -- gh auth login
-./bin/mise exec -- ci/apply-repo-settings.sh
+./bin/mise run repo:settings -- --dry-run   # podgląd zmian
+./bin/mise run repo:settings
 ```
 
 Bez reguły `main` workflow auto-merge łatek od Dependabota nie ma bramki:
@@ -171,17 +174,19 @@ RELEASE=1 ./bin/mise run build    # build wydania — tylko czyste drzewo na tag
 ./bin/mise run cluster:up         # klaster k3d + build + helm upgrade --install
 ./bin/mise run cluster:drain      # warunek zakończenia Etapu 2
 ./bin/mise run cluster:tls        # warunek zakończenia Etapu 3: odnowienie certyfikatu pod ruchem
-./bin/mise exec -- ci/set-dns-token.sh   # token Cloudflare dla Let's Encrypt (DNS-01), raz
+./bin/mise run cluster:identity   # na każdym podzie obraz, wersja i commit z tego drzewa
+./bin/mise run test:cluster       # to, co API server ma odrzucić (sonda bez securityContext)
+./bin/mise run dns-token          # token Cloudflare dla Let's Encrypt (DNS-01), raz
 ./bin/mise run cluster:down       # usunięcie klastra
 ./bin/mise exec -- kubectl get pods -A   # kubectl z przypiętej wersji, kubeconfig projektu
 ```
 
 Zadania wołają `ci/dft` — program w Go z `tools/`, budowany z bieżącego drzewa
-przy każdym wywołaniu (bez zmian w kodzie nic się nie kompiluje) — i skrypty
-z `ci/`, które jeszcze czekają na przeniesienie do Go. Bez mise działają, jeśli
-w PATH są Go 1.27.1 i pozostałe narzędzia. Klaster zapisuje dane dostępowe do
-`.cache/kubeconfig`, nie do `~/.kube/config`; `./bin/mise exec` ustawia
-`KUBECONFIG` sam.
+przy każdym wywołaniu (bez zmian w kodzie nic się nie kompiluje). Bez mise
+działa, jeśli w PATH są Go 1.27.1 i pozostałe narzędzia. Klaster zapisuje dane
+dostępowe do `.cache/kubeconfig`, nie do `~/.kube/config`; `dft` bierze ścieżkę
+i kontekst z definicji środowiska, a `./bin/mise exec` ustawia `KUBECONFIG`
+sam.
 
 Podgląd działającej usługi. Konfiguracja jest wymagana — bez niej kontener
 świadomie odmawia startu:
