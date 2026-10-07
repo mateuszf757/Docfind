@@ -114,8 +114,9 @@ serwer, a padł agent; drugi raz, bo `docker logs -f` uruchomiony na kontenerze
 w stanie `Created` kończy się od razu z pustym plikiem.
 
 Dlatego `dft cluster up` robi to sam: od chwili startu każdego kontenera
-węzła zapisuje jego log do `~/.cache/docfind/k3d-create-<czas>/` i przy porażce
-wypisuje z nich błędy. Logi zostają na dysku niezależnie od wyniku.
+węzła zapisuje jego log do `.cache/reports/k3d-create-<klaster>-<czas>/`
+i przy porażce wypisuje z nich błędy. Logi zostają na dysku niezależnie od
+wyniku; w CI trafiają do artefaktu z dowodami razem z raportami bramek.
 
 ## Kubelet w przestrzeni nazw użytkownika (Docker rootless)
 

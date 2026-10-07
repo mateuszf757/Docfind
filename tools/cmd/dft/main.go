@@ -64,9 +64,14 @@ var commands = map[string]command{
 		run:   runTest,
 	},
 	"cluster": {
-		usage: "dft cluster <up|down>",
-		help:  "klaster środowiska (DOCFIND_ENV, domyślnie dev): utworzenie, platforma, obraz, chart, tożsamość",
+		usage: "dft cluster <up [--image <obraz>@sha256:… | --image-archive <plik> --config-digest sha256:…]|down|evidence>",
+		help:  "klaster środowiska (DOCFIND_ENV, domyślnie dev): utworzenie, platforma, obraz, chart, tożsamość; dowody do .cache/reports",
 		run:   runCluster,
+	},
+	"trial": {
+		usage: "dft trial <zadanie> <N>",
+		help:  "okres próbny zadania CI: seria zielonych biegów na main (push, nocą) za pierwszym podejściem; kod 0 od N",
+		run:   runTrial,
 	},
 	"dns-token": {
 		usage: "dft dns-token",

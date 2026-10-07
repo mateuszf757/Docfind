@@ -1044,6 +1044,60 @@ różnicą, która ma powód (np. okrojony staging od Etapu 6), razem z listą
 kluczy, które środowisko może zmienić. Gdy staging przejmie Argo CD
 (Etap 5), `deploy` zniknie z jego listy dozwolonych.
 
+## 36. Klaster w CI przed Etapem 9, wymagany po okresie próbnym
+
+**Wybieram część Etapu 9 teraz.** Bramki klastrowe — drain każdego węzła,
+odnowienie certyfikatu pod ruchem, tożsamość na podach — biegły tylko
+wtedy, gdy autor pamiętał je uruchomić, więc zmiana chartu, platformy albo
+obrazu mogła trafić do `main` bez nich. Zadanie `cluster` w workflowie `ci`
+stawia na runnerze efemeryczny klaster k3d ze środowiska `ci`
+(decyzja 35) i uruchamia te same programy co lokalnie. Etap 9 zostaje
+z testami e2e i drugim klastrem; z niego przychodzi tylko integracja.
+
+Obraz nigdy nie jest budowany drugi raz. Na PR-ze i nocą zadanie `build`
+zapisuje obraz, który przeszedł jego sprawdzenia, jako archiwum
+`docker save` (artefakt na jeden dzień), a `cluster` odrzuca archiwum
+o innej konfiguracji niż digest z wyjść `build`. Po scaleniu i na tagu
+`cluster` wdraża obraz z GHCR po digeście publikacji — dowód, że
+opublikowany obraz to obraz sprawdzony. Zadanie nie ma sekretów: TLS na
+własnym CA, więc działa na PR-ach od Dependabota i z forków. Po każdym
+biegu, także czerwonym, zbiera dowody — raporty bramek, pełny log sondy
+z czasami, zdarzenia, logi podów (także sprzed restartu), zasoby
+platformy, logi węzłów i tworzenia klastra — jako artefakt na 7 dni:
+klaster znika razem z maszyną runnera.
+
+Runner `ubuntu-24.04` ma `fs.inotify.max_user_instances=1280` (obraz
+`actions/runner-images`, `configure-environment.sh`), więc preflight
+przechodzi bez zmian sysctl — żaden wyjątek od zasady „bez sudo" nie
+jest potrzebny, także na maszynie, która za chwilę zniknie. Docker na
+runnerze działa z rootem, więc kubelet nie potrzebuje bramki
+`KubeletInUserNamespace` (decyzja 19).
+
+**Okres próbny.** Bramka, która migocze, uczy ignorowania czerwonego.
+`cluster` nie jest wymaganym statusem reguły `main`, dopóki nie przejdzie
+10 biegów z rzędu na scalonym kodzie (po scaleniu i nocnych — harmonogram
+03:17 UTC), za pierwszym podejściem: ponowienie przerywa serię jak
+porażka, bo jest porażką, którą ktoś przykrył. Biegi na PR-ach się nie
+liczą — czerwony PR częściej znaczy zły kod niż zawodną bramkę. Serię liczy
+`./bin/mise run ci:trial` z API GitHuba; gdy pokaże 10, autor dopisuje
+`cluster` do `.github/rulesets/main.json` i stosuje `./bin/mise run
+repo:settings`. Bez kolejki scalania (decyzja 22) wymagany status na PR-ze
+plus ten sam bieg na `main` to całe „przed scaleniem na świeżym klastrze".
+
+**Co tracę:** ~10 minut runnera na bieg i nocny bieg, który na czerwono
+oznacza ostatni commit `main`. W okresie próbnym auto-merge łatek
+(decyzja 22) nie czeka na `cluster` — czerwony `cluster` na PR-ze
+Dependabota zatrzymuję ręcznie (`gh pr merge --disable-auto`). Węzły
+pobierają obrazy platformy z Docker Hub bez logowania: limit to 100
+pobrań na 6 godzin na adres IPv4, bez wyjątku dla runnerów GitHuba
+(dokumentacja Dockera), a bieg robi ich kilkanaście. GitHub wyłącza
+harmonogram w repozytorium publicznym po 60 dniach bez aktywności.
+
+**Kiedy zmieniam zdanie:** gdy limit Docker Hub zacznie przerywać biegi —
+obrazy systemowe k3s z archiwum airgap wydania (z sumą), reszta przez
+lustro albo z rejestru z logowaniem; gdy bramka nie przejdzie okresu
+próbnego — przyczyna przed wymaganiem, nie ponowienia.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta
