@@ -1,0 +1,31 @@
+# Środowisko prod — wydanie i eksploatacja w roli klienta. Klaster klienta
+# powstaje w Etapie 10; do tego czasu definicja służy walidacji chartów
+# (render z produkcyjnym Let's Encrypt) i promocji wydania, a każda operacja
+# na klastrze jest odmawiana.
+name: prod
+stage: wydanie
+
+cluster:
+  provider: none
+
+artifact:
+  # Tylko digest wydania, który przeszedł bramki klastrowe — nie obraz z main
+  # (decyzja 30: obraz wydania i obraz z main tego samego commita mają różne
+  # digesty, bo niosą różne wersje).
+  sources: [registry]
+  releasesOnly: true
+
+app:
+  namespace: docfind
+  release: docfind
+
+gateway:
+  namespace: gateway
+  name: docfind
+  hostname: prod.docfind.lol
+  issuer: letsencrypt
+  acmeZone: docfind.lol
+
+operations:
+  # Pusta lista: na produkcji nic nie biegnie automatycznie.
+  allowed: []

@@ -1,0 +1,10 @@
+# Środowisko staging (deploy/environments/staging.yaml), wybierane przez
+# MISE_ENV=staging: mise nakłada ten plik na mise.toml, więc
+#   MISE_ENV=staging ./bin/mise run cluster:drain
+#   MISE_ENV=staging ./bin/mise exec -- kubectl get pods -A
+# trafiają w klaster stagingu — dft przez DOCFIND_ENV, kubectl przez
+# KUBECONFIG. Obie wartości muszą się zgadzać z definicją; pilnuje tego
+# test w tools/internal/env.
+[env]
+DOCFIND_ENV = "staging"
+KUBECONFIG = "{{config_root}}/.cache/kubeconfig-staging"

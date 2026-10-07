@@ -27,14 +27,19 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/yaml"
 
+	"github.com/google/go-containerregistry/pkg/name"
+	"github.com/google/go-containerregistry/pkg/v1/tarball"
+
 	"github.com/mateuszf757/Docfind/tools/internal/build"
 	"github.com/mateuszf757/Docfind/tools/internal/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/docker"
 	"github.com/mateuszf757/Docfind/tools/internal/env"
 	"github.com/mateuszf757/Docfind/tools/internal/fetch"
+	"github.com/mateuszf757/Docfind/tools/internal/identity"
 	"github.com/mateuszf757/Docfind/tools/internal/kube"
 	"github.com/mateuszf757/Docfind/tools/internal/pins"
 	"github.com/mateuszf757/Docfind/tools/internal/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/registry"
 )
 
 // Deployer — wdrożenie jednego środowiska.
@@ -46,6 +51,9 @@ type Deployer struct {
 	Builder build.Builder
 	Service string
 	Image   string
+	// Inspect czyta publikację z rejestru; nil — registry.Inspect
+	// z uwierzytelnieniem z konfiguracji Dockera.
+	Inspect func(ctx context.Context, ref string) (registry.Inspected, error)
 }
 
 func (d Deployer) docker() docker.Client { return docker.Client{Runner: d.Runner} }
@@ -62,10 +70,14 @@ func (d Deployer) run(ctx context.Context, name string, args ...string) error {
 	return nil
 }
 
-// Down usuwa klaster środowiska — tylko k3d, tylko ten z definicji.
+// Down usuwa klaster środowiska — tylko k3d, tylko ten z definicji i tylko
+// tam, gdzie definicja na to pozwala.
 func (d Deployer) Down(ctx context.Context) error {
-	if d.Env.Cluster.Provider != "k3d" {
+	if d.Env.Cluster.Provider != env.ProviderK3d {
 		return cli.Unmet("środowisko %s nie jest klastrem k3d — dft go nie usuwa", d.Env.Name)
+	}
+	if err := d.Env.Require(env.OpClusterDelete); err != nil {
+		return err
 	}
 	if err := d.run(ctx, "k3d", "cluster", "delete", d.Env.Cluster.Name); err != nil {
 		return err
@@ -76,13 +88,45 @@ func (d Deployer) Down(ctx context.Context) error {
 	return nil
 }
 
-// Up stawia środowisko.
-func (d Deployer) Up(ctx context.Context) error {
-	if d.Env.Cluster.Provider != "k3d" {
-		return cli.Unmet("środowisko %s: wdrożenie przez dft obsługuje tylko klastry k3d", d.Env.Name)
+// Artifact — obraz, który ma trafić na klaster.
+type Artifact struct {
+	// Source — env.SourceLocal, env.SourceArchive albo env.SourceRegistry.
+	Source string
+	// Archive — archiwum `docker save` z zadania build; ConfigDigest — digest
+	// konfiguracji obrazu, który to zadanie sprawdziło.
+	Archive      string
+	ConfigDigest string
+	// Ref — repozytorium@sha256:… indeksu w rejestrze.
+	Ref string
+}
+
+// image — obraz rozstrzygnięty przed jakąkolwiek zmianą na klastrze.
+type image struct {
+	// tag i digest dla charta (api.image.tag, api.image.digest).
+	tag, digest string
+	// load — co zaimportować do węzłów (obraz z demona Dockera albo
+	// archiwum); puste, gdy węzły pobierają obraz z rejestru same.
+	load string
+	want kube.Expected
+}
+
+// Up stawia środowisko z obrazem art.
+//
+// Obraz jest rozstrzygany najpierw — build, sprawdzenie archiwum albo
+// publikacji w rejestrze — a klaster zmieniany dopiero potem: zły artefakt
+// nie zostawia klastra z nową platformą i starą aplikacją.
+func (d Deployer) Up(ctx context.Context, art Artifact) error {
+	if d.Env.Cluster.Provider != env.ProviderK3d {
+		return cli.Unmet("środowisko %s (cluster.provider=%s): wdrożenie przez dft obsługuje tylko klastry k3d", d.Env.Name, d.Env.Cluster.Provider)
 	}
-	if d.Env.Artifact.Source != "local" {
-		return cli.Unmet("środowisko %s: obraz z rejestru (artifact.source=%s) wdraża zadanie CI, nie dft cluster up", d.Env.Name, d.Env.Artifact.Source)
+	if err := d.Env.Require(env.OpDeploy); err != nil {
+		return err
+	}
+	if !d.Env.AllowsSource(art.Source) {
+		return cli.Unmet("środowisko %s nie przyjmuje obrazu ze źródła %s (artifact.sources: %v)", d.Env.Name, art.Source, d.Env.Artifact.Sources)
+	}
+	if err := d.requireACMEEmail(); err != nil {
+		return err
 	}
 	p := &preflight{}
 	checkInotify(p)
@@ -90,11 +134,24 @@ func (d Deployer) Up(ctx context.Context) error {
 		return err
 	}
 
-	_, err := d.Runner.Run(ctx, proc.Cmd{Name: "k3d", Args: []string{"cluster", "get", d.Env.Cluster.Name}})
+	tmp, err := os.MkdirTemp("", "dft-up-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	img, err := d.resolve(ctx, art, tmp)
+	if err != nil {
+		return err
+	}
+
+	_, err = d.Runner.Run(ctx, proc.Cmd{Name: "k3d", Args: []string{"cluster", "get", d.Env.Cluster.Name}})
 	switch {
 	case err == nil:
 		cli.Step("klaster %s istnieje", d.Env.Cluster.Name)
 	case proc.ExitCode(err) > 0:
+		if err := d.Env.Require(env.OpClusterCreate); err != nil {
+			return err
+		}
 		if err := d.createCluster(ctx); err != nil {
 			return err
 		}
@@ -115,14 +172,42 @@ func (d Deployer) Up(ctx context.Context) error {
 	if err := d.platform(ctx, clients); err != nil {
 		return err
 	}
-	ref, expected, err := d.image(ctx)
-	if err != nil {
-		return err
+	if img.load != "" {
+		// Tryb direct wgrywa obraz prosto do containerd na każdym węźle.
+		// Domyślny tryb uruchamia pomocniczy kontener z zamontowanym gniazdem
+		// Dockera — pełna kontrola nad demonem, a przy rootless i tak zawodzi.
+		cli.Step("import %s do węzłów", img.want.Image)
+		if _, err := d.Runner.Run(ctx, proc.Cmd{Name: "k3d", Args: []string{"image", "import", img.load, "--cluster", d.Env.Cluster.Name, "--mode", "direct"}}); err != nil {
+			return fmt.Errorf("k3d image import: %w", err)
+		}
 	}
 	if err := d.namespace(ctx, clients); err != nil {
 		return err
 	}
-	return d.app(ctx, clients, ref, expected)
+	return d.app(ctx, clients, img)
+}
+
+// requireACMEEmail: wydawca Let's Encrypt potrzebuje adresu konta ACME,
+// którego nie ma w żadnej definicji (dane osobowe w publicznym repozytorium).
+func (d Deployer) requireACMEEmail() error {
+	gw := d.Env.Gateway
+	if strings.HasPrefix(gw.Issuer, "letsencrypt") && gw.ACMEEmail == "" {
+		return cli.Unmet("wydawca %s wymaga adresu konta ACME — DOCFIND_ACME_EMAIL w mise.local.toml", gw.Issuer)
+	}
+	return nil
+}
+
+func (d Deployer) resolve(ctx context.Context, art Artifact, tmp string) (image, error) {
+	switch art.Source {
+	case env.SourceLocal:
+		return d.localImage(ctx)
+	case env.SourceArchive:
+		return d.archiveImage(art, tmp)
+	case env.SourceRegistry:
+		return d.registryImage(ctx, art.Ref)
+	default:
+		return image{}, fmt.Errorf("nieznane źródło obrazu %q", art.Source)
+	}
 }
 
 // createCluster tworzy klaster z deploy/k3d/cluster.yaml, z nazwą i portami
@@ -399,13 +484,13 @@ func (d Deployer) platform(ctx context.Context, c *kube.Clients) error {
 		}
 	}
 	cli.Step("platforma: Gateway dla %s, wydawca %s", gw.Hostname, gw.Issuer)
-	if err := helm("platform", d.path("deploy/charts/platform"), "--namespace", gw.Namespace, "--create-namespace",
-		"--set", "gateway.hostname="+gw.Hostname, "--set", "gateway.issuer="+gw.Issuer,
-		// Port przekierowania HTTP→HTTPS: na hoście HTTPS słucha tu, a nie
-		// na 443 (decyzja 17).
-		"--set", fmt.Sprintf("gateway.httpsRedirectPort=%d", d.Env.Cluster.Ports.HTTPS),
-		"--set", "acme.email="+gw.ACMEEmail, "--set", "acme.dnsZone="+gw.ACMEZone,
-		"--wait", "--timeout", "3m"); err != nil {
+	// Wartości z definicji tą samą funkcją, którą `dft test` renderuje
+	// i sprawdza chart dla każdego środowiska.
+	args := []string{"platform", d.path("deploy/charts/platform"), "--namespace", gw.Namespace, "--create-namespace"}
+	for _, v := range d.Env.PlatformValues(gw.ACMEEmail) {
+		args = append(args, "--set", v)
+	}
+	if err := helm(append(args, "--wait", "--timeout", "3m")...); err != nil {
 		return err
 	}
 	if err := waitCondition(ctx, c, schema.GroupVersionResource{Group: "cert-manager.io", Version: "v1", Resource: "certificates"}, "cert-manager", "docfind-root-ca", "Ready", 120*time.Second); err != nil {
@@ -420,37 +505,118 @@ func (d Deployer) platform(ctx context.Context, c *kube.Clients) error {
 
 func (d Deployer) path(rel string) string { return filepath.Join(d.Root, rel) }
 
-// image buduje obraz z drzewa roboczego i importuje go do węzłów.
+// localImage buduje obraz z drzewa roboczego.
 //
 // Tag wyliczony z zawartości obrazu, nie z wersji. Build z brudnego drzewa
 // dostaje za każdym razem ten sam tag „…-dirty"; przy IfNotPresent
 // i niezmienionej specyfikacji poda Helm nie zrobiłby rolloutu, a na
 // klastrze dalej chodziłby stary kod pod nową nazwą.
-func (d Deployer) image(ctx context.Context) (string, kube.Expected, error) {
+func (d Deployer) localImage(ctx context.Context) (image, error) {
 	res, err := d.Builder.Build(ctx, build.Options{Root: d.Root, Service: d.Service, Image: d.Image, Out: cli.Out, Err: cli.Err})
 	if err != nil {
-		return "", kube.Expected{}, err
+		return image{}, err
 	}
 	out, err := d.docker().Run(ctx, "image", "inspect", res.Ref(), "--format", "{{.Id}}")
 	if err != nil {
-		return "", kube.Expected{}, err
+		return image{}, err
 	}
 	id := strings.TrimPrefix(strings.TrimSpace(string(out.Stdout)), "sha256:")
 	if len(id) < 12 {
-		return "", kube.Expected{}, fmt.Errorf("nieczytelny identyfikator obrazu %q", id)
+		return image{}, fmt.Errorf("nieczytelny identyfikator obrazu %q", id)
 	}
-	ref := fmt.Sprintf("%s:local-%s", d.Image, id[:12])
+	tag := "local-" + id[:12]
+	ref := d.Image + ":" + tag
 	if _, err := d.docker().Run(ctx, "tag", res.Ref(), ref); err != nil {
-		return "", kube.Expected{}, err
+		return image{}, err
 	}
-	// Tryb direct wgrywa obraz prosto do containerd na każdym węźle. Domyślny
-	// tryb uruchamia pomocniczy kontener z zamontowanym gniazdem Dockera —
-	// pełna kontrola nad demonem, a przy rootless i tak zawodzi.
-	cli.Step("import %s do węzłów", ref)
-	if _, err := d.Runner.Run(ctx, proc.Cmd{Name: "k3d", Args: []string{"image", "import", ref, "--cluster", d.Env.Cluster.Name, "--mode", "direct"}}); err != nil {
-		return "", kube.Expected{}, fmt.Errorf("k3d image import: %w", err)
+	return image{tag: tag, load: ref, want: kube.Expected{Image: ref, Version: res.Version, Commit: res.Commit}}, nil
+}
+
+// archiveImage sprawdza archiwum `docker save` z zadania build: konfiguracja
+// obrazu to ta, którą zadanie sprawdziło (artefakt nie został podmieniony ani
+// uszkodzony po drodze), a wersję i commit bierze z etykiet obrazu. Archiwum
+// do importu dostaje tag z digestu konfiguracji — z tego samego powodu co
+// obraz lokalny: ten sam tag zawsze znaczy tę samą zawartość.
+func (d Deployer) archiveImage(art Artifact, tmp string) (image, error) {
+	if art.Archive == "" || art.ConfigDigest == "" {
+		return image{}, cli.Usage("obraz z archiwum wymaga ścieżki archiwum i digestu konfiguracji z zadania build")
 	}
-	return ref, kube.Expected{Image: ref, Version: res.Version, Commit: res.Commit}, nil
+	img, err := tarball.ImageFromPath(art.Archive, nil)
+	if err != nil {
+		return image{}, fmt.Errorf("archiwum %s: %w", art.Archive, err)
+	}
+	config, err := img.ConfigName()
+	if err != nil {
+		return image{}, fmt.Errorf("archiwum %s: %w", art.Archive, err)
+	}
+	if config.String() != art.ConfigDigest {
+		return image{}, cli.Unmet("archiwum %s: obraz z konfiguracją %s, a zadanie build sprawdziło %s", art.Archive, config, art.ConfigDigest)
+	}
+	file, err := img.ConfigFile()
+	if err != nil {
+		return image{}, fmt.Errorf("archiwum %s: %w", art.Archive, err)
+	}
+	version, commit := file.Config.Labels[registry.VersionLabel], file.Config.Labels[registry.RevisionLabel]
+	if version == "" || commit == "" {
+		return image{}, cli.Unmet("archiwum %s: obraz bez etykiet wersji i commita", art.Archive)
+	}
+	tag := "local-" + config.Hex[:12]
+	ref, err := name.NewTag(d.Image + ":" + tag)
+	if err != nil {
+		return image{}, err
+	}
+	load := filepath.Join(tmp, "image.tar")
+	if err := tarball.WriteToFile(load, ref, img); err != nil {
+		return image{}, fmt.Errorf("archiwum do importu: %w", err)
+	}
+	cli.Step("archiwum zgodne z obrazem sprawdzonym w zadaniu build (%s): %s, commit %s", config, version, shortCommit(commit))
+	return image{tag: tag, load: load, want: kube.Expected{Image: ref.String(), Version: version, Commit: commit}}, nil
+}
+
+var releaseVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// registryImage sprawdza publikację w rejestrze (indeks z atestacją, jeden
+// obraz) i bierze wersję i commit z etykiet obrazu. Węzły pobierają obraz
+// po digeście — tag w rejestrze da się nadpisać, digest nie.
+func (d Deployer) registryImage(ctx context.Context, ref string) (image, error) {
+	digestRef, err := name.NewDigest(ref)
+	if err != nil {
+		return image{}, cli.Usage("obraz %q: oczekiwano %s@sha256:…", ref, d.Image)
+	}
+	if repo := digestRef.Context().Name(); repo != d.Image {
+		return image{}, cli.Unmet("obraz z repozytorium %s, a aplikacja to %s — inne obrazy na klaster nie trafiają", repo, d.Image)
+	}
+	// Tag w referencji niczego nie wybiera — liczy się digest.
+	ref = digestRef.Context().Name() + "@" + digestRef.DigestStr()
+	inspect := d.Inspect
+	if inspect == nil {
+		inspect = func(ctx context.Context, ref string) (registry.Inspected, error) {
+			return registry.Inspect(ref, registry.Options(ctx)...)
+		}
+	}
+	published, err := inspect(ctx, ref)
+	if err != nil {
+		return image{}, err
+	}
+	version, commit := published.Labels[registry.VersionLabel], published.Labels[registry.RevisionLabel]
+	if version == "" || commit == "" {
+		return image{}, cli.Unmet("%s: obraz bez etykiet wersji i commita", ref)
+	}
+	if d.Env.Artifact.ReleasesOnly && !releaseVersion.MatchString(version) {
+		return image{}, cli.Unmet("środowisko %s przyjmuje tylko wydania, a %s to wersja %s", d.Env.Name, ref, version)
+	}
+	tag := identity.DockerTag(version)
+	cli.Step("rejestr: %s, atestacja obecna, wersja %s, commit %s", published.Index, version, shortCommit(commit))
+	return image{tag: tag, digest: published.Index, want: kube.Expected{
+		Image: d.Image + ":" + tag + "@" + published.Index, Version: version, Commit: commit,
+	}}, nil
+}
+
+func shortCommit(commit string) string {
+	if len(commit) > 12 {
+		return commit[:12]
+	}
+	return commit
 }
 
 // namespace zakłada przestrzeń nazw aplikacji z etykietami, które są zgodą
@@ -486,21 +652,24 @@ func (d Deployer) namespace(ctx context.Context, c *kube.Clients) error {
 	return err
 }
 
-func (d Deployer) app(ctx context.Context, c *kube.Clients, ref string, want kube.Expected) error {
-	tag := ref[strings.LastIndex(ref, ":")+1:]
+func (d Deployer) app(ctx context.Context, c *kube.Clients, img image) error {
 	release := d.Env.App.Release
 	cli.Step("helm upgrade --install %s", release)
-	args := []string{"upgrade", "--install", release, d.path("deploy/charts/docfind"),
-		"--namespace", d.Env.App.Namespace,
-		"--set", "route.hostname=" + d.Env.Gateway.Hostname,
-		"--set", "api.image.tag=" + tag,
-		"--wait", "--timeout", "3m"}
+	args := []string{"upgrade", "--install", release, d.path("deploy/charts/docfind"), "--namespace", d.Env.App.Namespace}
+	values := append(d.Env.AppValues(), "api.image.tag="+img.tag)
+	if img.digest != "" {
+		values = append(values, "api.image.digest="+img.digest)
+	}
+	for _, v := range values {
+		args = append(args, "--set", v)
+	}
+	args = append(args, "--wait", "--timeout", "3m")
 	if err := d.run(ctx, "helm", append(args, d.target().HelmArgs()...)...); err != nil {
 		return err
 	}
-	// To, co stoi na klastrze, musi się zgadzać z gitem — sprawdzane na
-	// każdym podzie, a liczba podów z liczbą replik.
-	if _, err := kube.VerifyDeployment(ctx, c.Core, d.Env.App.Namespace, release+"-api", "api", want); err != nil {
+	// To, co stoi na klastrze, musi się zgadzać z tym, co wdrażano — obraz,
+	// wersja i commit na każdym podzie, a liczba podów z liczbą replik.
+	if _, err := kube.VerifyDeployment(ctx, c.Core, d.Env.App.Namespace, release+"-api", "api", img.want); err != nil {
 		return err
 	}
 	return nil
