@@ -35,6 +35,9 @@ type Options struct {
 	// NoCache — build od zera. Build z pamięci podręcznej trywialnie daje ten
 	// sam wynik, więc sprawdzenie powtarzalności potrzebuje drugiego od zera.
 	NoCache bool
+	// Archive — ścieżka, pod którą zapisać obraz (`docker save`) dla zadania,
+	// które wdroży go na klaster bez rejestru (PR: obrazu tam nie ma).
+	Archive string
 	// Out i Err — wyjście BuildKitu.
 	Out, Err io.Writer
 }
@@ -152,6 +155,15 @@ func (b Builder) Build(ctx context.Context, opts Options) (Result, error) {
 	// Kryterium zakończenia Etapu 0: to, co obraz mówi o sobie, zgadza się z gitem.
 	if err := b.verifyIdentity(ctx, res.Ref(), commit); err != nil {
 		return res, err
+	}
+	if opts.Archive != "" {
+		if err := b.Docker.Save(ctx, res.Ref(), opts.Archive); err != nil {
+			return res, err
+		}
+		if res.Config, err = oci.ConfigDigestFromSave(opts.Archive); err != nil {
+			return res, err
+		}
+		cli.Step("archiwum %s, konfiguracja %s", opts.Archive, res.Config)
 	}
 	if !opts.Push {
 		return res, nil

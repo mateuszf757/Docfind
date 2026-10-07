@@ -1,0 +1,9 @@
+# Środowisko ci (deploy/environments/ci.yaml), wybierane przez MISE_ENV=ci —
+# w zadaniu `cluster` workflowu ci i lokalnie, gdy autor chce postawić
+# klaster CI obok dev:
+#   MISE_ENV=ci ./bin/mise run cluster:up
+# dft czyta DOCFIND_ENV, kubectl — KUBECONFIG. Obie wartości muszą się
+# zgadzać z definicją; pilnuje tego test w tools/internal/env.
+[env]
+DOCFIND_ENV = "ci"
+KUBECONFIG = "{{config_root}}/.cache/kubeconfig-ci"

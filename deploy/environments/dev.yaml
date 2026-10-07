@@ -1,13 +1,15 @@
 # Środowisko dev — pętla wewnętrzna autora: lokalny klaster k3d, obraz
 # z drzewa roboczego. Definicja czytana przez dft (tools/internal/env)
-# zamiast stałych w kodzie bramek.
+# zamiast stałych w kodzie bramek; `dft test` renderuje z niej charty
+# i sprawdza je tak samo jak w pozostałych środowiskach.
 name: dev
 # Etap cyklu wytwarzania: wytwarzanie | integracja | akceptacja | wydanie.
 stage: wytwarzanie
 
 cluster:
-  # k3d: klaster tworzy i usuwa `dft cluster up/down` z deploy/k3d/cluster.yaml,
-  # z nazwą i portami z tej definicji.
+  # k3d — klaster tworzy i usuwa `dft cluster up/down` z deploy/k3d/cluster.yaml,
+  # z nazwą i portami z tej definicji; external — istniejący klaster;
+  # none — środowisko bez klastra.
   provider: k3d
   name: docfind
   context: k3d-docfind
@@ -17,15 +19,18 @@ cluster:
   # nazwie wskazujący na inny klaster zostaje odrzucony przed operacją.
   apiServer: https://127.0.0.1:6550
   # Porty na 127.0.0.1 hosta (decyzja 17): API, HTTP i HTTPS load balancera.
+  # Każde środowisko k3d ma własne — klastry mogą stać obok siebie.
   ports:
     api: 6550
     http: 8080
     https: 8443
 
 artifact:
-  # local — obraz budowany z drzewa roboczego i importowany do węzłów;
-  # registry — obraz z rejestru po digeście.
-  source: local
+  # local — build z drzewa roboczego i import do węzłów; archive — archiwum
+  # `docker save` z zadania build, sprawdzane digestem konfiguracji;
+  # registry — obraz z rejestru po digeście. W dev wszystkie trzy: autor
+  # może sprawdzić u siebie każdą drogę, którą obraz idzie w CI.
+  sources: [local, archive, registry]
 
 app:
   namespace: docfind
@@ -36,12 +41,12 @@ gateway:
   name: docfind
   hostname: docfind.internal
   issuer: docfind-internal-ca
-  # W dev host, wydawcę i dane ACME może nadpisać mise.local.toml
-  # (DOCFIND_HOSTNAME, DOCFIND_TLS_ISSUER, DOCFIND_ACME_EMAIL, DOCFIND_ACME_ZONE).
+  # W dev host, wydawcę i strefę ACME może nadpisać mise.local.toml
+  # (DOCFIND_HOSTNAME, DOCFIND_TLS_ISSUER, DOCFIND_ACME_ZONE). Adres konta
+  # ACME zawsze z DOCFIND_ACME_EMAIL — w żadnej definicji go nie ma.
   overridesFromEnvironment: true
 
 operations:
-  # Drain, wymuszone odnowienie certyfikatu, sabotaże:
-  # allowed — bez ograniczeń; locked — z blokadą (Lease) przed równoległym
-  # biegiem; forbidden — program odmawia.
-  destructive: allowed
+  # Lista dozwolonych: dft wykona na tym środowisku tylko te operacje,
+  # wszystkiego innego odmówi przed połączeniem z klastrem.
+  allowed: [cluster-create, cluster-delete, deploy, drain, tls-renew, dns-token]

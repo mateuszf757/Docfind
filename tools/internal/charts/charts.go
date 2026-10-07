@@ -1,7 +1,8 @@
 // Package charts sprawdza charty Helma tak, jak trafiłyby na klaster: lint,
-// testy odrzucenia przez values.schema.json, render każdego charta raz, do
-// pliku, a na nim kubeconform ze schematami z przypiętych źródeł, polityki
-// i konfigurację aplikacji jej modelem (dawniej część ci/run-tests.sh).
+// testy odrzucenia przez values.schema.json, render każdej kombinacji
+// chart × środowisko do pliku, a na nim kubeconform ze schematami
+// z przypiętych źródeł, polityki i konfigurację aplikacji jej modelem
+// (dawniej część ci/run-tests.sh).
 package charts
 
 import (
@@ -15,6 +16,7 @@ import (
 
 	"github.com/mateuszf757/Docfind/tools/internal/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/crdschema"
+	"github.com/mateuszf757/Docfind/tools/internal/env"
 	"github.com/mateuszf757/Docfind/tools/internal/fetch"
 	"github.com/mateuszf757/Docfind/tools/internal/manifest"
 	"github.com/mateuszf757/Docfind/tools/internal/pins"
@@ -76,14 +78,30 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 	var renders []render
 	add := func(name string, requireDigest bool, args ...string) error {
 		path := filepath.Join(tmp, name+".yaml")
-		if err := c.renderTo(ctx, path, args...); err != nil {
+		if err := c.renderTo(ctx, name, path, args...); err != nil {
 			return err
 		}
 		renders = append(renders, render{name: name, path: path, requireDigest: requireDigest})
 		return nil
 	}
-	if err := add("docfind", false, "template", "docfind", app, "--set", "api.image.tag=lint"); err != nil {
+	// Chart aplikacji i chart platformy w wariancie każdego środowiska,
+	// z wartościami z definicji (deploy/environments) — tą samą funkcją,
+	// którą wdrożenie przekazuje Helmowi. Definicje z gita, bez nadpisań
+	// z mise.local.toml: lokalnie sprawdzane jest to samo co w CI.
+	envs, err := env.All(c.Root)
+	if err != nil {
 		return err
+	}
+	var appRenders []string
+	for _, e := range envs {
+		args := []string{"template", e.App.Release, app, "--namespace", e.App.Namespace, "--set", "api.image.tag=lint"}
+		for _, v := range e.AppValues() {
+			args = append(args, "--set", v)
+		}
+		if err := add("docfind-"+e.Name, false, args...); err != nil {
+			return err
+		}
+		appRenders = append(appRenders, "docfind-"+e.Name)
 	}
 
 	p := c.Pins
@@ -109,9 +127,6 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 		return err
 	}
 
-	// Chart platformy w obu wariantach: na własnym CA i z Let's Encrypt —
-	// inaczej szablony wydawców ACME nie byłyby renderowane, a więc ani
-	// sprawdzane.
 	cli.Step("helm lint platform")
 	if err := c.stream(ctx, "helm", "lint", platform); err != nil {
 		return err
@@ -120,13 +135,18 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 		"template", "platform", platform, "--set", "gateway.hostnme=x"); err != nil {
 		return err
 	}
-	if err := add("platform", false, "template", "platform", platform, "--namespace", "gateway"); err != nil {
-		return err
-	}
-	if err := add("platform-letsencrypt", false, "template", "platform", platform, "--namespace", "gateway",
-		"--set", "acme.email=ci@example.com", "--set", "acme.dnsZone=example.com",
-		"--set", "gateway.hostname=docfind.example.com", "--set", "gateway.issuer=letsencrypt-staging"); err != nil {
-		return err
+	// Środowiska z Let's Encrypt (staging, prod) renderują szablony wydawców
+	// ACME, środowiska na własnym CA — bez nich; oba warianty są sprawdzane.
+	// Adres konta ACME nie stoi w definicjach, więc w renderze jest
+	// przykładowy.
+	for _, e := range envs {
+		args := []string{"template", "platform", platform, "--namespace", e.Gateway.Namespace}
+		for _, v := range e.PlatformValues("ci@example.com") {
+			args = append(args, "--set", v)
+		}
+		if err := add("platform-"+e.Name, false, args...); err != nil {
+			return err
+		}
 	}
 
 	// Schematy zasobów z CRD — Gateway API, Envoy Gateway, cert-manager —
@@ -164,10 +184,15 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 	}
 
 	// Konfiguracja z values.yaml trafia do ConfigMapy i jest walidowana
-	// dopiero przy starcie poda. Sprawdzamy ją tym samym modelem już tutaj —
-	// zła konfiguracja ma zatrzymać pipeline, a nie skończyć jako
-	// CrashLoopBackOff na klastrze.
-	return c.checkAppConfig(ctx, filepath.Join(tmp, "docfind.yaml"), tmp)
+	// dopiero przy starcie poda. Sprawdzamy ją tym samym modelem już tutaj,
+	// w renderze każdego środowiska — zła konfiguracja ma zatrzymać pipeline,
+	// a nie skończyć jako CrashLoopBackOff na klastrze.
+	for _, name := range appRenders {
+		if err := c.checkAppConfig(ctx, name, tmp); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c Checker) path(rel string) string { return filepath.Join(c.Root, rel) }
@@ -201,7 +226,7 @@ func (c Checker) mustReject(ctx context.Context, msg string, args ...string) err
 	}
 }
 
-func (c Checker) renderTo(ctx context.Context, path string, args ...string) (err error) {
+func (c Checker) renderTo(ctx context.Context, name, path string, args ...string) (err error) {
 	f, err := os.Create(path)
 	if err != nil {
 		return err
@@ -215,7 +240,7 @@ func (c Checker) renderTo(ctx context.Context, path string, args ...string) (err
 	_, err = c.Runner.Run(ctx, proc.Cmd{Name: "helm", Args: args, Stdout: f, Stderr: &stderr})
 	if code := proc.ExitCode(err); code > 0 {
 		fmt.Fprint(c.Err, stderr.String())
-		return cli.Unmet("helm %s %s: kod %d", args[0], args[1], code)
+		return cli.Unmet("render %s (helm %s): kod %d — wyżej powód", name, args[0], code)
 	}
 	return err
 }
@@ -246,9 +271,9 @@ func (c Checker) kubeconform(ctx context.Context, r render, schemaDir string) er
 // checkAppConfig wyciąga app.yml z ConfigMapy renderu i sprawdza go modelem
 // aplikacji (python -m docfind_api.configtool check). PYTHONPATH=src, bo
 // projekt nie jest instalowany do środowiska — jak w obrazie.
-func (c Checker) checkAppConfig(ctx context.Context, rendered, tmp string) error {
-	cli.Step("konfiguracja z charta przechodzi walidację modelu")
-	docs, err := parseFile(rendered)
+func (c Checker) checkAppConfig(ctx context.Context, name, tmp string) error {
+	cli.Step("konfiguracja z renderu %s przechodzi walidację modelu", name)
+	docs, err := parseFile(filepath.Join(tmp, name+".yaml"))
 	if err != nil {
 		return err
 	}
@@ -264,7 +289,7 @@ func (c Checker) checkAppConfig(ctx context.Context, rendered, tmp string) error
 	if config == "" {
 		return cli.Unmet("render charta nie ma ConfigMapy z app.yml")
 	}
-	path := filepath.Join(tmp, "app.yml")
+	path := filepath.Join(tmp, name+".app.yml")
 	if err := os.WriteFile(path, []byte(config), 0o644); err != nil {
 		return err
 	}
@@ -273,7 +298,7 @@ func (c Checker) checkAppConfig(ctx context.Context, rendered, tmp string) error
 		Dir: c.path("services/api"), Env: []string{"PYTHONPATH=src"}, Stdout: c.Out, Stderr: c.Err,
 	})
 	if code := proc.ExitCode(err); code == 1 {
-		return cli.Unmet("konfiguracja w charcie jest nieprawidłowa — wyżej pole i powód")
+		return cli.Unmet("konfiguracja w renderze %s jest nieprawidłowa — wyżej pole i powód", name)
 	} else if code > 1 {
 		return fmt.Errorf("walidacja konfiguracji nie wykonała się: %v", err)
 	}

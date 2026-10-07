@@ -686,6 +686,10 @@ znaczy, że ktoś pracuje tym plikiem na innym klastrze) i kontekst wskazuje
 na serwer z definicji — kontekst o tej samej nazwie z innym adresem przeszedłby
 samo porównanie nazw. Oba warianty są odrzucane przed drainem (kod 1).
 
+Każde środowisko z klastrem ma własny plik (`.cache/kubeconfig-ci`,
+`.cache/kubeconfig-staging`), a `MISE_ENV=<nazwa>` ustawia go dla
+`./bin/mise exec` razem z `DOCFIND_ENV` (decyzja 35).
+
 **Co tracę:** zwykłe `kubectl` w terminalu nie widzi lokalnego klastra —
 trzeba `./bin/mise exec -- kubectl …` albo `export KUBECONFIG=$PWD/.cache/kubeconfig`.
 
@@ -974,6 +978,71 @@ odmawia, zamiast drenować.
 **Kiedy zmieniam zdanie:** gdy obraz z narzędziem sieciowym bez pamięci
 podręcznej DNS będzie dostępny jako przypięty, utrzymywany artefakt — wtedy
 sonda wraca do cudzego obrazu, a analiza zostaje w Go.
+
+## 35. Cztery środowiska jako dane, definicja jako lista dozwolonych
+
+**Wybieram jawną listę zamiast domyślnych uprawnień.** Kontekst, porty,
+host, wydawca i to, czy wolno drenować, żyły w każdym skrypcie osobno —
+porty czytane grepem z `deploy/k3d/cluster.yaml`. Przy jednym klastrze to
+działało; przy czterech środowiskach każda stała to miejsce, w którym bramka
+trafia w nie ten klaster. Teraz środowisko to plik
+`deploy/environments/<nazwa>.yaml`, czytany ściśle (nieznane pole to błąd),
+a `dft` wybiera go z `DOCFIND_ENV` — lokalnie wygodniej przez
+`MISE_ENV=<nazwa>`, który nakłada `mise.<nazwa>.toml` z tą zmienną
+i `KUBECONFIG` dla `./bin/mise exec -- kubectl`.
+
+| | `dev` | `ci` | `staging` | `prod` |
+|---|---|---|---|---|
+| Etap cyklu | wytwarzanie | integracja | akceptacja | wydanie |
+| Klaster | k3d `docfind`, 6550/8080/8443 | k3d `docfind-ci`, 6551/8081/8444, efemeryczny | k3d `docfind-staging`, 6552/8082/8445, długo żyjący | brak do Etapu 10 |
+| Obraz | build z drzewa, archiwum, rejestr | archiwum z zadania build (PR), digest z GHCR (main, tag) | digest z rejestru | tylko digest wydania |
+| TLS | z `mise.local.toml` | własne CA, bez sekretów | Let's Encrypt staging | Let's Encrypt |
+| Operacje | wszystkie | bez tokenu DNS | bez usuwania klastra | żadnych |
+
+Definicja jest **listą dozwolonych**: `dft` rozmawia tylko z klastrem, którego
+kontekst i adres serwera są w definicji (strażnik z decyzji 26), i wykonuje
+na nim tylko operacje z `operations.allowed` — tworzenie i usuwanie klastra,
+wdrożenie, drain, wymuszone odnowienie, zapis tokenu DNS. Czego lista nie
+wymienia, tego program odmawia przed połączeniem z klastrem (kod 1); nowe
+środowisko nie dostaje drainu przez przeoczenie. Druga warstwa to reguły
+w kodzie, których definicja nie obejdzie: na etapie wydania żadnej operacji
+niszczącej, tworzenie i usuwanie tylko dla k3d, wymuszone odnowienie nie
+z produkcyjnym Let's Encrypt (limit 5 identycznych certyfikatów na tydzień),
+nadpisania z `DOCFIND_*` tylko na etapie wytwarzania, dwa środowiska bez
+wspólnego klastra, kontekstu, kubeconfigu ani portu — więc klastry lokalne
+mogą stać obok siebie. Adresu konta ACME nie ma w żadnej definicji (dane
+osobowe w publicznym repozytorium) — zawsze `DOCFIND_ACME_EMAIL`.
+
+Środowiska różnią się tylko polami definicji: host, wydawca, strefa ACME,
+porty (z nich port przekierowania HTTP→HTTPS). Te same funkcje zamieniają je
+na wartości chartów dla `helm upgrade` i dla `dft test`, który renderuje
+każdą kombinację chart × środowisko i sprawdza ją kubeconformem, politykami
+i — dla `app.yml` — modelem aplikacji. Render sprawdzany w CI to render,
+który trafia na klaster. Wolnej mapy wartości chartów w definicji nie ma:
+dziś żadna różnica jej nie potrzebuje, a mapa bez listy dozwolonych kluczy
+pozwoliłaby środowiskom rozjechać się topologią po cichu — staging z jedną
+repliką nic nie mówi o drainie na produkcji.
+
+Obraz ma trzy drogi i definicja mówi, które przyjmuje: build z drzewa
+roboczego (`local`), archiwum `docker save` z zadania build sprawdzane
+digestem konfiguracji (`archive` — na PR-ze obrazu nie ma w rejestrze)
+i publikacja w rejestrze po digeście indeksu (`registry`), sprawdzana tak
+jak po publikacji: indeks z atestacją i jednym obrazem. Wersję i commit
+oczekiwane na podach biorę wtedy z etykiet obrazu, nie z gita — na klastrze
+ma działać to, co leży pod tym digestem. Obraz jest rozstrzygany przed
+pierwszą zmianą na klastrze: podmienione archiwum, obcy obraz albo obraz
+z `main` na produkcji są odrzucane, zanim cokolwiek zostanie wdrożone.
+
+**Co tracę:** dwa źródła tej samej ścieżki kubeconfigu (definicja
+i `mise.<nazwa>.toml`) — pilnuje ich test, nie konstrukcja. Staging
+z Let's Encrypt wymaga tokenu DNS na drugim klastrze. Definicja `prod` bez
+klastra to obietnica: do Etapu 10 sprawdza tylko render z produkcyjnym
+wydawcą.
+
+**Kiedy zmieniam zdanie:** pole na wartości chartów wchodzi z pierwszą
+różnicą, która ma powód (np. okrojony staging od Etapu 6), razem z listą
+kluczy, które środowisko może zmienić. Gdy staging przejmie Argo CD
+(Etap 5), `deploy` zniknie z jego listy dozwolonych.
 
 ## Czego bym dziś nie powtórzył
 

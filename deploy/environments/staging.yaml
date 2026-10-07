@@ -1,0 +1,43 @@
+# Środowisko staging — akceptacja: długo żyjący drugi klaster k3d na maszynie
+# autora (rozstrzygnięcie z 2026-10-06), z topologią produkcji: 2 węzły
+# robocze, 2 repliki, PDB — inaczej drain tutaj nic nie mówi o produkcji.
+# Obrazy tylko z rejestru: digesty z main po zielonym ci i digesty wydań.
+# Od Etapu 5 wdraża Argo CD w klastrze; do tego czasu
+# `MISE_ENV=staging ./bin/mise run cluster:up -- --image <obraz@sha256:…>`.
+# Od Etapu 6 (pamięć, decyzja 2) okrojony stos albo wyłączany na czas pracy
+# nad dev (`k3d cluster stop docfind-staging`).
+name: staging
+stage: akceptacja
+
+cluster:
+  provider: k3d
+  name: docfind-staging
+  context: k3d-docfind-staging
+  kubeconfig: .cache/kubeconfig-staging
+  apiServer: https://127.0.0.1:6552
+  ports:
+    api: 6552
+    http: 8082
+    https: 8445
+
+artifact:
+  sources: [registry]
+
+app:
+  namespace: docfind
+  release: docfind
+
+gateway:
+  namespace: gateway
+  name: docfind
+  hostname: staging.docfind.lol
+  # Staging Let's Encrypt: ten sam łańcuch wydawania co produkcja (DNS-01,
+  # Cloudflare), bez limitu, który wyczerpałyby wymuszone odnowienia.
+  issuer: letsencrypt-staging
+  acmeZone: docfind.lol
+
+operations:
+  # Bez cluster-delete: staging żyje długo, a jego odtworzenie to decyzja
+  # autora, nie skutek uboczny polecenia wydanego w złym środowisku.
+  # Drain i odnowienie biegną z blokadą (Lease) przed równoległym biegiem.
+  allowed: [cluster-create, deploy, drain, tls-renew, dns-token]

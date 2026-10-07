@@ -87,7 +87,7 @@ deploy/platform/   Wartości komponentów platformy (CoreDNS, cert-manager, Envo
 deploy/k3d/        Definicja lokalnego klastra (1 serwer, 2 węzły robocze)
 tools/             Narzędzia i bramki w Go: program dft (tools/cmd/dft), logika w tools/internal
 ci/                ci/dft (buduje i uruchamia dft) i ci/pins.env (przypięcia)
-deploy/environments/  Definicje środowisk czytane przez dft (dev: lokalny k3d)
+deploy/environments/  Definicje środowisk dev, ci, staging, prod czytane przez dft
 bin/mise           Launcher mise w przypiętej wersji — narzędzia i zadania (mise.toml)
 tests/corpus/      Deterministyczny korpus dla testów e2e
 docs/              DECYZJE.md i dokumentacja operacyjna
@@ -172,6 +172,7 @@ RELEASE=1 ./bin/mise run build    # build wydania — tylko czyste drzewo na tag
 ./bin/mise exec -- ci/dft --help  # polecenia dft (wersja, tożsamość, bramki)
 
 ./bin/mise run cluster:up         # klaster k3d + build + helm upgrade --install
+./bin/mise run cluster:up -- --image ghcr.io/mateuszf757/docfind-api@sha256:…   # obraz z rejestru po digeście
 ./bin/mise run cluster:drain      # warunek zakończenia Etapu 2
 ./bin/mise run cluster:tls        # warunek zakończenia Etapu 3: odnowienie certyfikatu pod ruchem
 ./bin/mise run cluster:identity   # na każdym podzie obraz, wersja i commit z tego drzewa
@@ -187,6 +188,28 @@ działa, jeśli w PATH są Go 1.27.1 i pozostałe narzędzia. Klaster zapisuje d
 dostępowe do `.cache/kubeconfig`, nie do `~/.kube/config`; `dft` bierze ścieżkę
 i kontekst z definicji środowiska, a `./bin/mise exec` ustawia `KUBECONFIG`
 sam.
+
+### Środowiska
+
+Zadania klastrowe działają na środowisku `dev`, chyba że `MISE_ENV` wskaże
+inne — mise nakłada wtedy `mise.<nazwa>.toml` z `DOCFIND_ENV` i `KUBECONFIG`
+tego środowiska:
+
+```bash
+MISE_ENV=ci ./bin/mise run cluster:up -- --image-archive obraz.tar --config-digest sha256:…
+MISE_ENV=staging ./bin/mise run cluster:drain
+MISE_ENV=staging ./bin/mise exec -- kubectl get pods -A
+```
+
+| | `dev` | `ci` | `staging` | `prod` |
+|---|---|---|---|---|
+| Klaster | k3d `docfind` | k3d `docfind-ci`, efemeryczny w CI | k3d `docfind-staging`, długo żyjący | do Etapu 10 brak |
+| Obraz | z drzewa, archiwum albo rejestr | artefakt zadania build | digest z rejestru | digest wydania |
+| TLS | z `mise.local.toml` | własne CA | Let's Encrypt staging | Let's Encrypt |
+
+Definicja jest listą dozwolonych operacji: `dft` odmawia wszystkiego, czego
+środowisko nie wymienia — na `prod` niczego, na `staging` usunięcia klastra
+(decyzja 35).
 
 Podgląd działającej usługi. Konfiguracja jest wymagana — bez niej kontener
 świadomie odmawia startu:

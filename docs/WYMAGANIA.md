@@ -79,7 +79,9 @@ nic nie powinno słuchać.
 
 Klaster wystawia na hosta API Kubernetesa (6550) oraz load balancer pod ingress
 z Etapu 3 (8080 → 80, 8443 → 443), wyłącznie na `127.0.0.1`. Szczegóły
-i uzasadnienie: decyzja 17.
+i uzasadnienie: decyzja 17. Klastry pozostałych środowisk mają własne porty
+z definicji w `deploy/environments/`: `ci` 6551/8081/8444, `staging`
+6552/8082/8445 — wszystkie mogą stać obok siebie.
 
 **Czego świadomie nie robimy.** Docker rootless nie otworzy portów 80 i 443.
 Obejściem, które podaje dokumentacja Dockera, jest obniżenie
@@ -155,7 +157,9 @@ sudo sysctl --system
 około dwukrotny zapas ponad pełny stos z planu. To limit zasobu jądra, nie
 granica uprawnień: podnosi pamięć, jaką użytkownik może zająć na struktury
 inotify, a nie to, co może zrobić. `dft cluster up` sprawdza go przy każdym
-wdrożeniu i ostrzega powyżej 80% zużycia.
+wdrożeniu i ostrzega powyżej 80% zużycia. Klaster z Etapu 3 zajmuje ~96
+instancji, więc dev i staging razem mieszczą się w 512 z zapasem; klaster CI
+postawiony lokalnie obok nich też.
 
 ## Token API Cloudflare (Let's Encrypt)
 
@@ -201,6 +205,13 @@ modelu LLM, który domyślnie stoi poza klastrem (decyzja 7). Limit pamięci WSL
 ustawia się w `.wslconfig` kluczem `memory=`; domyślnie WSL dostaje połowę RAM-u
 hosta.
 
+Staging to drugi klaster na tej samej maszynie (decyzja 35), więc pamięć
+liczy się dwa razy. Do Etapu 5 oba klastry mieszczą się w 13 GiB; od Etapu 6
+(Elasticsearch) staging dostaje okrojony stos albo jest wyłączany na czas
+pracy nad dev: `k3d cluster stop docfind-staging`. Węzły k3d widzą całą
+pamięć WSL, więc przepełnienie kończy się OOM killerem hosta, a nie eksmisją
+podów.
+
 ## Narzędzia
 
 **Instalacja i sprawdzenie:** `./bin/mise install`
@@ -228,7 +239,10 @@ wymagana — wyścig wyjdzie najpóźniej w zadaniu `test` w CI.
 **Kubeconfig:** klaster zapisuje dane dostępowe do `.cache/kubeconfig`
 w repozytorium, nie do `~/.kube/config`. `dft` bierze ścieżkę i kontekst
 z definicji środowiska (`deploy/environments/dev.yaml`) i podaje je jawnie,
-a `mise.toml` ustawia `KUBECONFIG` dla `./bin/mise exec`. Kontekst `k3d-docfind` dopisany wcześniej do
+a `mise.toml` ustawia `KUBECONFIG` dla `./bin/mise exec`. Klastry `ci`
+i `staging` mają własne pliki (`.cache/kubeconfig-ci`,
+`.cache/kubeconfig-staging`), wybierane przez `MISE_ENV=ci` albo
+`MISE_ENV=staging`. Kontekst `k3d-docfind` dopisany wcześniej do
 globalnego kubeconfigu można usunąć:
 `kubectl config delete-context k3d-docfind && kubectl config delete-cluster k3d-docfind && kubectl config delete-user admin@k3d-docfind`.
 

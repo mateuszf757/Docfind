@@ -1,0 +1,38 @@
+# Środowisko ci — integracja: efemeryczny klaster k3d tworzony i usuwany
+# w zadaniu `cluster` workflowu ci (na runnerze GitHuba). Lokalnie ten sam
+# klaster stawia `MISE_ENV=ci ./bin/mise run cluster:up` — obok dev, na
+# innych portach.
+name: ci
+stage: integracja
+
+cluster:
+  provider: k3d
+  name: docfind-ci
+  context: k3d-docfind-ci
+  kubeconfig: .cache/kubeconfig-ci
+  apiServer: https://127.0.0.1:6551
+  ports:
+    api: 6551
+    http: 8081
+    https: 8444
+
+artifact:
+  # Obraz z zadania build tego samego biegu, nigdy budowany od nowa: na PR-ze
+  # archiwum (obrazu nie ma w rejestrze), na main i tagu digest z GHCR —
+  # dowód, że opublikowany obraz to obraz sprawdzony.
+  sources: [archive, registry]
+
+app:
+  namespace: docfind
+  release: docfind
+
+gateway:
+  namespace: gateway
+  name: docfind
+  # Własne CA: bramka na PR-ze nie ma sekretów (PR-y Dependabota i z forków
+  # ich nie widzą), więc nie ma tokenu DNS dla Let's Encrypt.
+  hostname: docfind.internal
+  issuer: docfind-internal-ca
+
+operations:
+  allowed: [cluster-create, cluster-delete, deploy, drain, tls-renew]

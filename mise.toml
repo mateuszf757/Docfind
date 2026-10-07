@@ -25,7 +25,7 @@
 # - Python — wersję do testów wybiera uv z services/api/.python-version,
 #   w produkcji decyduje obraz bazowy. Trzeci menedżer interpretera byłby
 #   trzecim miejscem, w którym wersja może się rozjechać.
-# - obrazy (k3s, BuildKit, curl), charty i commit schematów — przypięte
+# - obrazy (k3s, BuildKit, rejestr), charty i commit schematów — przypięte
 #   w ci/pins.env, pliku danych czytanym przez dft i workflowy.
 #
 # Aktualizacja narzędzia: zmień wersję poniżej, potem `./bin/mise lock`
@@ -157,9 +157,10 @@ run = [
 ]
 
 # Zadania klastrowe działają na środowisku z DOCFIND_ENV (domyślnie dev,
-# deploy/environments/dev.yaml).
+# deploy/environments/dev.yaml). MISE_ENV=<nazwa> nakłada mise.<nazwa>.toml,
+# który ustawia DOCFIND_ENV i KUBECONFIG tego środowiska (decyzja 35).
 [tasks."cluster:up"]
-description = "Klaster k3d (jeśli go nie ma), platforma, build, chart, tożsamość na każdym podzie"
+description = "Klaster k3d (jeśli go nie ma), platforma, obraz (build, --image-archive albo --image po digeście), chart, tożsamość na każdym podzie"
 run = "ci/dft cluster up"
 
 [tasks."cluster:down"]
