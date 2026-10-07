@@ -106,9 +106,11 @@ dokumenty/         Roboczy korpus do indeksowania (poza repozytorium)
 
 ## Ustawienia repozytorium
 
-Reguły gałęzi `main` i tagów `v*`, włączenie auto-merge i wymóg przypinania
-akcji pełnym SHA są zapisane jako kod (`.github/rulesets/`) i stosowane
-skryptem — raz i po każdej zmianie reguł, przez osobę z uprawnieniami admina:
+Reguły gałęzi `main` i tagów `v*`, środowiska GitHuba (`staging` tylko
+z `main`; `production` tylko z tagów `v*`, ze zgodą autora), włączenie
+auto-merge i wymóg przypinania akcji pełnym SHA są zapisane jako kod
+(`.github/rulesets/`, `.github/environments/`) i stosowane programem — raz
+i po każdej zmianie, przez osobę z uprawnieniami admina:
 
 ```bash
 ./bin/mise exec -- gh auth login
@@ -151,12 +153,19 @@ git push origin v0.3.1
 ```
 
 Tag uruchamia w CI build wydania i publikuje
-`ghcr.io/mateuszf757/docfind-api:0.3.1` z atestacją pochodzenia; digest jest
-w podsumowaniu zadania `build`. Obrazy z `main` między tagami mają wersję
+`ghcr.io/mateuszf757/docfind-api:0.3.1` z atestacją BuildKitu (pochodzenie,
+SBOM) i atestacją GitHuba; digest jest w podsumowaniu zadania `build`.
+Wydanie przechodzi bramki klastrowe i skan podatności na tym samym digeście,
+a zadanie `promote` czeka na zgodę w Environment `production` — po niej
+sprawdza digest jeszcze raz, zapisuje wdrożenie (Deployments w repozytorium,
+z linkiem do atestacji) i podaje instalację dla klienta (decyzja 38).
+Obrazy z `main` między tagami mają wersję
 `0.3.2-dev.<commity od tagu>+<sha>` i tag `<sha12>`.
 
 ```bash
-docker buildx imagetools inspect ghcr.io/mateuszf757/docfind-api:0.3.1 --format '{{json .Provenance}}'
+gh attestation verify oci://ghcr.io/mateuszf757/docfind-api@sha256:… --repo mateuszf757/Docfind
+./bin/mise run check:attestation -- ghcr.io/mateuszf757/docfind-api@sha256:…
+docker buildx imagetools inspect ghcr.io/mateuszf757/docfind-api:0.3.1 --format '{{json .SBOM}}'
 ```
 
 ## Praca lokalna
@@ -190,7 +199,7 @@ RELEASE=1 ./bin/mise run build    # build wydania — tylko czyste drzewo na tag
 ./bin/mise run cluster:identity   # na każdym podzie obraz, wersja i commit z tego drzewa
 ./bin/mise run test:cluster       # to, co API server ma odrzucić (sonda bez securityContext)
 ./bin/mise run cluster:evidence   # dowody z klastra do .cache/reports (jak artefakt w CI)
-./bin/mise run ci:trial           # okres próbny zadania cluster: seria zielonych biegów na main
+./bin/mise run ci:trial           # okres próbny zadań cluster i vulns: serie zielonych biegów na main
 ./bin/mise run dns-token          # token Cloudflare dla Let's Encrypt (DNS-01), raz
 ./bin/mise run cluster:down       # usunięcie klastra
 ./bin/mise exec -- kubectl get pods -A   # kubectl z przypiętej wersji, kubeconfig projektu

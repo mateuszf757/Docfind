@@ -255,3 +255,33 @@ func TestDownRequiresPermission(t *testing.T) {
 		t.Errorf("uruchomiono %v", fake.Calls)
 	}
 }
+
+// TestVerifyRegistry: promocja na prod bez klastra — te same sprawdzenia co
+// przed wdrożeniem, a środowisko bez źródła rejestru odmawia.
+func TestVerifyRegistry(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("d", 64)
+	inspect := func(_ context.Context, _ string) (registry.Inspected, error) {
+		return registry.Inspected{
+			Published: registry.Published{Index: digest, Predicates: []string{registry.ProvenancePredicates[1], registry.SBOMPredicate}},
+			Labels:    map[string]string{registry.VersionLabel: "0.4.0", registry.RevisionLabel: commit},
+		}, nil
+	}
+	var sourceRef string
+	attestFn := func(_ context.Context, _, ref string) (attest.Result, error) {
+		sourceRef = ref
+		return attest.Result{PredicateType: attest.ProvenanceV1, SourceRef: ref, SourceCommit: commit}, nil
+	}
+	d := Deployer{Env: definition(t, "prod"), Image: apiImage, Inspect: inspect, Attest: attestFn}
+	got, err := d.VerifyRegistry(context.Background(), apiImage+"@"+digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Image != apiImage+":0.4.0@"+digest || got.Version != "0.4.0" || sourceRef != "refs/tags/v0.4.0" {
+		t.Errorf("wydanie: %+v, tag źródła %q", got, sourceRef)
+	}
+	ci := Deployer{Env: definition(t, "ci"), Image: apiImage, Inspect: inspect, Attest: attestFn}
+	ci.Env.Artifact.Sources = []string{env.SourceArchive}
+	if _, err := ci.VerifyRegistry(context.Background(), apiImage+"@"+digest); cli.ExitCode(err) != cli.ExitUnmet {
+		t.Errorf("środowisko bez rejestru: %v", err)
+	}
+}

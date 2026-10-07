@@ -1151,8 +1151,15 @@ Wyjątki leżą w `ci/vuln-exceptions.yaml`: podatność, pakiet, uzasadnienie
 i data nie dalsza niż 90 dni. Po dacie podatność znów blokuje, a wyjątek,
 któremu nic nie odpowiada, bramka zgłasza do usunięcia. Raport zapisuje,
 z jakiej bazy powstał: sumę i najnowszy wpis każdej bazy ekosystemu.
-govulncheck podlega tej samej polityce (wyjątki z zakresu `go`) — na nim
-obietnica z decyzji 23 się domknęła.
+govulncheck podlega tej samej polityce (wyjątki z zakresu `go`): baza Go
+też zmienia się codziennie, a dotąd każda nowa osiągalna podatność
+zatrzymywała każdy PR, bez drogi świadomego przyjęcia.
+
+Blokada działa na PR-ze dopiero wtedy, gdy `vulns` jest wymaganym statusem
+reguły `main`. Wchodzi tam razem z `cluster`, po tym samym okresie próbnym
+(decyzja 36): `./bin/mise run ci:trial` liczy serie obu zadań — na `main`
+skan tylko raportuje, więc seria mierzy zawodność samego skanu (pobranie
+baz, rejestr), a nie wynik.
 
 Pierwszy wyjątek: zlib CVE-2026-85091. Wersja z poprawką jest w Alpine 3.24
 od 2026-10-06, ale nie ma jej jeszcze w żadnym obrazie
@@ -1172,6 +1179,50 @@ bundle (Grype 0.120 już tak podpisuje) — porównanie wraca, bo Grype ma
 pełniejsze dane o wagach. Gdy w klastrze pojawi się weryfikacja przy
 przyjęciu poda — atestacja GitHuba staje się warunkiem uruchomienia, nie
 tylko wdrożenia przez `dft`.
+
+## 38. Środowiska GitHuba jako kod, promocja wydania przed Etapem 10
+
+**Wybieram promocję, która niczego nie instaluje, ale ma bramkę i zapis.**
+Do Etapu 10 nie ma klastra klienta, a Etap 9 obiecuje „ten sam digest na
+obu klastrach". To, co da się zrobić wcześniej, to łańcuch od tagu do
+decyzji człowieka:
+
+- **Środowiska GitHuba jako kod** w `.github/environments/`, stosowane tym
+  samym `dft repo-settings` co rulesety: `staging` — tylko z `main`, bez
+  recenzenta; `production` — tylko z tagów `v*`, recenzent: autor, bez
+  „Prevent self-review" (przy jednym autorze zablokowałoby każdą promocję).
+  Plik czytany ściśle; środowisko bez własnej listy gałęzi i tagów jest
+  odrzucane, bo przyjmowałoby wdrożenie z dowolnej gałęzi.
+- **Zadanie `promote`** na tagu, po `build`, `attest`, `cluster` i `vulns`
+  — więc tylko dla digestu, który przeszedł bramki klastrowe i skan — z
+  `environment: production`: rusza po zgodzie autora. Najpierw sprawdza, że
+  ta zgoda w ogóle jest wymagana: GitHub tworzy środowisko bez żadnych reguł
+  przy pierwszym zadaniu, które go użyje, więc zanim autor zastosuje
+  `.github/environments/`, promocja przeszłaby bez nikogo — `dft promote`
+  wtedy odmawia. Potem sprawdza obraz według definicji `prod`
+  (decyzje 35, 37): wersja X.Y.Z, pochodzenie i SBOM w rejestrze, atestacja
+  GitHuba z tagu tej wersji, commit z podpisu równy etykiecie.
+- **Zapis:** zadanie ze środowiskiem tworzy GitHub Deployment (tag, commit,
+  środowisko `production`) z adresem strony atestacji digestu — rejestr
+  „który digest stoi gdzie" poza gitem tego repozytorium, bez commita, który
+  zbudowałby nowy obraz (U21). Do tego raport i instalacja, jaką wykonałby
+  klient: chart z tagu wydania, obraz po digeście, wartości z definicji
+  `prod`.
+
+Staging z Argo CD (pull, Etap 5) jest tylko planem w dzienniku prac — do
+tego czasu staging to drugi klaster k3d, na który obraz z rejestru wdraża
+autor (`MISE_ENV=staging ./bin/mise run cluster:up -- --image …`), z tą
+samą weryfikacją atestacji co produkcja.
+
+**Co tracę:** „promocja" przed Etapem 10 to zgoda i zapis, nie wdrożenie —
+nazwa obiecuje więcej, niż robi, dopóki nie ma klastra klienta. Zadanie
+czeka na zgodę do 30 dni, a każdy tag to jedno oczekujące wdrożenie
+w zakładce Actions.
+
+**Kiedy zmieniam zdanie:** w Etapie 10 `promote` instaluje chart OCI na
+klastrze klienta i mierzy `helm rollback`; w Etapie 5 staging dostaje digest
+z mechanizmu GitOps (decyzja przed Etapem 5), a wynik wdrożenia wraca do
+GitHuba jako status środowiska `staging`.
 
 ## Czego bym dziś nie powtórzył
 

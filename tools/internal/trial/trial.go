@@ -62,7 +62,8 @@ func (c Checker) gh(ctx context.Context, path string, v any) error {
 
 // Streak przegląda biegi od najnowszego. Bieg, w którym zadanie nie ruszyło
 // (wcześniejsze zadanie zawiodło), nie liczy się i serii nie przerywa;
-// ponowienie albo porażka zadania — przerywa.
+// ponowienie albo porażka zadania — przerywa; bieg sprzed dodania zadania
+// kończy przegląd.
 func (c Checker) Streak(ctx context.Context) (Result, error) {
 	var runs struct {
 		Runs []Run `json:"workflow_runs"`
@@ -89,19 +90,24 @@ func (c Checker) Streak(ctx context.Context) (Result, error) {
 		if err := c.gh(ctx, fmt.Sprintf("repos/{owner}/{repo}/actions/runs/%d/jobs", run.ID), &jobs); err != nil {
 			return r, err
 		}
-		conclusion := ""
+		conclusion, found := "", false
 		for _, j := range jobs.Jobs {
 			if j.Name == c.Job {
-				conclusion = j.Conclusion
+				conclusion, found = j.Conclusion, true
 			}
+		}
+		if !found {
+			// Workflow tego biegu nie miał jeszcze zadania — starsze biegi też
+			// go nie mają, a każdy to kolejne zapytanie do API.
+			return r, nil
 		}
 		switch conclusion {
 		case "success":
 			r.Streak++
 			r.Counted = append(r.Counted, run)
-		case "", "skipped":
-			// Zadanie nie ruszyło (np. czerwony build) albo bieg sprzed jego
-			// istnienia — ani dowód, ani porażka bramki.
+		case "skipped":
+			// Zadanie nie ruszyło (np. czerwony build) — ani dowód, ani
+			// porażka bramki.
 		default:
 			r.Broken, r.Reason = &run, "zadanie "+c.Job+": "+conclusion
 			return r, nil

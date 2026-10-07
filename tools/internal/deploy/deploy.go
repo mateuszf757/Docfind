@@ -620,7 +620,7 @@ func (d Deployer) registryImage(ctx context.Context, ref string) (image, error) 
 		if err != nil {
 			return image{}, err
 		}
-		if verified.SourceCommit != "" && verified.SourceCommit != commit {
+		if verified.SourceCommit != commit {
 			return image{}, cli.Unmet("atestacja GitHuba mówi o commicie %s, a obraz deklaruje %s", verified.SourceCommit, commit)
 		}
 		cli.Step("atestacja GitHuba: %s z %s, bieg %s", verified.PredicateType, verified.SourceRef, verified.Run)
@@ -630,6 +630,31 @@ func (d Deployer) registryImage(ctx context.Context, ref string) (image, error) 
 	return image{tag: tag, digest: published.Index, want: kube.Expected{
 		Image: d.Image + ":" + tag + "@" + published.Index, Version: version, Commit: commit,
 	}}, nil
+}
+
+// Verified — obraz z rejestru sprawdzony tak, jak przed wdrożeniem na
+// środowisko: wersja, commit, atestacje według definicji.
+type Verified struct {
+	// Image — repozytorium:tag@digest, jak w charcie.
+	Image   string `json:"image"`
+	Tag     string `json:"tag"`
+	Digest  string `json:"digest"`
+	Version string `json:"version"`
+	Commit  string `json:"commit"`
+}
+
+// VerifyRegistry sprawdza obraz z rejestru według definicji środowiska, bez
+// zmiany czegokolwiek na klastrze — dla promocji na środowisko bez klastra
+// i dla sprawdzenia przed wdrożeniem.
+func (d Deployer) VerifyRegistry(ctx context.Context, ref string) (Verified, error) {
+	if !d.Env.AllowsSource(env.SourceRegistry) {
+		return Verified{}, cli.Unmet("środowisko %s nie przyjmuje obrazów z rejestru (artifact.sources: %v)", d.Env.Name, d.Env.Artifact.Sources)
+	}
+	img, err := d.registryImage(ctx, ref)
+	if err != nil {
+		return Verified{}, err
+	}
+	return Verified{Image: img.want.Image, Tag: img.tag, Digest: img.digest, Version: img.want.Version, Commit: img.want.Commit}, nil
 }
 
 func shortCommit(commit string) string {

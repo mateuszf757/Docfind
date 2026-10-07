@@ -398,35 +398,42 @@ func runRepoSettings(ctx context.Context, e *environment, args []string) error {
 	return github.Settings{Root: e.root, Runner: e.runner, DryRun: len(args) == 1}.Apply(ctx)
 }
 
-// runTrial mówi, czy zadanie CI skończyło okres próbny i jego status może
-// trafić do wymaganych w regule main (decyzja 36).
+// runTrial mówi, czy zadania CI skończyły okres próbny i ich statusy mogą
+// trafić do wymaganych w regule main (decyzje 36 i 37).
 func runTrial(ctx context.Context, e *environment, args []string) error {
-	const usage = "dft trial <zadanie> <N>"
-	if err := expectArgs(args, 2, 2, usage); err != nil {
-		return err
+	const usage = "dft trial <N> <zadanie>…"
+	if len(args) < 2 {
+		return cli.Usage("użycie: %s", usage)
 	}
-	need, err := strconv.Atoi(args[1])
+	need, err := strconv.Atoi(args[0])
 	if err != nil || need < 1 {
 		return cli.Usage("użycie: %s — N to dodatnia liczba biegów", usage)
 	}
 	if err := requireTools("gh"); err != nil {
 		return err
 	}
-	job := args[0]
-	res, err := trial.Checker{Runner: e.runner, Workflow: "ci.yml", Job: job, Branch: "main", Events: []string{"push", "schedule"}, Limit: 50}.Streak(ctx)
-	if err != nil {
+	v := &cli.Verdict{}
+	for _, job := range args[1:] {
+		res, err := trial.Checker{Runner: e.runner, Workflow: "ci.yml", Job: job, Branch: "main", Events: []string{"push", "schedule"}, Limit: 50}.Streak(ctx)
+		if err != nil {
+			return err
+		}
+		for _, r := range res.Counted {
+			cli.Step("%s zielony: %s %s %.7s %s", job, r.CreatedAt, r.Event, r.HeadSHA, r.URL)
+		}
+		if res.Broken != nil {
+			cli.Step("%s: serię przerywa %s %s — %s (%s)", job, res.Broken.CreatedAt, res.Broken.Event, res.Reason, res.Broken.URL)
+		}
+		if res.Streak < need {
+			v.Fail("okres próbny %s trwa: %d z %d zielonych biegów z rzędu", job, res.Streak, need)
+			continue
+		}
+		cli.Step("%s: %d zielonych biegów z rzędu — status można dopisać do .github/rulesets/main.json", job, res.Streak)
+	}
+	if err := v.Err("okres próbny"); err != nil {
 		return err
 	}
-	for _, r := range res.Counted {
-		cli.Step("zielony: %s %s %.7s %s", r.CreatedAt, r.Event, r.HeadSHA, r.URL)
-	}
-	if res.Broken != nil {
-		cli.Step("serię przerywa: %s %s — %s (%s)", res.Broken.CreatedAt, res.Broken.Event, res.Reason, res.Broken.URL)
-	}
-	if res.Streak < need {
-		return cli.Unmet("okres próbny %s trwa: %d z %d zielonych biegów z rzędu", job, res.Streak, need)
-	}
-	cli.Step("%s: %d zielonych biegów z rzędu — status można dopisać do .github/rulesets/main.json i zastosować ./bin/mise run repo:settings", job, res.Streak)
+	cli.Step("wszystkie zadania po okresie próbnym — zastosuj regułę: ./bin/mise run repo:settings")
 	return nil
 }
 

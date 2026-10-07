@@ -68,14 +68,19 @@ var commands = map[string]command{
 		help:  "klaster środowiska (DOCFIND_ENV, domyślnie dev): utworzenie, platforma, obraz, chart, tożsamość; dowody do .cache/reports",
 		run:   runCluster,
 	},
+	"promote": {
+		usage: "dft promote <obraz@sha256:…>",
+		help:  "promocja digestu wydania na prod: zgoda w Environment production, wydanie, atestacje, zapis i instalacja dla klienta",
+		run:   runPromote,
+	},
 	"vulns-issue": {
 		usage: "dft vulns-issue <raport vulns-api.json>",
 		help:  "wynik nocnego skanu podatności jako issue: otwiera, aktualizuje albo zamyka (gh)",
 		run:   runVulnsIssue,
 	},
 	"trial": {
-		usage: "dft trial <zadanie> <N>",
-		help:  "okres próbny zadania CI: seria zielonych biegów na main (push, nocą) za pierwszym podejściem; kod 0 od N",
+		usage: "dft trial <N> <zadanie>…",
+		help:  "okres próbny zadań CI: seria zielonych biegów na main (push, nocą) za pierwszym podejściem; kod 0, gdy każde ma N",
 		run:   runTrial,
 	},
 	"dns-token": {
@@ -85,7 +90,7 @@ var commands = map[string]command{
 	},
 	"repo-settings": {
 		usage: "dft repo-settings [--dry-run]",
-		help:  "rulesety, auto-merge i przypinanie akcji SHA w ustawieniach GitHuba (admin)",
+		help:  "rulesety, środowiska GitHuba, auto-merge i przypinanie akcji SHA w ustawieniach repozytorium (admin)",
 		run:   runRepoSettings,
 	},
 	"test-image": {
