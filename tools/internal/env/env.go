@@ -396,6 +396,16 @@ func (e Environment) AllowsSource(source string) bool {
 	return slices.Contains(e.Artifact.Sources, source)
 }
 
+// Run zwraca polecenie zadania mise dla tego środowiska — do podpowiedzi
+// w komunikatach. Poza dev z MISE_ENV: samo `./bin/mise run dns-token`
+// trafiłoby w klaster dev, a nie w ten, który o token prosi.
+func (e Environment) Run(task string) string {
+	if e.Name == DefaultName {
+		return "./bin/mise run " + task
+	}
+	return "MISE_ENV=" + e.Name + " ./bin/mise run " + task
+}
+
 // KubeconfigPath zwraca bezwzględną ścieżkę kubeconfigu środowiska.
 func (e Environment) KubeconfigPath(root string) string {
 	return filepath.Join(root, e.Cluster.Kubeconfig)

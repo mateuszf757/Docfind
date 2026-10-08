@@ -313,3 +313,19 @@ func TestUnknownEnvironment(t *testing.T) {
 		t.Errorf("nieznane środowisko: %v", err)
 	}
 }
+
+func TestRun(t *testing.T) {
+	clearOverrides(t)
+	for name, want := range map[string]string{
+		"dev":     "./bin/mise run dns-token",
+		"staging": "MISE_ENV=staging ./bin/mise run dns-token",
+	} {
+		e, err := Read(repoRoot, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := e.Run("dns-token"); got != want {
+			t.Errorf("%s: %q, oczekiwano %q", name, got, want)
+		}
+	}
+}
