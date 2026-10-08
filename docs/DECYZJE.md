@@ -909,7 +909,9 @@ biblioteka niesie założenia o środowisku, które tu nie zachodzą.
   węzła bez podprocesów, fałszywy clientset w testach (blokada, naprawa po
   przerwanym biegu, tożsamość na podach przez proxy API servera). Koszt:
   lista modułów 60 → 110, `go mod graph` 110 → 397 linii, zimny build ~25 s
-  na 6 CPU; client-go trzeba podbijać razem z k3s.
+  na 6 CPU; client-go trzeba podbijać razem z k3s — Dependabot proponuje
+  dla `k8s.io/*` tylko łatki (`ignore` w `.github/dependabot.yml`), bo jego
+  podbicie minor bez klastra kończyło się czerwonym CI.
 - **Eksmisja przy drainie — `kubectl drain`, nie `k8s.io/kubectl/pkg/drain`.**
   To ten sam kod (kubectl go używa), ale jako biblioteka podwaja listę modułów
   (68 → 128 w module próbnym) i wciąga kustomize, cobra i blackfriday — dla
