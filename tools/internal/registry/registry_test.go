@@ -211,6 +211,19 @@ func TestVerifyPublished(t *testing.T) {
 			ref:      func(t *testing.T) string { return repo + "@sha256:" + strings.Repeat("0", 64) },
 			config:   configOf(t, img),
 			wantCode: cli.ExitFailure,
+			wantMsg:  "służy digest indeksu",
+		},
+		{
+			// Pomyłka z 2026-10-08: digest konfiguracji z podsumowania builda
+			// zamiast digestu indeksu.
+			name: "digest konfiguracji zamiast indeksu",
+			ref: func(t *testing.T) string {
+				pushIndex(t, repo, attestedIndex(t, img, digestOf(t, img)))
+				return repo + "@" + configOf(t, img)
+			},
+			config:   configOf(t, img),
+			wantCode: cli.ExitFailure,
+			wantMsg:  "nie digest konfiguracji",
 		},
 		{
 			name:     "rejestr nieosiągalny",

@@ -102,6 +102,13 @@ func Inspect(ref string, opts ...remote.Option) (Inspected, error) {
 		return Inspected{}, fmt.Errorf("referencja %q: oczekiwano repozytorium@sha256:…: %w", ref, err)
 	}
 	desc, err := remote.Get(digestRef, opts...)
+	var terr *transport.Error
+	if errors.As(err, &terr) && terr.StatusCode == http.StatusNotFound {
+		// Najczęstsza przyczyna: digest konfiguracji wzięty zamiast digestu
+		// indeksu — oba są w podsumowaniu zadania build, a pod digestem
+		// konfiguracji rejestr ma blob, nie manifest.
+		return Inspected{}, fmt.Errorf("%s: %w — do wdrożenia i promocji służy digest indeksu (wyjście digest zadania build, kolumna „Obraz do wdrożenia”), nie digest konfiguracji", ref, ErrNotFound)
+	}
 	if err != nil {
 		return Inspected{}, fmt.Errorf("pobranie %s z rejestru: %w", ref, err)
 	}

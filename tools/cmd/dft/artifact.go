@@ -112,8 +112,12 @@ func runBuild(ctx context.Context, env *environment, args []string) error {
 		return nil
 	}
 	digest := res.Published.Index
-	return appendSummary(fmt.Sprintf("### Opublikowany obraz %s\n\n| Wersja | Obraz | Konfiguracja |\n|---|---|---|\n| %s | `%s@%s` | `%s` |\n",
-		svc, res.Version, res.Image, digest, res.Config))
+	// Dwa digesty sha256 obok siebie łatwo pomylić: do wdrożenia i promocji
+	// służy digest indeksu, a digest konfiguracji tylko do porównań — pod
+	// nim w rejestrze nie ma manifestu (MANIFEST_UNKNOWN).
+	return appendSummary(fmt.Sprintf("### Opublikowany obraz %s\n\n| Wersja | Obraz do wdrożenia (digest indeksu) | Konfiguracja (tylko do porównań) |\n|---|---|---|\n| %s | `%s@%s` | `%s` |\n\n"+
+		"Na staging, po zielonym biegu:\n\n```bash\nMISE_ENV=staging ./bin/mise run cluster:up -- --image %s@%s\n```\n",
+		svc, res.Version, res.Image, digest, res.Config, res.Image, digest))
 }
 
 // builtImage zwraca obraz:tag zbudowany z bieżącego drzewa.
