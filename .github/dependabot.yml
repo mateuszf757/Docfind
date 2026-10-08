@@ -85,6 +85,14 @@ updates:
       semver-patch-days: 7
       semver-minor-days: 7
       semver-major-days: 14
+    # client-go, api i apimachinery w wersji minor klastra (0.36.x dla
+    # Kubernetesa 1.36 z DF_KUBERNETES_VERSION) — pilnuje tego `dft check
+    # versions`. Podbicie minor bez k3s kończy się czerwonym CI (PR-y #26 i #30
+    # z client-go 0.37.1), więc minor i major podnosi człowiek razem z k3s,
+    # kubectl i schematami; łatki przychodzą jak dotąd.
+    ignore:
+      - dependency-name: "k8s.io/*"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
     groups:
       go-patch:
         update-types: [patch]
