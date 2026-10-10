@@ -8,16 +8,16 @@ import (
 	"runtime"
 
 	"github.com/mateuszf757/Docfind/tools/internal/charts"
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
-	"github.com/mateuszf757/Docfind/tools/internal/pins"
-	"github.com/mateuszf757/Docfind/tools/internal/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 	"github.com/mateuszf757/Docfind/tools/internal/versions"
 )
 
 // runTest to zadanie test z CI: wersje, workflowy i skrypty, Python
 // aplikacji, charty, kod narzędzi. Kończy się na pierwszej grupie, która nie
 // przeszła — każda zakłada, że poprzednie przeszły (dawniej ci/run-tests.sh).
-func runTest(ctx context.Context, e *environment, args []string) error {
+func runTest(ctx context.Context, e *workspace, args []string) error {
 	if err := expectArgs(args, 0, 0, "dft test"); err != nil {
 		return err
 	}
@@ -54,7 +54,7 @@ func runTest(ctx context.Context, e *environment, args []string) error {
 
 // tool uruchamia program z wyjściem na bieżąco; niezerowy kod to warunek
 // niespełniony (kod nie przechodzi bramki), brak programu — awaria.
-func tool(ctx context.Context, e *environment, dir string, env []string, name string, args ...string) error {
+func tool(ctx context.Context, e *workspace, dir string, env []string, name string, args ...string) error {
 	cli.Step("%s %s", name, args[0])
 	_, err := e.runner.Run(ctx, proc.Cmd{Name: name, Args: args, Dir: dir, Env: env, Stdout: os.Stdout, Stderr: os.Stderr})
 	if code := proc.ExitCode(err); code > 0 {
@@ -66,7 +66,7 @@ func tool(ctx context.Context, e *environment, dir string, env []string, name st
 // checkWorkflows: skrypty powłoki shellcheckiem, workflowy actionlintem
 // (poprawność) i zizmorem (czy poprawny workflow nie jest groźny).
 // Narzędzia w wersjach z mise.lock — różne wersje zgłaszają różne uwagi.
-func checkWorkflows(ctx context.Context, e *environment) error {
+func checkWorkflows(ctx context.Context, e *workspace) error {
 	scripts, err := filepath.Glob(filepath.Join(e.root, "ci", "*.sh"))
 	if err != nil {
 		return err
@@ -85,7 +85,7 @@ func checkWorkflows(ctx context.Context, e *environment) error {
 // checkPython: zależności z locka (--locked kończy się błędem, gdy lock nie
 // odpowiada pyproject.toml), lint, format, typy, testy i schemat konfiguracji
 // generowany z modelu.
-func checkPython(ctx context.Context, e *environment) error {
+func checkPython(ctx context.Context, e *workspace) error {
 	dir := filepath.Join(e.root, "services", "api")
 	pythonPath := []string{"PYTHONPATH=src"}
 	for _, step := range [][]string{
@@ -104,7 +104,7 @@ func checkPython(ctx context.Context, e *environment) error {
 	return nil
 }
 
-func checkCharts(ctx context.Context, e *environment) (err error) {
+func checkCharts(ctx context.Context, e *workspace) (err error) {
 	p, err := pins.Load(e.root)
 	if err != nil {
 		return err
@@ -117,7 +117,7 @@ func checkCharts(ctx context.Context, e *environment) (err error) {
 	return charts.Checker{Root: e.root, Runner: e.runner, Pins: p, Out: os.Stdout, Err: os.Stderr}.Run(ctx, tmp)
 }
 
-func runCheckWorkflows(ctx context.Context, e *environment, args []string) error {
+func runCheckWorkflows(ctx context.Context, e *workspace, args []string) error {
 	if err := expectArgs(args, 0, 0, "dft check workflows"); err != nil {
 		return err
 	}
@@ -127,7 +127,7 @@ func runCheckWorkflows(ctx context.Context, e *environment, args []string) error
 	return checkWorkflows(ctx, e)
 }
 
-func runCheckPython(ctx context.Context, e *environment, args []string) error {
+func runCheckPython(ctx context.Context, e *workspace, args []string) error {
 	if err := expectArgs(args, 0, 0, "dft check python"); err != nil {
 		return err
 	}
@@ -137,7 +137,7 @@ func runCheckPython(ctx context.Context, e *environment, args []string) error {
 	return checkPython(ctx, e)
 }
 
-func runCheckCharts(ctx context.Context, e *environment, args []string) error {
+func runCheckCharts(ctx context.Context, e *workspace, args []string) error {
 	if err := expectArgs(args, 0, 0, "dft check charts"); err != nil {
 		return err
 	}

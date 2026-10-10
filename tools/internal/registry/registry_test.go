@@ -21,7 +21,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 )
 
 // testRegistry to rejestr OCI w pamięci procesu — warianty, których nie

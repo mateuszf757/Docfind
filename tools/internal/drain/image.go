@@ -17,7 +17,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 
-	"github.com/mateuszf757/Docfind/tools/internal/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 )
 
 // ProbeRepository — nazwa obrazu sondy. Obraz nie trafia do rejestru:

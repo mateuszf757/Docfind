@@ -14,18 +14,18 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/mateuszf757/Docfind/tools/internal/env"
+	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
 	"github.com/mateuszf757/Docfind/tools/internal/kube"
 )
 
-func clusterClients(t *testing.T) (*kube.Clients, env.Environment) {
+func clusterClients(t *testing.T) (*kube.Clients, environment.Definition) {
 	t.Helper()
 	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
 	root := strings.TrimSpace(string(out))
-	def, err := env.Load(root, env.Selected())
+	def, err := environment.Load(root, environment.Selected())
 	if err != nil {
 		t.Fatal(err)
 	}

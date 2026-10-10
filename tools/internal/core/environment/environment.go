@@ -1,4 +1,4 @@
-// Package env czyta definicje środowisk z deploy/environments/<nazwa>.yaml.
+// Package environment czyta definicje środowisk z deploy/environments/<nazwa>.yaml.
 //
 // Kontekst kubeconfig, przestrzeń nazw, porty, host, wydawca i dopuszczalność
 // operacji niszczących były zaszyte w każdym skrypcie osobno — porty nawet
@@ -10,7 +10,7 @@
 // kontekst i adres serwera są w definicji, i wykonuje na nim tylko operacje
 // z operations.allowed. Czego lista nie wymienia, tego program odmawia — nowe
 // środowisko nie dostaje drainu ani usuwania klastra przez przeoczenie.
-package env
+package environment
 
 import (
 	"errors"
@@ -24,7 +24,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 )
 
 // Dir — katalog definicji względem korzenia repozytorium.
@@ -33,8 +33,8 @@ const Dir = "deploy/environments"
 // DefaultName — środowisko, gdy DOCFIND_ENV jest puste.
 const DefaultName = "dev"
 
-// Environment to jedna definicja środowiska.
-type Environment struct {
+// Definition to jedna definicja środowiska.
+type Definition struct {
 	Name       string     `json:"name"`
 	Stage      string     `json:"stage"`
 	Cluster    Cluster    `json:"cluster"`
@@ -174,29 +174,29 @@ func Selected() string {
 
 // Read czyta definicję środowiska name dokładnie tak, jak leży w gicie — bez
 // nadpisań ze zmiennych środowiskowych — i ją sprawdza. Tak widzi ją CI.
-func Read(root, name string) (Environment, error) {
+func Read(root, name string) (Definition, error) {
 	if !namePattern.MatchString(name) {
-		return Environment{}, fmt.Errorf("nazwa środowiska %q spoza [a-z][a-z0-9-]*", name)
+		return Definition{}, fmt.Errorf("nazwa środowiska %q spoza [a-z][a-z0-9-]*", name)
 	}
 	path := filepath.Join(root, Dir, name+".yaml")
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return Environment{}, cli.Usage("nieznane środowisko %q (DOCFIND_ENV) — zdefiniowane: %s", name, strings.Join(Names(root), ", "))
+		return Definition{}, cli.Usage("nieznane środowisko %q (DOCFIND_ENV) — zdefiniowane: %s", name, strings.Join(Names(root), ", "))
 	}
 	if err != nil {
-		return Environment{}, fmt.Errorf("środowisko %s: %w", name, err)
+		return Definition{}, fmt.Errorf("środowisko %s: %w", name, err)
 	}
-	var e Environment
+	var e Definition
 	// Ściśle: nieznane pole w definicji to literówka, która inaczej po cichu
 	// zostawiłaby wartość domyślną.
 	if err := yaml.UnmarshalStrict(raw, &e); err != nil {
-		return Environment{}, fmt.Errorf("%s: %w", path, err)
+		return Definition{}, fmt.Errorf("%s: %w", path, err)
 	}
 	if e.Name != name {
-		return Environment{}, fmt.Errorf("%s: name=%q, a plik nazywa się %s", path, e.Name, name)
+		return Definition{}, fmt.Errorf("%s: name=%q, a plik nazywa się %s", path, e.Name, name)
 	}
 	if err := e.Validate(); err != nil {
-		return Environment{}, fmt.Errorf("%s: %w", path, err)
+		return Definition{}, fmt.Errorf("%s: %w", path, err)
 	}
 	return e, nil
 }
@@ -214,14 +214,14 @@ func Names(root string) []string {
 // Load czyta definicję jak Read, nakłada nadpisania ze zmiennych
 // środowiskowych (jeśli definicja na nie pozwala) i sprawdza wynik jeszcze
 // raz. Tak widzą ją programy, które działają na klastrze.
-func Load(root, name string) (Environment, error) {
+func Load(root, name string) (Definition, error) {
 	e, err := Read(root, name)
 	if err != nil {
-		return Environment{}, err
+		return Definition{}, err
 	}
 	e.applyOverrides(os.Getenv)
 	if err := e.Validate(); err != nil {
-		return Environment{}, fmt.Errorf("środowisko %s po nadpisaniach z DOCFIND_*: %w", name, err)
+		return Definition{}, fmt.Errorf("środowisko %s po nadpisaniach z DOCFIND_*: %w", name, err)
 	}
 	return e, nil
 }
@@ -230,12 +230,12 @@ func Load(root, name string) (Environment, error) {
 // reguły między nimi: dwa środowiska nie mogą dzielić klastra, kontekstu,
 // kubeconfigu ani portów — inaczej bramka jednego trafiłaby w drugie, a dwa
 // klastry lokalne nie wstałyby obok siebie.
-func All(root string) ([]Environment, error) {
+func All(root string) ([]Definition, error) {
 	names := Names(root)
 	if len(names) == 0 {
 		return nil, fmt.Errorf("brak definicji środowisk w %s", Dir)
 	}
-	var all []Environment
+	var all []Definition
 	for _, name := range names {
 		e, err := Read(root, name)
 		if err != nil {
@@ -270,7 +270,7 @@ func All(root string) ([]Environment, error) {
 	return all, nil
 }
 
-func (e *Environment) applyOverrides(getenv func(string) string) {
+func (e *Definition) applyOverrides(getenv func(string) string) {
 	e.Gateway.ACMEEmail = getenv("DOCFIND_ACME_EMAIL")
 	if !e.Gateway.OverridesFromEnvironment {
 		return
@@ -287,7 +287,7 @@ func (e *Environment) applyOverrides(getenv func(string) string) {
 }
 
 // Validate sprawdza definicję.
-func (e Environment) Validate() error {
+func (e Definition) Validate() error {
 	var problems []string
 	check := func(ok bool, format string, args ...any) {
 		if !ok {
@@ -370,13 +370,13 @@ func (e Environment) Validate() error {
 }
 
 // Allows mówi, czy definicja dopuszcza operację.
-func (e Environment) Allows(op Operation) bool {
+func (e Definition) Allows(op Operation) bool {
 	return slices.Contains(e.Operations.Allowed, op)
 }
 
 // Require odmawia (warunek niespełniony, kod 1) operacji spoza listy
 // dozwolonych — zanim program połączy się z klastrem.
-func (e Environment) Require(op Operation) error {
+func (e Definition) Require(op Operation) error {
 	if e.Allows(op) {
 		return nil
 	}
@@ -384,7 +384,7 @@ func (e Environment) Require(op Operation) error {
 }
 
 // RequireCluster odmawia, gdy środowisko nie ma klastra.
-func (e Environment) RequireCluster() error {
+func (e Definition) RequireCluster() error {
 	if e.Cluster.Provider == ProviderNone {
 		return cli.Unmet("środowisko %s nie ma klastra (cluster.provider=none) — nie ma z czym rozmawiać", e.Name)
 	}
@@ -392,14 +392,14 @@ func (e Environment) RequireCluster() error {
 }
 
 // AllowsSource mówi, czy obraz z danego źródła może trafić na środowisko.
-func (e Environment) AllowsSource(source string) bool {
+func (e Definition) AllowsSource(source string) bool {
 	return slices.Contains(e.Artifact.Sources, source)
 }
 
 // Run zwraca polecenie zadania mise dla tego środowiska — do podpowiedzi
 // w komunikatach. Poza dev z MISE_ENV: samo `./bin/mise run dns-token`
 // trafiłoby w klaster dev, a nie w ten, który o token prosi.
-func (e Environment) Run(task string) string {
+func (e Definition) Run(task string) string {
 	if e.Name == DefaultName {
 		return "./bin/mise run " + task
 	}
@@ -407,13 +407,13 @@ func (e Environment) Run(task string) string {
 }
 
 // KubeconfigPath zwraca bezwzględną ścieżkę kubeconfigu środowiska.
-func (e Environment) KubeconfigPath(root string) string {
+func (e Definition) KubeconfigPath(root string) string {
 	return filepath.Join(root, e.Cluster.Kubeconfig)
 }
 
 // HTTPSRedirectPort — port w przekierowaniu HTTP→HTTPS: na klastrze k3d ten,
 // na którym słucha load balancer na hoście (decyzja 17), poza nim 443.
-func (e Environment) HTTPSRedirectPort() int {
+func (e Definition) HTTPSRedirectPort() int {
 	if e.Cluster.Provider == ProviderK3d {
 		return e.Cluster.Ports.HTTPS
 	}
@@ -423,7 +423,7 @@ func (e Environment) HTTPSRedirectPort() int {
 // AppValues — wartości charta aplikacji wynikające z definicji, jako
 // klucz=wartość dla `helm --set`. Jedno miejsce dla wdrożenia i walidacji
 // chartów: render sprawdzany w CI to render, który trafia na klaster.
-func (e Environment) AppValues() []string {
+func (e Definition) AppValues() []string {
 	return []string{
 		"route.hostname=" + e.Gateway.Hostname,
 		"route.gateway.name=" + e.Gateway.Name,
@@ -434,7 +434,7 @@ func (e Environment) AppValues() []string {
 // PlatformValues — wartości charta platformy wynikające z definicji.
 // acmeEmail podaje wywołujący: na klastrze z DOCFIND_ACME_EMAIL, w walidacji
 // adres przykładowy.
-func (e Environment) PlatformValues(acmeEmail string) []string {
+func (e Definition) PlatformValues(acmeEmail string) []string {
 	values := []string{
 		"gateway.name=" + e.Gateway.Name,
 		"gateway.hostname=" + e.Gateway.Hostname,

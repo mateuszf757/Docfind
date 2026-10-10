@@ -1,4 +1,4 @@
-package env
+package environment
 
 import (
 	"os"
@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 )
 
-const repoRoot = "../../.."
+const repoRoot = "../../../.."
 
 // clearOverrides — zmienne z mise.local.toml autora nadpisałyby wartości
 // w definicjach, które dopuszczają nadpisania (dev).
@@ -21,9 +21,9 @@ func clearOverrides(t *testing.T) {
 	}
 }
 
-func byName(t *testing.T, all []Environment) map[string]Environment {
+func byName(t *testing.T, all []Definition) map[string]Definition {
 	t.Helper()
-	m := map[string]Environment{}
+	m := map[string]Definition{}
 	for _, e := range all {
 		m[e.Name] = e
 	}
@@ -77,7 +77,7 @@ func TestMiseEnvironmentFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	envs := byName(t, all)
-	kubeconfigLine := func(e Environment) string {
+	kubeconfigLine := func(e Definition) string {
 		return `KUBECONFIG = "{{config_root}}/` + e.Cluster.Kubeconfig + `"`
 	}
 	base, err := os.ReadFile(filepath.Join(repoRoot, "mise.toml"))

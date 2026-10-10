@@ -15,7 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 )
 
 func quiet(t *testing.T) {

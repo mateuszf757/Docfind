@@ -1,4 +1,4 @@
-package probeline
+package probe
 
 import (
 	"strings"

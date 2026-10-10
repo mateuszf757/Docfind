@@ -14,12 +14,12 @@ import (
 
 	"github.com/mateuszf757/Docfind/tools/internal/basecheck"
 	"github.com/mateuszf757/Docfind/tools/internal/build"
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
 	"github.com/mateuszf757/Docfind/tools/internal/docker"
 	"github.com/mateuszf757/Docfind/tools/internal/identity"
 	"github.com/mateuszf757/Docfind/tools/internal/imagetest"
-	"github.com/mateuszf757/Docfind/tools/internal/pins"
-	"github.com/mateuszf757/Docfind/tools/internal/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 	"github.com/mateuszf757/Docfind/tools/internal/registry"
 	"github.com/mateuszf757/Docfind/tools/internal/reproducible"
 	"github.com/mateuszf757/Docfind/tools/internal/runtimecheck"
@@ -36,11 +36,11 @@ func service(args []string, usage string) (string, error) {
 	return "api", nil
 }
 
-func dockerClient(env *environment) docker.Client {
+func dockerClient(env *workspace) docker.Client {
 	return docker.Client{Runner: env.runner}
 }
 
-func builder(env *environment) build.Builder {
+func builder(env *workspace) build.Builder {
 	return build.Builder{Repo: repoOf(env), Docker: dockerClient(env)}
 }
 
@@ -57,7 +57,7 @@ func flag(name string) (bool, error) {
 	}
 }
 
-func runBuild(ctx context.Context, env *environment, args []string) error {
+func runBuild(ctx context.Context, env *workspace, args []string) error {
 	svc, err := service(args, "dft build [usługa]")
 	if err != nil {
 		return err
@@ -121,7 +121,7 @@ func runBuild(ctx context.Context, env *environment, args []string) error {
 }
 
 // builtImage zwraca obraz:tag zbudowany z bieżącego drzewa.
-func builtImage(ctx context.Context, env *environment, svc string) (string, error) {
+func builtImage(ctx context.Context, env *workspace, svc string) (string, error) {
 	version, err := repoOf(env).Version(ctx)
 	if err != nil {
 		return "", err
@@ -129,7 +129,7 @@ func builtImage(ctx context.Context, env *environment, svc string) (string, erro
 	return imageName(svc) + ":" + identity.DockerTag(version), nil
 }
 
-func runCheckRuntime(ctx context.Context, env *environment, args []string) (err error) {
+func runCheckRuntime(ctx context.Context, env *workspace, args []string) (err error) {
 	const usage = "dft check runtime [usługa] [--max-image-bytes N]"
 	limits := runtimecheck.DefaultLimits
 	// Próg jako parametr — wariant negatywny „obraz ponad limit" sprawdza się
@@ -170,7 +170,7 @@ func runCheckRuntime(ctx context.Context, env *environment, args []string) (err 
 	return err
 }
 
-func runCheckBase(ctx context.Context, env *environment, args []string) error {
+func runCheckBase(ctx context.Context, env *workspace, args []string) error {
 	svc, err := service(args, "dft check base [usługa]")
 	if err != nil {
 		return err
@@ -214,7 +214,7 @@ func runCheckBase(ctx context.Context, env *environment, args []string) error {
 	return nil
 }
 
-func runTestImage(ctx context.Context, env *environment, args []string) error {
+func runTestImage(ctx context.Context, env *workspace, args []string) error {
 	svc, err := service(args, "dft test-image [usługa]")
 	if err != nil {
 		return err
@@ -229,7 +229,7 @@ func runTestImage(ctx context.Context, env *environment, args []string) error {
 	return imagetest.Run(ctx, dockerClient(env), env.root, svc, epoch, os.Stderr)
 }
 
-func runCheckReproducible(ctx context.Context, env *environment, args []string) (err error) {
+func runCheckReproducible(ctx context.Context, env *workspace, args []string) (err error) {
 	svc, err := service(args, "dft check reproducible [usługa]")
 	if err != nil {
 		return err
@@ -258,14 +258,14 @@ func runCheckReproducible(ctx context.Context, env *environment, args []string) 
 // writeReport zapisuje wynik bramki w JSON do DF_REPORT_DIR albo
 // .cache/reports — dowód zostaje po biegu, a w CI trafia do artefaktów.
 // reportDir — katalog raportów bramek: DF_REPORT_DIR albo .cache/reports.
-func reportDir(env *environment) string {
+func reportDir(env *workspace) string {
 	if dir := os.Getenv("DF_REPORT_DIR"); dir != "" {
 		return dir
 	}
 	return filepath.Join(env.root, ".cache", "reports")
 }
 
-func writeReport(env *environment, name string, v any) error {
+func writeReport(env *workspace, name string, v any) error {
 	dir := reportDir(env)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -285,7 +285,7 @@ func writeReport(env *environment, name string, v any) error {
 // runCheckPublished sprawdza w rejestrze dowolny opublikowany obraz:
 // indeks z atestacją i konfigurację równą podanej — tę samą weryfikację,
 // którą build wykonuje po publikacji.
-func runCheckPublished(ctx context.Context, env *environment, args []string) error {
+func runCheckPublished(ctx context.Context, env *workspace, args []string) error {
 	if err := expectArgs(args, 2, 2, "dft check published <obraz@digest> <digest konfiguracji>"); err != nil {
 		return err
 	}
@@ -302,7 +302,7 @@ func runCheckPublished(ctx context.Context, env *environment, args []string) err
 // z pochodzeniem i SBOM, a do tego atestacja GitHuba (Sigstore) z workflowu
 // ci tego repozytorium. Wydanie (wersja X.Y.Z w etykiecie) musi pochodzić
 // z tagu swojej wersji.
-func runCheckAttestation(ctx context.Context, env *environment, args []string) error {
+func runCheckAttestation(ctx context.Context, env *workspace, args []string) error {
 	if err := expectArgs(args, 1, 1, "dft check attestation <obraz@sha256:…>"); err != nil {
 		return err
 	}
@@ -342,7 +342,7 @@ func runCheckAttestation(ctx context.Context, env *environment, args []string) e
 
 // runCheckClusterNegatives uruchamia warianty negatywne na żywym klastrze
 // środowiska (go test -tags cluster): to, co API server ma odrzucić.
-func runCheckClusterNegatives(ctx context.Context, env *environment, args []string) error {
+func runCheckClusterNegatives(ctx context.Context, env *workspace, args []string) error {
 	if err := expectArgs(args, 0, 0, "dft check cluster-negatives"); err != nil {
 		return err
 	}
@@ -363,7 +363,7 @@ func runCheckClusterNegatives(ctx context.Context, env *environment, args []stri
 // prawdziwym obrazie: testy z tagiem docker (go test -tags docker), które
 // muszą zostać odrzucone. Bez Dockera nie mają czego sprawdzić, więc nie są
 // częścią `dft check go`.
-func runCheckNegatives(ctx context.Context, env *environment, args []string) error {
+func runCheckNegatives(ctx context.Context, env *workspace, args []string) error {
 	svc, err := service(args, "dft check negatives [usługa]")
 	if err != nil {
 		return err

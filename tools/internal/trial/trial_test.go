@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mateuszf757/Docfind/tools/internal/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 )
 
 func runsJSON(runs ...string) string {

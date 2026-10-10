@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/docker"
-	"github.com/mateuszf757/Docfind/tools/internal/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 )
 
 func dockerChecker(t *testing.T, name string) *Checker {

@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mateuszf757/Docfind/tools/internal/manifest"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/manifest"
 )
 
 // Options — reguły zależne od źródła manifestów.

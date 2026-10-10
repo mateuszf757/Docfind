@@ -16,16 +16,16 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 
 	"github.com/mateuszf757/Docfind/tools/internal/attest"
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
-	"github.com/mateuszf757/Docfind/tools/internal/env"
-	"github.com/mateuszf757/Docfind/tools/internal/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 	"github.com/mateuszf757/Docfind/tools/internal/registry"
 )
 
 const repoRoot = "../../.."
 
 func TestK3dConfig(t *testing.T) {
-	e := env.Environment{Cluster: env.Cluster{Name: "docfind-ci", Ports: env.Ports{API: 6551, HTTP: 8081, HTTPS: 8444}}}
+	e := environment.Definition{Cluster: environment.Cluster{Name: "docfind-ci", Ports: environment.Ports{API: 6551, HTTP: 8081, HTTPS: 8444}}}
 	raw, err := K3dConfig(filepath.Join(repoRoot, "deploy", "k3d", "cluster.yaml"), e)
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func TestK3dConfigRejectsWildcard(t *testing.T) {
 		if err := os.WriteFile(path, []byte(bad), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := K3dConfig(path, env.Environment{Cluster: env.Cluster{Name: "x", Ports: env.Ports{API: 6550, HTTP: 8080, HTTPS: 8443}}})
+		_, err := K3dConfig(path, environment.Definition{Cluster: environment.Cluster{Name: "x", Ports: environment.Ports{API: 6550, HTTP: 8080, HTTPS: 8443}}})
 		if cli.ExitCode(err) != cli.ExitUnmet {
 			t.Errorf("%s: przyjęte (%v)", mutation.to, err)
 		}
@@ -70,12 +70,12 @@ func TestK3dConfigRejectsWildcard(t *testing.T) {
 
 const apiImage = "ghcr.io/mateuszf757/docfind-api"
 
-func definition(t *testing.T, name string) env.Environment {
+func definition(t *testing.T, name string) environment.Definition {
 	t.Helper()
 	for _, key := range []string{"DOCFIND_HOSTNAME", "DOCFIND_TLS_ISSUER", "DOCFIND_ACME_EMAIL", "DOCFIND_ACME_ZONE"} {
 		t.Setenv(key, "")
 	}
-	e, err := env.Load(repoRoot, name)
+	e, err := environment.Load(repoRoot, name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestArchiveImage(t *testing.T) {
 	img := labelled(t, map[string]string{registry.VersionLabel: "0.0.0-dev.1+abc1234", registry.RevisionLabel: commit})
 	path, config := saved(t, img)
 
-	got, err := d.archiveImage(Artifact{Source: env.SourceArchive, Archive: path, ConfigDigest: config}, t.TempDir())
+	got, err := d.archiveImage(Artifact{Source: environment.SourceArchive, Archive: path, ConfigDigest: config}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,14 +138,14 @@ func TestArchiveImage(t *testing.T) {
 	}
 
 	t.Run("inna konfiguracja niż sprawdzona w zadaniu build", func(t *testing.T) {
-		_, err := d.archiveImage(Artifact{Source: env.SourceArchive, Archive: path, ConfigDigest: "sha256:" + strings.Repeat("0", 64)}, t.TempDir())
+		_, err := d.archiveImage(Artifact{Source: environment.SourceArchive, Archive: path, ConfigDigest: "sha256:" + strings.Repeat("0", 64)}, t.TempDir())
 		if cli.ExitCode(err) != cli.ExitUnmet || !strings.Contains(err.Error(), "zadanie build sprawdziło") {
 			t.Errorf("podmienione archiwum przyjęte: %v", err)
 		}
 	})
 	t.Run("obraz bez etykiet", func(t *testing.T) {
 		path, config := saved(t, labelled(t, nil))
-		_, err := d.archiveImage(Artifact{Source: env.SourceArchive, Archive: path, ConfigDigest: config}, t.TempDir())
+		_, err := d.archiveImage(Artifact{Source: environment.SourceArchive, Archive: path, ConfigDigest: config}, t.TempDir())
 		if cli.ExitCode(err) != cli.ExitUnmet {
 			t.Errorf("obraz bez wersji przyjęty: %v", err)
 		}
@@ -225,10 +225,10 @@ func TestUpRefusesBeforeTouchingAnything(t *testing.T) {
 		art       Artifact
 		want      string
 	}{
-		{"build z drzewa na ci", "ci", Artifact{Source: env.SourceLocal}, "nie przyjmuje obrazu ze źródła local"},
-		{"archiwum na staging", "staging", Artifact{Source: env.SourceArchive, Archive: "x.tar", ConfigDigest: "sha256:x"}, "nie przyjmuje obrazu ze źródła archive"},
-		{"Let's Encrypt bez adresu ACME", "staging", Artifact{Source: env.SourceRegistry, Ref: apiImage + "@sha256:" + strings.Repeat("d", 64)}, "DOCFIND_ACME_EMAIL"},
-		{"produkcja bez klastra", "prod", Artifact{Source: env.SourceRegistry}, "tylko klastry k3d"},
+		{"build z drzewa na ci", "ci", Artifact{Source: environment.SourceLocal}, "nie przyjmuje obrazu ze źródła local"},
+		{"archiwum na staging", "staging", Artifact{Source: environment.SourceArchive, Archive: "x.tar", ConfigDigest: "sha256:x"}, "nie przyjmuje obrazu ze źródła archive"},
+		{"Let's Encrypt bez adresu ACME", "staging", Artifact{Source: environment.SourceRegistry, Ref: apiImage + "@sha256:" + strings.Repeat("d", 64)}, "DOCFIND_ACME_EMAIL"},
+		{"produkcja bez klastra", "prod", Artifact{Source: environment.SourceRegistry}, "tylko klastry k3d"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -280,7 +280,7 @@ func TestVerifyRegistry(t *testing.T) {
 		t.Errorf("wydanie: %+v, tag źródła %q", got, sourceRef)
 	}
 	ci := Deployer{Env: definition(t, "ci"), Image: apiImage, Inspect: inspect, Attest: attestFn}
-	ci.Env.Artifact.Sources = []string{env.SourceArchive}
+	ci.Env.Artifact.Sources = []string{environment.SourceArchive}
 	if _, err := ci.VerifyRegistry(context.Background(), apiImage+"@"+digest); cli.ExitCode(err) != cli.ExitUnmet {
 		t.Errorf("środowisko bez rejestru: %v", err)
 	}

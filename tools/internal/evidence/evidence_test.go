@@ -11,8 +11,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 	"github.com/mateuszf757/Docfind/tools/internal/kube"
-	"github.com/mateuszf757/Docfind/tools/internal/proc"
 )
 
 // TestCollect: poprzedni log tylko z kontenera po restarcie, brak jednego

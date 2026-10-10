@@ -14,8 +14,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/docker"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 )
 
 // Facts — wersje odczytane z obrazu.

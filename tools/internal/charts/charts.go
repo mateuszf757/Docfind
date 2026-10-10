@@ -14,14 +14,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
-	"github.com/mateuszf757/Docfind/tools/internal/crdschema"
-	"github.com/mateuszf757/Docfind/tools/internal/env"
-	"github.com/mateuszf757/Docfind/tools/internal/fetch"
-	"github.com/mateuszf757/Docfind/tools/internal/manifest"
-	"github.com/mateuszf757/Docfind/tools/internal/pins"
-	"github.com/mateuszf757/Docfind/tools/internal/policy"
-	"github.com/mateuszf757/Docfind/tools/internal/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/core/crdschema"
+	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
+	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
+	"github.com/mateuszf757/Docfind/tools/internal/core/policy"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/fetch"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/manifest"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 )
 
 // Checker — sprawdzenia chartów w repozytorium o korzeniu Root.
@@ -88,7 +88,7 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 	// z wartościami z definicji (deploy/environments) — tą samą funkcją,
 	// którą wdrożenie przekazuje Helmowi. Definicje z gita, bez nadpisań
 	// z mise.local.toml: lokalnie sprawdzane jest to samo co w CI.
-	envs, err := env.All(c.Root)
+	envs, err := environment.All(c.Root)
 	if err != nil {
 		return err
 	}

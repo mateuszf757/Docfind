@@ -21,7 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mateuszf757/Docfind/tools/internal/manifest"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/manifest"
 )
 
 // Strict zwraca kopię schematu OpenAPI v3 w postaci, którą rozumie walidator

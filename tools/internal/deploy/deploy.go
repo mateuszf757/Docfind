@@ -32,21 +32,21 @@ import (
 
 	"github.com/mateuszf757/Docfind/tools/internal/attest"
 	"github.com/mateuszf757/Docfind/tools/internal/build"
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
+	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
 	"github.com/mateuszf757/Docfind/tools/internal/docker"
-	"github.com/mateuszf757/Docfind/tools/internal/env"
-	"github.com/mateuszf757/Docfind/tools/internal/fetch"
 	"github.com/mateuszf757/Docfind/tools/internal/identity"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/fetch"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 	"github.com/mateuszf757/Docfind/tools/internal/kube"
-	"github.com/mateuszf757/Docfind/tools/internal/pins"
-	"github.com/mateuszf757/Docfind/tools/internal/proc"
 	"github.com/mateuszf757/Docfind/tools/internal/registry"
 )
 
 // Deployer — wdrożenie jednego środowiska.
 type Deployer struct {
 	Root    string
-	Env     env.Environment
+	Env     environment.Definition
 	Runner  proc.Runner
 	Pins    pins.Pins
 	Builder build.Builder
@@ -80,10 +80,10 @@ func (d Deployer) run(ctx context.Context, name string, args ...string) error {
 // Down usuwa klaster środowiska — tylko k3d, tylko ten z definicji i tylko
 // tam, gdzie definicja na to pozwala.
 func (d Deployer) Down(ctx context.Context) error {
-	if d.Env.Cluster.Provider != env.ProviderK3d {
+	if d.Env.Cluster.Provider != environment.ProviderK3d {
 		return cli.Unmet("środowisko %s nie jest klastrem k3d — dft go nie usuwa", d.Env.Name)
 	}
-	if err := d.Env.Require(env.OpClusterDelete); err != nil {
+	if err := d.Env.Require(environment.OpClusterDelete); err != nil {
 		return err
 	}
 	if err := d.run(ctx, "k3d", "cluster", "delete", d.Env.Cluster.Name); err != nil {
@@ -97,7 +97,7 @@ func (d Deployer) Down(ctx context.Context) error {
 
 // Artifact — obraz, który ma trafić na klaster.
 type Artifact struct {
-	// Source — env.SourceLocal, env.SourceArchive albo env.SourceRegistry.
+	// Source — environment.SourceLocal, environment.SourceArchive albo environment.SourceRegistry.
 	Source string
 	// Archive — archiwum `docker save` z zadania build; ConfigDigest — digest
 	// konfiguracji obrazu, który to zadanie sprawdziło.
@@ -123,10 +123,10 @@ type image struct {
 // publikacji w rejestrze — a klaster zmieniany dopiero potem: zły artefakt
 // nie zostawia klastra z nową platformą i starą aplikacją.
 func (d Deployer) Up(ctx context.Context, art Artifact) error {
-	if d.Env.Cluster.Provider != env.ProviderK3d {
+	if d.Env.Cluster.Provider != environment.ProviderK3d {
 		return cli.Unmet("środowisko %s (cluster.provider=%s): wdrożenie przez dft obsługuje tylko klastry k3d", d.Env.Name, d.Env.Cluster.Provider)
 	}
-	if err := d.Env.Require(env.OpDeploy); err != nil {
+	if err := d.Env.Require(environment.OpDeploy); err != nil {
 		return err
 	}
 	if !d.Env.AllowsSource(art.Source) {
@@ -156,7 +156,7 @@ func (d Deployer) Up(ctx context.Context, art Artifact) error {
 	case err == nil:
 		cli.Step("klaster %s istnieje", d.Env.Cluster.Name)
 	case proc.ExitCode(err) > 0:
-		if err := d.Env.Require(env.OpClusterCreate); err != nil {
+		if err := d.Env.Require(environment.OpClusterCreate); err != nil {
 			return err
 		}
 		if err := d.createCluster(ctx); err != nil {
@@ -206,11 +206,11 @@ func (d Deployer) requireACMEEmail() error {
 
 func (d Deployer) resolve(ctx context.Context, art Artifact, tmp string) (image, error) {
 	switch art.Source {
-	case env.SourceLocal:
+	case environment.SourceLocal:
 		return d.localImage(ctx)
-	case env.SourceArchive:
+	case environment.SourceArchive:
 		return d.archiveImage(art, tmp)
-	case env.SourceRegistry:
+	case environment.SourceRegistry:
 		return d.registryImage(ctx, art.Ref)
 	default:
 		return image{}, fmt.Errorf("nieznane źródło obrazu %q", art.Source)
@@ -349,7 +349,7 @@ var hostPort = regexp.MustCompile(`^127\.0\.0\.1:([0-9]+):([0-9]+)$`)
 // z nazwą i portami z definicji środowiska. Wszystko, co klaster wystawia,
 // musi słuchać na 127.0.0.1 (decyzja 17) — konfiguracja z innym adresem
 // jest odrzucana, zamiast przepisana po cichu.
-func K3dConfig(path string, e env.Environment) ([]byte, error) {
+func K3dConfig(path string, e environment.Definition) ([]byte, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -647,7 +647,7 @@ type Verified struct {
 // zmiany czegokolwiek na klastrze — dla promocji na środowisko bez klastra
 // i dla sprawdzenia przed wdrożeniem.
 func (d Deployer) VerifyRegistry(ctx context.Context, ref string) (Verified, error) {
-	if !d.Env.AllowsSource(env.SourceRegistry) {
+	if !d.Env.AllowsSource(environment.SourceRegistry) {
 		return Verified{}, cli.Unmet("środowisko %s nie przyjmuje obrazów z rejestru (artifact.sources: %v)", d.Env.Name, d.Env.Artifact.Sources)
 	}
 	img, err := d.registryImage(ctx, ref)

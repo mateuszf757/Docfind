@@ -16,7 +16,7 @@ import (
 	restclient "k8s.io/client-go/rest"
 	k8stesting "k8s.io/client-go/testing"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 )
 
 const kubeconfig = `apiVersion: v1

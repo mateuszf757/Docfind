@@ -14,7 +14,7 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/mateuszf757/Docfind/tools/internal/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 )
 
 // Run — bieg workflowu z API GitHuba.

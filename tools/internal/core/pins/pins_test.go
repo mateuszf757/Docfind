@@ -8,7 +8,7 @@ import (
 )
 
 // repoRoot — testy biegną w katalogu pakietu, trzy poziomy pod korzeniem.
-const repoRoot = "../../.."
+const repoRoot = "../../../.."
 
 // TestRepositoryPins: prawdziwy ci/pins.env przechodzi walidację. Literówka
 // w kluczu albo digest bez sha256 wychodzi w zadaniu test, a nie w połowie

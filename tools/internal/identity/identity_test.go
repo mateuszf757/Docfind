@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
-	"github.com/mateuszf757/Docfind/tools/internal/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 )
 
 // testRepo to prawdziwe repozytorium gita w katalogu tymczasowym. Wersja

@@ -6,17 +6,17 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/identity"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 )
 
 const identityUsage = "dft identity <version|docker-tag [wersja]|commit|source-date-epoch|source-date [epoch]|image <usługa>|require-clean>"
 
-func repoOf(env *environment) identity.Repo {
+func repoOf(env *workspace) identity.Repo {
 	return identity.Repo{Dir: env.root, Runner: env.runner}
 }
 
-func runVersion(ctx context.Context, env *environment, args []string) error {
+func runVersion(ctx context.Context, env *workspace, args []string) error {
 	if err := expectArgs(args, 0, 0, "dft version"); err != nil {
 		return err
 	}
@@ -26,14 +26,14 @@ func runVersion(ctx context.Context, env *environment, args []string) error {
 // runIdentity wypisuje jedno pole tożsamości. Jedno pole na wywołanie,
 // bez JSON-a: skrypt bashowy bierze wynik w całości do zmiennej i nie musi
 // niczego parsować.
-func runIdentity(ctx context.Context, env *environment, args []string) error {
+func runIdentity(ctx context.Context, env *workspace, args []string) error {
 	if len(args) == 0 {
 		return cli.Usage("użycie: %s", identityUsage)
 	}
 	return printIdentity(ctx, env, args)
 }
 
-func printIdentity(ctx context.Context, env *environment, args []string) error {
+func printIdentity(ctx context.Context, env *workspace, args []string) error {
 	repo := repoOf(env)
 	field, rest := args[0], args[1:]
 	var value string

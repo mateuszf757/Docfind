@@ -14,10 +14,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/docker"
 	"github.com/mateuszf757/Docfind/tools/internal/identity"
-	"github.com/mateuszf757/Docfind/tools/internal/oci"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/ociarchive"
 	"github.com/mateuszf757/Docfind/tools/internal/registry"
 )
 
@@ -160,7 +160,7 @@ func (b Builder) Build(ctx context.Context, opts Options) (Result, error) {
 		if err := b.Docker.Save(ctx, res.Ref(), opts.Archive); err != nil {
 			return res, err
 		}
-		if res.Config, err = oci.ConfigDigestFromSave(opts.Archive); err != nil {
+		if res.Config, err = ociarchive.ConfigDigestFromSave(opts.Archive); err != nil {
 			return res, err
 		}
 		cli.Step("archiwum %s, konfiguracja %s", opts.Archive, res.Config)
@@ -213,7 +213,7 @@ func (b Builder) publish(ctx context.Context, opts Options, res Result, buildArg
 	if err := b.Docker.Save(ctx, res.Ref(), archive); err != nil {
 		return res, err
 	}
-	config, err := oci.ConfigDigestFromSave(archive)
+	config, err := ociarchive.ConfigDigestFromSave(archive)
 	if err != nil {
 		return res, err
 	}

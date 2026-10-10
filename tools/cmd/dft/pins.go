@@ -8,15 +8,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
-	"github.com/mateuszf757/Docfind/tools/internal/pins"
+	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 )
 
 // runPins podaje workflowom przypięcia, których potrzebują, zanim cokolwiek
 // zbudują: wersję uv dla setup-uv i obraz BuildKitu dla setup-buildx-action.
 // Wcześniej krok workflowu źródłował ci/lib.sh w `bash -c` — kod Basha
 // wykonywany po to, żeby przeczytać daną.
-func runPins(_ context.Context, env *environment, args []string) error {
+func runPins(_ context.Context, env *workspace, args []string) error {
 	const usage = "dft pins github-output"
 	if err := expectArgs(args, 1, 1, usage); err != nil {
 		return err

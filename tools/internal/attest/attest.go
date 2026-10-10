@@ -19,8 +19,8 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/name"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
-	"github.com/mateuszf757/Docfind/tools/internal/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 )
 
 // ProvenanceV1 — predykat, który wystawia actions/attest-build-provenance.

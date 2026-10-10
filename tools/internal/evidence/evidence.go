@@ -20,8 +20,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 	"github.com/mateuszf757/Docfind/tools/internal/kube"
-	"github.com/mateuszf757/Docfind/tools/internal/proc"
 )
 
 // Collector — zbieranie dowodów z jednego klastra.

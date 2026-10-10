@@ -13,21 +13,21 @@ import (
 	"os"
 	"slices"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/identity"
-	"github.com/mateuszf757/Docfind/tools/internal/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 )
 
 // command to jedno polecenie dft.
 type command struct {
 	usage string
 	help  string
-	run   func(ctx context.Context, env *environment, args []string) error
+	run   func(ctx context.Context, env *workspace, args []string) error
 }
 
 // environment — to, czego potrzebuje każde polecenie: korzeń repozytorium
 // i sposób uruchamiania programów.
-type environment struct {
+type workspace struct {
 	root   string
 	runner proc.Runner
 }
@@ -130,7 +130,7 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	return cmd.run(ctx, &environment{root: root, runner: runner}, args[1:])
+	return cmd.run(ctx, &workspace{root: root, runner: runner}, args[1:])
 }
 
 func printUsage() {

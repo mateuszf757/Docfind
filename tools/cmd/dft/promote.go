@@ -6,10 +6,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
 	"github.com/mateuszf757/Docfind/tools/internal/deploy"
-	"github.com/mateuszf757/Docfind/tools/internal/env"
 	"github.com/mateuszf757/Docfind/tools/internal/github"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 )
 
 // promotion — raport promocji w JSON.
@@ -29,14 +29,14 @@ type promotion struct {
 // Do Etapu 10 prod nie ma klastra: promocja kończy się zapisem (GitHub
 // Deployment zadania z linkiem do atestacji digestu, raport) i instalacją,
 // jaką wykonałby klient.
-func runPromote(ctx context.Context, e *environment, args []string) error {
+func runPromote(ctx context.Context, e *workspace, args []string) error {
 	if err := expectArgs(args, 1, 1, "dft promote <obraz@sha256:…>"); err != nil {
 		return err
 	}
 	if err := requireTools("gh"); err != nil {
 		return err
 	}
-	def, err := env.Load(e.root, "prod")
+	def, err := environment.Load(e.root, "prod")
 	if err != nil {
 		return err
 	}
@@ -67,7 +67,7 @@ func runPromote(ctx context.Context, e *environment, args []string) error {
 	if server, repo, run := os.Getenv("GITHUB_SERVER_URL"), os.Getenv("GITHUB_REPOSITORY"), os.Getenv("GITHUB_RUN_ID"); run != "" {
 		rep.Run = server + "/" + repo + "/actions/runs/" + run
 	}
-	if def.Cluster.Provider == env.ProviderNone {
+	if def.Cluster.Provider == environment.ProviderNone {
 		cli.Step("środowisko %s nie ma jeszcze klastra (Etap 10): zapis promocji i instalacja dla klienta", def.Name)
 	}
 	cli.Step("promowany %s (wersja %s, commit %.12s)", verified.Image, verified.Version, verified.Commit)

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mateuszf757/Docfind/tools/internal/manifest"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/manifest"
 )
 
 const crd = `

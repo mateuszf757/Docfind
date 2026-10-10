@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mateuszf757/Docfind/tools/internal/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 )
 
 const listCmd = "gh issue list --state open --search " + IssueTitle + " in:title --json number,title"

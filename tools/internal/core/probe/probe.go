@@ -1,7 +1,7 @@
-// Package probeline to format wyników sondy drainu: jedna linia JSON na
+// Package probe to format wyników sondy drainu: jedna linia JSON na
 // żądanie. Wspólny dla sondy (pisze) i bramki (czyta), tylko biblioteka
 // standardowa — sonda jedzie do obrazu bez systemu bazowego.
-package probeline
+package probe
 
 import (
 	"bufio"

@@ -27,10 +27,10 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/core/probe"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 	"github.com/mateuszf757/Docfind/tools/internal/kube"
-	"github.com/mateuszf757/Docfind/tools/internal/probeline"
-	"github.com/mateuszf757/Docfind/tools/internal/proc"
 )
 
 // Adnotacje na węźle, który bramka odcięła (cordon). Bez nich kolejny bieg
@@ -114,12 +114,12 @@ type Report struct {
 
 // DrainResult — jeden drain.
 type DrainResult struct {
-	Node         string            `json:"node"`
-	ProbeNode    string            `json:"probe_node"`
-	ReplicasOn   []string          `json:"replicas_before"`
-	ReplicasMove []string          `json:"replicas_after"`
-	DrainSeconds float64           `json:"drain_seconds"`
-	Summary      probeline.Summary `json:"requests"`
+	Node         string        `json:"node"`
+	ProbeNode    string        `json:"probe_node"`
+	ReplicasOn   []string      `json:"replicas_before"`
+	ReplicasMove []string      `json:"replicas_after"`
+	DrainSeconds float64       `json:"drain_seconds"`
+	Summary      probe.Summary `json:"requests"`
 }
 
 // Run przeprowadza bramkę i zwraca raport. Stan zewnętrzny — cordon,
@@ -236,7 +236,7 @@ func (g *Gate) drainOne(ctx context.Context, target string, replicaNodes []strin
 		}
 	}
 
-	probe, err := g.startProbe(ctx, probeNode)
+	probePod, err := g.startProbe(ctx, probeNode)
 	if err != nil {
 		return result, err
 	}
@@ -261,7 +261,7 @@ func (g *Gate) drainOne(ctx context.Context, target string, replicaNodes []strin
 	if err := sleep(ctx, g.Cfg.SettleAfter); err != nil {
 		return result, err
 	}
-	raw, err := g.probeLog(ctx, probe)
+	raw, err := g.probeLog(ctx, probePod)
 	if err != nil {
 		return result, err
 	}
@@ -273,12 +273,12 @@ func (g *Gate) drainOne(ctx context.Context, target string, replicaNodes []strin
 			return result, err
 		}
 	}
-	results, err := probeline.Parse(raw)
+	results, err := probe.Parse(raw)
 	if err != nil {
 		return result, err
 	}
-	result.Summary = probeline.Summarize(results)
-	if err := g.deleteProbe(ctx, probe); err != nil {
+	result.Summary = probe.Summarize(results)
+	if err := g.deleteProbe(ctx, probePod); err != nil {
 		return result, err
 	}
 	if err := g.uncordon(ctx, target); err != nil {
@@ -420,12 +420,12 @@ func (g *Gate) probeLog(ctx context.Context, pod string) ([]byte, error) {
 	return raw, nil
 }
 
-func (g *Gate) probeResults(ctx context.Context, pod string) ([]probeline.Result, error) {
+func (g *Gate) probeResults(ctx context.Context, pod string) ([]probe.Result, error) {
 	raw, err := g.probeLog(ctx, pod)
 	if err != nil {
 		return nil, err
 	}
-	return probeline.Parse(raw)
+	return probe.Parse(raw)
 }
 
 func (g *Gate) deleteProbe(ctx context.Context, pod string) error {

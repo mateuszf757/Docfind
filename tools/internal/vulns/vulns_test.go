@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
-	"github.com/mateuszf757/Docfind/tools/internal/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 )
 
 // osvJSON — wynik OSV-Scannera 2.6.0 w postaci z prawdziwego skanu obrazu

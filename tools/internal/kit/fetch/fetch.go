@@ -20,8 +20,8 @@ import (
 	"path"
 	"path/filepath"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
-	"github.com/mateuszf757/Docfind/tools/internal/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 )
 
 // Dir — pamięć podręczna względem korzenia repozytorium (poza gitem).

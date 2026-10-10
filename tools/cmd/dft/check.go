@@ -12,15 +12,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/gocheck"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/versions"
 	"github.com/mateuszf757/Docfind/tools/internal/vulns"
 )
 
 const checkUsage = "dft check <versions|go|reproducible-tools|workflows|python|charts> | <runtime|base|reproducible|negatives> [usługa] | <drain|tls|identity> | published <obraz@digest> <digest konfiguracji> | attestation <obraz@digest> | vulns [źródło obrazu]"
 
-func runCheck(ctx context.Context, env *environment, args []string) error {
+func runCheck(ctx context.Context, env *workspace, args []string) error {
 	if len(args) == 0 {
 		return cli.Usage("użycie: %s", checkUsage)
 	}
@@ -82,7 +82,7 @@ func runCheck(ctx context.Context, env *environment, args []string) error {
 	}
 }
 
-func goChecker(env *environment) (gocheck.Checker, error) {
+func goChecker(env *workspace) (gocheck.Checker, error) {
 	today := time.Now().UTC()
 	exceptions, err := vulns.LoadExceptions(filepath.Join(env.root, vulns.ExceptionsFile), today)
 	if err != nil {
@@ -101,7 +101,7 @@ func goChecker(env *environment) (gocheck.Checker, error) {
 	}, nil
 }
 
-func checkReproducibleTools(ctx context.Context, env *environment) (err error) {
+func checkReproducibleTools(ctx context.Context, env *workspace) (err error) {
 	tmp, err := os.MkdirTemp("", "dft-reproducible-")
 	if err != nil {
 		return err

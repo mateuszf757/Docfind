@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mateuszf757/Docfind/tools/internal/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 )
 
 // Client to Docker CLI uruchamiany przez Runner.

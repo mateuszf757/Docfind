@@ -14,8 +14,8 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/v1/tarball"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/docker"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/registry"
 	"github.com/mateuszf757/Docfind/tools/internal/vulns"
 )
@@ -28,7 +28,7 @@ import (
 //	--baseline-commit SHA     obraz z main dla tego commita jako punkt
 //	                          odniesienia: blokuje tylko to, czego tam nie ma
 //	--report-only             raport bez blokowania (main, nocą)
-func runCheckVulns(ctx context.Context, e *environment, args []string) (err error) {
+func runCheckVulns(ctx context.Context, e *workspace, args []string) (err error) {
 	const usage = "dft check vulns [--image-archive <plik> [--config-digest sha256:…] | --image <obraz>] [--baseline-commit <sha>] [--report-only]"
 	fs := stdflag.NewFlagSet("check vulns", stdflag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -158,7 +158,7 @@ func runCheckVulns(ctx context.Context, e *environment, args []string) (err erro
 }
 
 // runVulnsIssue — wynik nocnego skanu do issue (vulns.SyncIssue).
-func runVulnsIssue(ctx context.Context, e *environment, args []string) error {
+func runVulnsIssue(ctx context.Context, e *workspace, args []string) error {
 	if err := expectArgs(args, 1, 1, "dft vulns-issue <raport vulns-api.json>"); err != nil {
 		return err
 	}

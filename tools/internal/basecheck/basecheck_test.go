@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 )
 
 func TestParseAPKInstalled(t *testing.T) {

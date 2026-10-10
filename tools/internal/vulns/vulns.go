@@ -33,8 +33,8 @@ import (
 
 	"sigs.k8s.io/yaml"
 
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
-	"github.com/mateuszf757/Docfind/tools/internal/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 )
 
 // ExceptionsFile — wyjątki względem korzenia repozytorium.

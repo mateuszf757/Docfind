@@ -18,28 +18,28 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/mateuszf757/Docfind/tools/internal/attest"
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
+	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
 	"github.com/mateuszf757/Docfind/tools/internal/deploy"
 	"github.com/mateuszf757/Docfind/tools/internal/dnstoken"
 	"github.com/mateuszf757/Docfind/tools/internal/drain"
-	"github.com/mateuszf757/Docfind/tools/internal/env"
 	"github.com/mateuszf757/Docfind/tools/internal/evidence"
 	"github.com/mateuszf757/Docfind/tools/internal/github"
 	"github.com/mateuszf757/Docfind/tools/internal/identity"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/kube"
-	"github.com/mateuszf757/Docfind/tools/internal/pins"
 	"github.com/mateuszf757/Docfind/tools/internal/registry"
 	"github.com/mateuszf757/Docfind/tools/internal/tlscheck"
 	"github.com/mateuszf757/Docfind/tools/internal/trial"
 )
 
 // environmentOf wczytuje definicję wybranego środowiska (DOCFIND_ENV, domyślnie dev).
-func environmentOf(e *environment) (env.Environment, error) {
-	def, err := env.Load(e.root, env.Selected())
+func environmentOf(e *workspace) (environment.Definition, error) {
+	def, err := environment.Load(e.root, environment.Selected())
 	if err != nil {
-		return env.Environment{}, err
+		return environment.Definition{}, err
 	}
-	if def.Cluster.Provider == env.ProviderNone {
+	if def.Cluster.Provider == environment.ProviderNone {
 		cli.Step("środowisko %s (%s), bez klastra", def.Name, def.Stage)
 	} else {
 		cli.Step("środowisko %s (%s), kontekst %s", def.Name, def.Stage, def.Cluster.Context)
@@ -47,13 +47,13 @@ func environmentOf(e *environment) (env.Environment, error) {
 	return def, nil
 }
 
-func targetOf(e *environment, def env.Environment) kube.Target {
+func targetOf(e *workspace, def environment.Definition) kube.Target {
 	return kube.Target{Kubeconfig: def.KubeconfigPath(e.root), Context: def.Cluster.Context, APIServer: def.Cluster.APIServer}
 }
 
 // connect łączy się z klastrem środowiska przez strażnika: klaster musi być
 // w definicji, a kubeconfig wskazywać jego kontekst i serwer.
-func connect(e *environment, def env.Environment) (*kube.Clients, error) {
+func connect(e *workspace, def environment.Definition) (*kube.Clients, error) {
 	if err := def.RequireCluster(); err != nil {
 		return nil, err
 	}
@@ -76,18 +76,18 @@ func artifactArgs(args []string) (deploy.Artifact, error) {
 	}
 	switch {
 	case art.Ref != "" && art.Archive == "" && art.ConfigDigest == "":
-		art.Source = env.SourceRegistry
+		art.Source = environment.SourceRegistry
 	case art.Ref == "" && art.Archive != "" && art.ConfigDigest != "":
-		art.Source = env.SourceArchive
+		art.Source = environment.SourceArchive
 	case art.Ref == "" && art.Archive == "" && art.ConfigDigest == "":
-		art.Source = env.SourceLocal
+		art.Source = environment.SourceLocal
 	default:
 		return art, cli.Usage("użycie: %s", usage)
 	}
 	return art, nil
 }
 
-func runCluster(ctx context.Context, e *environment, args []string) error {
+func runCluster(ctx context.Context, e *workspace, args []string) error {
 	const usage = "dft cluster <up [źródło obrazu]|down|evidence>"
 	if len(args) == 0 || (args[0] != "up" && len(args) > 1) {
 		return cli.Usage("użycie: %s", usage)
@@ -127,7 +127,7 @@ func runCluster(ctx context.Context, e *environment, args []string) error {
 // runEvidence zbiera dowody z klastra środowiska do katalogu raportów —
 // po biegu bramek, także po porażce. Braki ostrzegają, nie zmieniają kodu
 // wyjścia: krok dowodów nie może przykryć wyniku bramki.
-func runEvidence(ctx context.Context, e *environment, def env.Environment) error {
+func runEvidence(ctx context.Context, e *workspace, def environment.Definition) error {
 	if err := def.RequireCluster(); err != nil {
 		return err
 	}
@@ -157,7 +157,7 @@ func runEvidence(ctx context.Context, e *environment, def env.Environment) error
 	return nil
 }
 
-func runCheckDrain(ctx context.Context, e *environment, args []string) (err error) {
+func runCheckDrain(ctx context.Context, e *workspace, args []string) (err error) {
 	if err := expectArgs(args, 0, 0, "dft check drain   (DRAIN_NODE=<węzeł> — tylko ten węzeł)"); err != nil {
 		return err
 	}
@@ -165,7 +165,7 @@ func runCheckDrain(ctx context.Context, e *environment, args []string) (err erro
 	if err != nil {
 		return err
 	}
-	if err := def.Require(env.OpDrain); err != nil {
+	if err := def.Require(environment.OpDrain); err != nil {
 		return err
 	}
 	if err := requireTools("kubectl", "go", "k3d"); err != nil {
@@ -230,7 +230,7 @@ func runCheckDrain(ctx context.Context, e *environment, args []string) (err erro
 	return err
 }
 
-func runCheckTLS(ctx context.Context, e *environment, args []string) error {
+func runCheckTLS(ctx context.Context, e *workspace, args []string) error {
 	if err := expectArgs(args, 0, 0, "dft check tls   (DOCFIND_TLS_RENEW_PRODUCTION=1 — także produkcyjny Let's Encrypt)"); err != nil {
 		return err
 	}
@@ -260,7 +260,7 @@ func runCheckTLS(ctx context.Context, e *environment, args []string) error {
 			HTTPPort:         def.Cluster.Ports.HTTP,
 			HTTPSPort:        def.Cluster.Ports.HTTPS,
 			RenewProduction:  renewProduction,
-			AllowRenewal:     def.Allows(env.OpTLSRenew),
+			AllowRenewal:     def.Allows(environment.OpTLSRenew),
 			MinRequests:      50,
 			KubectlArgs:      target.KubectlArgs(),
 		},
@@ -274,7 +274,7 @@ func runCheckTLS(ctx context.Context, e *environment, args []string) error {
 
 // runCheckIdentity sprawdza, że na klastrze działa obraz zbudowany z tego
 // drzewa — ten sam test, którym kończy się `dft cluster up`, osobno.
-func runCheckIdentity(ctx context.Context, e *environment, args []string) error {
+func runCheckIdentity(ctx context.Context, e *workspace, args []string) error {
 	if err := expectArgs(args, 0, 1, "dft check identity [obraz:tag]"); err != nil {
 		return err
 	}
@@ -316,7 +316,7 @@ func runCheckIdentity(ctx context.Context, e *environment, args []string) error 
 // digeście pochodzi z rejestru i niesie wersję i commit w etykietach; to,
 // co tam leży, jest punktem odniesienia. Obraz z tagiem lokalnym zbudowano
 // z drzewa roboczego — punktem odniesienia jest git.
-func expectedIdentity(ctx context.Context, e *environment, image string) (kube.Expected, error) {
+func expectedIdentity(ctx context.Context, e *workspace, image string) (kube.Expected, error) {
 	if strings.Contains(image, "@") {
 		// repozytorium:tag@digest — tag jest tylko etykietą, pobiera się digest.
 		ref, err := name.NewDigest(image)
@@ -342,7 +342,7 @@ func expectedIdentity(ctx context.Context, e *environment, image string) (kube.E
 	return kube.Expected{Image: image, Version: version, Commit: commit}, nil
 }
 
-func runDNSToken(ctx context.Context, e *environment, args []string) error {
+func runDNSToken(ctx context.Context, e *workspace, args []string) error {
 	if err := expectArgs(args, 0, 0, "dft dns-token   (token z terminala bez echa albo z potoku; DOCFIND_ACME_ZONE — sprawdza też strefę)"); err != nil {
 		return err
 	}
@@ -350,7 +350,7 @@ func runDNSToken(ctx context.Context, e *environment, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := def.Require(env.OpDNSToken); err != nil {
+	if err := def.Require(environment.OpDNSToken); err != nil {
 		return err
 	}
 	var token string
@@ -385,7 +385,7 @@ func runDNSToken(ctx context.Context, e *environment, args []string) error {
 	return nil
 }
 
-func runRepoSettings(ctx context.Context, e *environment, args []string) error {
+func runRepoSettings(ctx context.Context, e *workspace, args []string) error {
 	if err := expectArgs(args, 0, 1, "dft repo-settings [--dry-run]"); err != nil {
 		return err
 	}
@@ -400,7 +400,7 @@ func runRepoSettings(ctx context.Context, e *environment, args []string) error {
 
 // runTrial mówi, czy zadania CI skończyły okres próbny i ich statusy mogą
 // trafić do wymaganych w regule main (decyzje 36 i 37).
-func runTrial(ctx context.Context, e *environment, args []string) error {
+func runTrial(ctx context.Context, e *workspace, args []string) error {
 	const usage = "dft trial <N> <zadanie>…"
 	if len(args) < 2 {
 		return cli.Usage("użycie: %s", usage)
@@ -439,7 +439,7 @@ func runTrial(ctx context.Context, e *environment, args []string) error {
 
 // attestVerifier — weryfikacja atestacji GitHuba obrazów z workflowu ci
 // repozytorium, z którego pochodzi kod (GITHUB_REPOSITORY w CI).
-func attestVerifier(e *environment) attest.Verifier {
+func attestVerifier(e *workspace) attest.Verifier {
 	repo := os.Getenv("GITHUB_REPOSITORY")
 	if repo == "" {
 		repo = identity.DefaultOwner + "/Docfind"

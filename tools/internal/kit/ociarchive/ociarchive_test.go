@@ -1,4 +1,4 @@
-package oci
+package ociarchive
 
 import (
 	"archive/tar"

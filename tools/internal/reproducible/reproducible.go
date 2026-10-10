@@ -16,9 +16,9 @@ import (
 	"strings"
 
 	"github.com/mateuszf757/Docfind/tools/internal/build"
-	"github.com/mateuszf757/Docfind/tools/internal/cli"
-	"github.com/mateuszf757/Docfind/tools/internal/oci"
-	"github.com/mateuszf757/Docfind/tools/internal/pins"
+	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/ociarchive"
 )
 
 // Checker porównuje dwa buildy tej samej usługi.
@@ -54,7 +54,7 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 		}
 	}
 
-	var layouts []oci.Layout
+	var layouts []ociarchive.Layout
 	for _, run := range []struct {
 		name    string
 		noCache bool
@@ -72,7 +72,7 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 	}
 
 	cli.Step("porównanie manifestów, konfiguracji i warstw")
-	identical, err := oci.Compare(layouts[0], layouts[1], c.Out)
+	identical, err := ociarchive.Compare(layouts[0], layouts[1], c.Out)
 	if err != nil {
 		// Kody rozdzielone: wcześniej awaria porównania i różnica w obrazach
 		// kończyły się tym samym „build nie jest powtarzalny".
@@ -85,7 +85,7 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 	return nil
 }
 
-func (c Checker) buildAndSave(ctx context.Context, tmp, name string, noCache bool) (oci.Layout, error) {
+func (c Checker) buildAndSave(ctx context.Context, tmp, name string, noCache bool) (ociarchive.Layout, error) {
 	logPath := filepath.Join(tmp, "build-"+name+".log")
 	logFile, err := os.Create(logPath)
 	if err != nil {
@@ -111,13 +111,13 @@ func (c Checker) buildAndSave(ctx context.Context, tmp, name string, noCache boo
 		return "", err
 	}
 	dir := filepath.Join(tmp, name)
-	if err := oci.Extract(archive, dir); err != nil {
+	if err := ociarchive.Extract(archive, dir); err != nil {
 		return "", err
 	}
 	if err := os.Remove(archive); err != nil {
 		return "", err
 	}
-	return oci.Layout(dir), nil
+	return ociarchive.Layout(dir), nil
 }
 
 func tail(s string, n int) string {
