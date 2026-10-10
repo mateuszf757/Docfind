@@ -76,10 +76,18 @@ func (c *Cluster) DescribePods(ctx context.Context, namespace string, w io.Write
 	return c.dump(ctx, w, "describe", "pods", "-n", namespace)
 }
 
-// Logs zapisuje logi wszystkich kontenerów poda z czasami; previous — logi
-// poprzedniej instancji po restarcie.
-func (c *Cluster) Logs(ctx context.Context, namespace, pod string, previous bool, w io.Writer) error {
-	args := []string{"logs", "-n", namespace, pod, "--all-containers", "--prefix", "--timestamps"}
+// Logs zapisuje logi poda z czasami: jednego kontenera albo — gdy container
+// pusty — wszystkich. previous — log poprzedniej instancji po restarcie;
+// tylko dla jednego kontenera, bo `--previous --all-containers` zawodzi,
+// gdy któryś kontener poda się nie restartował, i gubi log tego, który
+// się restartował.
+func (c *Cluster) Logs(ctx context.Context, namespace, pod, container string, previous bool, w io.Writer) error {
+	args := []string{"logs", "-n", namespace, pod, "--prefix", "--timestamps"}
+	if container == "" {
+		args = append(args, "--all-containers")
+	} else {
+		args = append(args, "-c", container)
+	}
 	if previous {
 		args = append(args, "--previous")
 	}

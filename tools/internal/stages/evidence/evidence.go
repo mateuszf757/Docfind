@@ -28,7 +28,9 @@ type Cluster interface {
 	DumpEvents(ctx context.Context, w io.Writer) error
 	DumpPlatform(ctx context.Context, w io.Writer) error
 	DescribePods(ctx context.Context, namespace string, w io.Writer) error
-	Logs(ctx context.Context, namespace, pod string, previous bool, w io.Writer) error
+	// Logs — container pusty: wszystkie kontenery; previous — poprzednia
+	// instancja jednego kontenera po restarcie.
+	Logs(ctx context.Context, namespace, pod, container string, previous bool, w io.Writer) error
 }
 
 // Nodes — logi kontenerów węzłów klastra lokalnego (adapters/k3d).
@@ -78,9 +80,11 @@ func (c Collector) Collect(ctx context.Context) ([]string, error) {
 				continue
 			}
 			for _, pod := range pods {
-				dump(filepath.Join(ns, pod.Name+".log"), func(w io.Writer) error { return c.Cluster.Logs(ctx, ns, pod.Name, false, w) })
-				if pod.Restarts > 0 {
-					dump(filepath.Join(ns, pod.Name+".previous.log"), func(w io.Writer) error { return c.Cluster.Logs(ctx, ns, pod.Name, true, w) })
+				dump(filepath.Join(ns, pod.Name+".log"), func(w io.Writer) error { return c.Cluster.Logs(ctx, ns, pod.Name, "", false, w) })
+				// Log sprzed restartu każdego kontenera, który się restartował —
+				// pierwsze miejsce, w którym szuka się przyczyny restartu.
+				for _, ctr := range pod.Restarted {
+					dump(filepath.Join(ns, pod.Name+"."+ctr+".previous.log"), func(w io.Writer) error { return c.Cluster.Logs(ctx, ns, pod.Name, ctr, true, w) })
 				}
 			}
 		}

@@ -162,7 +162,7 @@ func TestRolloutAndPods(t *testing.T) {
 		&corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "docfind", Labels: labels},
 			Spec:       corev1.PodSpec{NodeName: "w1", Containers: []corev1.Container{{Name: "api", Image: "img:1"}}},
-			Status:     corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "api", RestartCount: 2}}},
+			Status:     corev1.PodStatus{Phase: corev1.PodRunning, ContainerStatuses: []corev1.ContainerStatus{{Name: "api", RestartCount: 2}, {Name: "sidecar"}}},
 		},
 		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "b", Namespace: "docfind", Labels: labels, DeletionTimestamp: &now, Finalizers: []string{"x"}}},
 	}
@@ -178,7 +178,8 @@ func TestRolloutAndPods(t *testing.T) {
 	for _, p := range pods {
 		switch p.Name {
 		case "a":
-			if !p.Running || p.Restarts != 2 || p.Images["api"] != "img:1" || p.Node != "w1" {
+			// Restarted — tylko kontener, który ma poprzednią instancję.
+			if !p.Running || p.Restarts != 2 || p.Images["api"] != "img:1" || p.Node != "w1" || len(p.Restarted) != 1 || p.Restarted[0] != "api" {
 				t.Errorf("pod a: %+v", p)
 			}
 		case "b":
@@ -267,9 +268,9 @@ func TestGatewayRouteCertificate(t *testing.T) {
 func TestTools(t *testing.T) {
 	target := cluster.Target{Kubeconfig: "/repo/.kube/dev", Context: "k3d-docfind"}
 	f := &proc.Fake{Responses: map[string]proc.FakeResponse{
-		"kubectl drain w1 --ignore-daemonsets --delete-emptydir-data --timeout=3m0s --kubeconfig /repo/.kube/dev --context k3d-docfind":      {},
-		"cmctl renew --namespace gateway docfind-tls --kubeconfig /repo/.kube/dev --context k3d-docfind":                                     {},
-		"kubectl logs -n docfind api-1 --all-containers --prefix --timestamps --previous --kubeconfig /repo/.kube/dev --context k3d-docfind": {Stdout: "log"},
+		"kubectl drain w1 --ignore-daemonsets --delete-emptydir-data --timeout=3m0s --kubeconfig /repo/.kube/dev --context k3d-docfind": {},
+		"cmctl renew --namespace gateway docfind-tls --kubeconfig /repo/.kube/dev --context k3d-docfind":                                {},
+		"kubectl logs -n docfind api-1 --prefix --timestamps -c api --previous --kubeconfig /repo/.kube/dev --context k3d-docfind":      {Stdout: "log"},
 		"kubectl version --client -o json": {Stdout: `{"clientVersion":{"gitVersion":"v1.36.4"}}`},
 	}}
 	replicas := int32(1)
@@ -288,7 +289,7 @@ func TestTools(t *testing.T) {
 		t.Error(err)
 	}
 	var log strings.Builder
-	if err := c.Logs(ctx, "docfind", "api-1", true, &log); err != nil || log.String() != "log" {
+	if err := c.Logs(ctx, "docfind", "api-1", "api", true, &log); err != nil || log.String() != "log" {
 		t.Errorf("logi: %q, %v", log.String(), err)
 	}
 	if v, err := (Kubectl{Runner: f}).ClientVersion(ctx); err != nil || v != "v1.36.4" {

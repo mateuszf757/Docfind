@@ -52,6 +52,9 @@ type Pod struct {
 	Terminating bool
 	// Restarts — suma restartów kontenerów.
 	Restarts int32
+	// Restarted — kontenery, które się restartowały: tylko one mają log
+	// poprzedniej instancji.
+	Restarted []string
 }
 
 // Rollout — stan Deploymentu.

@@ -47,6 +47,9 @@ func toPods(items []corev1.Pod) []cluster.Pod {
 		}
 		for _, s := range p.Status.ContainerStatuses {
 			pod.Restarts += s.RestartCount
+			if s.RestartCount > 0 {
+				pod.Restarted = append(pod.Restarted, s.Name)
+			}
 		}
 		pods = append(pods, pod)
 	}

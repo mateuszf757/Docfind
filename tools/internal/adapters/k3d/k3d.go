@@ -1,6 +1,6 @@
 // Package k3d to adapter klastrów k3d: lokalnych klastrów k3s, których
-// węzły to kontenery Dockera na tym hoście (decyzje 17 i 19). Nazewnictwo
-// kontenerów węzłów (k3d-<klaster>-…) zna tylko ten pakiet.
+// węzły to kontenery Dockera na tym hoście (decyzje 17 i 19). Jak rozpoznać
+// kontenery węzłów klastra, wie tylko ten pakiet.
 package k3d
 
 import (
@@ -92,7 +92,11 @@ func (k K3d) Create(ctx context.Context, c cluster.LocalCluster) error {
 	return nil
 }
 
-func nodePrefix(name string) string { return "k3d-" + name + "-" }
+// nodeFilter wybiera kontenery węzłów klastra po etykiecie, którą nadaje im
+// k3d. Nie po przedrostku nazwy: kontenery klastra docfind-staging
+// (k3d-docfind-staging-…) zaczynają się tak samo jak klastra docfind
+// (k3d-docfind-…), więc dowody z dev zbierały logi węzłów stagingu.
+func nodeFilter(name string) string { return "label=k3d.cluster=" + name }
 
 // followNodeLogs zapisuje log każdego węzła od chwili, gdy jego kontener
 // działa. Tylko działające: `docker logs -f` na kontenerze w stanie Created
@@ -102,7 +106,7 @@ func (k K3d) followNodeLogs(ctx context.Context, name, dir string) {
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	for ctx.Err() == nil {
-		res, err := k.Runner.Run(ctx, proc.Cmd{Name: "docker", Args: []string{"ps", "--format", "{{.Names}}", "--filter", "name=^" + nodePrefix(name), "--filter", "status=running"}})
+		res, err := k.Runner.Run(ctx, proc.Cmd{Name: "docker", Args: []string{"ps", "--format", "{{.Names}}", "--filter", nodeFilter(name), "--filter", "status=running"}})
 		if err == nil {
 			for _, node := range strings.Fields(string(res.Stdout)) {
 				if followed[node] {
@@ -178,7 +182,7 @@ func (k K3d) Import(ctx context.Context, name, image string) error {
 // NodeLogs zapisuje logi kontenerów węzłów (także zatrzymanych) do
 // dir/<węzeł>.log i zwraca listę tego, czego nie udało się zebrać.
 func (k K3d) NodeLogs(ctx context.Context, name, dir string) []string {
-	res, err := k.Runner.Run(ctx, proc.Cmd{Name: "docker", Args: []string{"ps", "-a", "--format", "{{.Names}}", "--filter", "name=^" + nodePrefix(name)}})
+	res, err := k.Runner.Run(ctx, proc.Cmd{Name: "docker", Args: []string{"ps", "-a", "--format", "{{.Names}}", "--filter", nodeFilter(name)}})
 	if err != nil {
 		return []string{fmt.Sprintf("kontenery węzłów: %v", err)}
 	}

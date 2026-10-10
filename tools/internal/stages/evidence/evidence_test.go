@@ -15,7 +15,7 @@ import (
 type fakeCluster struct{}
 
 func (fakeCluster) Pods(context.Context, string, string) ([]cluster.Pod, error) {
-	return []cluster.Pod{{Name: "api-1", Restarts: 2}, {Name: "api-2"}}, nil
+	return []cluster.Pod{{Name: "api-1", Restarts: 2, Restarted: []string{"api"}}, {Name: "api-2"}}, nil
 }
 func (fakeCluster) DumpNodes(_ context.Context, w io.Writer) error {
 	_, err := io.WriteString(w, "węzły")
@@ -38,8 +38,11 @@ func (fakeCluster) DescribePods(_ context.Context, ns string, w io.Writer) error
 	_, err := io.WriteString(w, "opis "+ns)
 	return err
 }
-func (fakeCluster) Logs(_ context.Context, _, pod string, previous bool, w io.Writer) error {
-	_, err := io.WriteString(w, pod)
+func (fakeCluster) Logs(_ context.Context, _, pod, container string, previous bool, w io.Writer) error {
+	if previous && container == "" {
+		return errors.New("--previous --all-containers: kontener bez poprzedniej instancji")
+	}
+	_, err := io.WriteString(w, pod+container)
 	return err
 }
 
@@ -63,13 +66,13 @@ func TestCollect(t *testing.T) {
 	if len(missing) != 2 || !strings.HasPrefix(missing[0], "platform.yaml") || !strings.HasPrefix(missing[1], "k3d-docfind-ci-agent-0") {
 		t.Errorf("braki: %v", missing)
 	}
-	for _, rel := range []string{"nodes.txt", "pods.txt", "events.txt", "docfind/describe-pods.txt", "docfind/api-1.log", "docfind/api-1.previous.log", "docfind/api-2.log"} {
+	for _, rel := range []string{"nodes.txt", "pods.txt", "events.txt", "docfind/describe-pods.txt", "docfind/api-1.log", "docfind/api-1.api.previous.log", "docfind/api-2.log"} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Errorf("brak %s", rel)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(dir, "docfind/api-2.previous.log")); err == nil {
-		t.Error("poprzedni log kontenera bez restartu")
+	if matches, _ := filepath.Glob(filepath.Join(dir, "docfind", "api-2*.previous.log")); len(matches) > 0 {
+		t.Errorf("poprzedni log kontenera bez restartu: %v", matches)
 	}
 	if nodeDir != filepath.Join(dir, "nodes") {
 		t.Errorf("logi węzłów do %s", nodeDir)

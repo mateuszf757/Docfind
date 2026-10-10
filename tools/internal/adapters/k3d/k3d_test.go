@@ -64,6 +64,10 @@ func TestCreate(t *testing.T) {
 			}
 			return proc.Result{}, err
 		case c.Name == "docker" && c.Args[0] == "ps":
+			// Tylko węzły tego klastra — po etykiecie, nie po przedrostku nazwy.
+			if !slices.Contains(c.Args, "label=k3d.cluster=x") {
+				return proc.Result{Stdout: []byte("k3d-x-staging-server-0\n")}, nil
+			}
 			return proc.Result{Stdout: []byte("k3d-x-server-0\n")}, nil
 		case c.Name == "docker" && c.Args[0] == "logs":
 			_, _ = io.WriteString(c.Stdout, "level=info start\n")
@@ -90,13 +94,19 @@ func TestCreate(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(logDir, "k3d-x-server-0.log")); err != nil {
 		t.Errorf("log węzła nie zapisany: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(logDir, "k3d-x-staging-server-0.log")); err == nil {
+		t.Error("log węzła cudzego klastra")
+	}
 }
 
+// TestNodeLogs: węzły klastra po etykiecie k3d — klaster docfind-staging
+// ma nazwy kontenerów zaczynające się jak docfind, więc przedrostek nazwy
+// zebrałby logi cudzego klastra.
 func TestNodeLogs(t *testing.T) {
 	f := &proc.Fake{Responses: map[string]proc.FakeResponse{
-		"docker ps -a --format {{.Names}} --filter name=^k3d-x-": {Stdout: "k3d-x-server-0\nk3d-x-agent-0\n"},
-		"docker logs --timestamps k3d-x-server-0":                {Stdout: "log serwera"},
-		"docker logs --timestamps k3d-x-agent-0":                 {Code: 1},
+		"docker ps -a --format {{.Names}} --filter label=k3d.cluster=x": {Stdout: "k3d-x-server-0\nk3d-x-agent-0\n"},
+		"docker logs --timestamps k3d-x-server-0":                       {Stdout: "log serwera"},
+		"docker logs --timestamps k3d-x-agent-0":                        {Code: 1},
 	}}
 	dir := t.TempDir()
 	missing := K3d{Runner: f}.NodeLogs(context.Background(), "x", dir)
