@@ -324,7 +324,7 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := e.Run("dns-token"); got != want {
+		if got := e.Task("dns-token"); got != want {
 			t.Errorf("%s: %q, oczekiwano %q", name, got, want)
 		}
 	}

@@ -3,7 +3,7 @@
 # klaster CI obok dev:
 #   MISE_ENV=ci ./bin/mise run cluster:up
 # dft czyta DOCFIND_ENV, kubectl — KUBECONFIG. Obie wartości muszą się
-# zgadzać z definicją; pilnuje tego test w tools/internal/env.
+# zgadzać z definicją; pilnuje tego test w tools/internal/core/environment.
 [env]
 DOCFIND_ENV = "ci"
 KUBECONFIG = "{{config_root}}/.cache/kubeconfig-ci"

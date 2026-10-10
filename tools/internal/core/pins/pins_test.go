@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// repoRoot — testy biegną w katalogu pakietu, trzy poziomy pod korzeniem.
+// repoRoot — testy biegną w katalogu pakietu, cztery poziomy pod korzeniem.
 const repoRoot = "../../../.."
 
 // TestRepositoryPins: prawdziwy ci/pins.env przechodzi walidację. Literówka
@@ -18,8 +18,33 @@ func TestRepositoryPins(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := p.Get("DF_BUILDKIT_IMAGE"); !strings.HasPrefix(got, "moby/buildkit:") {
+	if got := p.Get(BuildKitImage); !strings.HasPrefix(got, "moby/buildkit:") {
 		t.Errorf("DF_BUILDKIT_IMAGE = %q", got)
+	}
+	// Każdy chart platformy ma wersję, źródło i sumę; Envoy Gateway — z OCI.
+	for _, name := range []string{CoreDNS, CertManager, EnvoyGateway} {
+		c, err := p.Chart(name)
+		if err != nil || c.Version == "" || c.Source == "" || len(c.SHA256) != 64 || c.OCI() != (name == EnvoyGateway) {
+			t.Errorf("chart %s: %+v, %v", name, c, err)
+		}
+	}
+	if _, err := p.Chart("traefik"); err == nil {
+		t.Error("nieznany chart przyjęty")
+	}
+}
+
+// TestKeysHaveRules: każda stała klucza ma regułę — inaczej Get zwróciłby
+// pusty napis dla przypięcia, którego Parse nie wymaga.
+func TestKeysHaveRules(t *testing.T) {
+	for _, key := range []string{KubernetesVersion, K3sImage, CoreDNSChartVersion, CoreDNSChartURL, CoreDNSChartSHA256,
+		CertManagerChartVersion, CertManagerChartURL, CertManagerChartSHA256, EnvoyGatewayChartRef, EnvoyGatewayChartVersion,
+		EnvoyGatewayChartSHA256, BuildKitImage, SBOMGeneratorImage, RegistryImage, KubeconformSchemaCommit, BaseAlpine} {
+		if _, ok := rules[key]; !ok {
+			t.Errorf("%s bez reguły", key)
+		}
+	}
+	if len(rules) != 16 {
+		t.Errorf("reguł %d, stałych 16 — dopisz stałą dla nowego przypięcia", len(rules))
 	}
 }
 

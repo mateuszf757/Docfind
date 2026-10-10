@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"time"
 )
 
@@ -27,7 +26,7 @@ type Result struct {
 }
 
 // OK — żądanie zakończone odpowiedzią 200.
-func (r Result) OK() bool { return r.Error == "" && r.Code == http.StatusOK }
+func (r Result) OK() bool { return r.Error == "" && r.Code == 200 }
 
 // Parse czyta log sondy. Linia, która nie jest wynikiem, to awaria sondy
 // (np. komunikat BŁĄD na stderr), a nie nieudane żądanie.

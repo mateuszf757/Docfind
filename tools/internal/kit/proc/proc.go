@@ -1,8 +1,9 @@
 // Package proc uruchamia programy zewnętrzne: git, docker, kubectl, helm.
 //
-// Logika bramek nie woła os/exec bezpośrednio, tylko przez interfejs Runner.
-// W testach podstawia się Fake z nagranymi wynikami — parsowanie wyjścia
-// i decyzja o wyniku są wtedy testowane bez Dockera, klastra i sieci.
+// To mechanizm adapterów (decyzja 39): adapter woła program przez interfejs
+// Runner, a etapy nie uruchamiają programów wcale — mówią portami. W testach
+// adaptera podstawia się Fake z nagranymi wynikami, więc parsowanie wyjścia
+// i mapowanie kodów wyjścia są sprawdzane bez Dockera, klastra i sieci.
 package proc
 
 import (

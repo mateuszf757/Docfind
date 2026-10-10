@@ -40,33 +40,54 @@ type rule struct {
 	what    string
 }
 
+// Klucze przypięć. Wywołujący odwołują się do stałych, a nie do napisów:
+// literówka w nazwie przypięcia to błąd kompilacji, a nie panika w Get.
+const (
+	KubernetesVersion        = "DF_KUBERNETES_VERSION"
+	K3sImage                 = "DF_K3S_IMAGE"
+	CoreDNSChartVersion      = "DF_COREDNS_CHART_VERSION"
+	CoreDNSChartURL          = "DF_COREDNS_CHART_URL"
+	CoreDNSChartSHA256       = "DF_COREDNS_CHART_SHA256"
+	CertManagerChartVersion  = "DF_CERT_MANAGER_CHART_VERSION"
+	CertManagerChartURL      = "DF_CERT_MANAGER_CHART_URL"
+	CertManagerChartSHA256   = "DF_CERT_MANAGER_CHART_SHA256"
+	EnvoyGatewayChartRef     = "DF_ENVOY_GATEWAY_CHART_REF"
+	EnvoyGatewayChartVersion = "DF_ENVOY_GATEWAY_CHART_VERSION"
+	EnvoyGatewayChartSHA256  = "DF_ENVOY_GATEWAY_CHART_SHA256"
+	BuildKitImage            = "DF_BUILDKIT_IMAGE"
+	SBOMGeneratorImage       = "DF_SBOM_GENERATOR_IMAGE"
+	RegistryImage            = "DF_REGISTRY_IMAGE"
+	KubeconformSchemaCommit  = "DF_KUBECONFORM_SCHEMA_COMMIT"
+	BaseAlpine               = "DF_BASE_ALPINE"
+)
+
 // rules — znane przypięcia. Nieznany klucz to literówka, a brak znanego —
 // przypięcie, które zniknęło; oba są błędem.
 var rules = map[string]rule{
-	"DF_KUBERNETES_VERSION":          {semver, "wersja X.Y.Z"},
-	"DF_K3S_IMAGE":                   {pinnedImage, "obraz z digestem"},
-	"DF_COREDNS_CHART_VERSION":       {semver, "wersja X.Y.Z"},
-	"DF_COREDNS_CHART_URL":           {regexp.MustCompile(`^https://`), "adres https"},
-	"DF_COREDNS_CHART_SHA256":        {sha256Hex, "suma SHA-256"},
-	"DF_CERT_MANAGER_CHART_VERSION":  {regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`), "wersja vX.Y.Z"},
-	"DF_CERT_MANAGER_CHART_URL":      {regexp.MustCompile(`^https://`), "adres https"},
-	"DF_CERT_MANAGER_CHART_SHA256":   {sha256Hex, "suma SHA-256"},
-	"DF_ENVOY_GATEWAY_CHART_REF":     {regexp.MustCompile(`^oci://`), "referencja oci://"},
-	"DF_ENVOY_GATEWAY_CHART_VERSION": {regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`), "wersja vX.Y.Z"},
-	"DF_ENVOY_GATEWAY_CHART_SHA256":  {sha256Hex, "suma SHA-256"},
-	"DF_BUILDKIT_IMAGE":              {pinnedImage, "obraz z digestem"},
-	"DF_SBOM_GENERATOR_IMAGE":        {pinnedImage, "obraz z digestem"},
-	"DF_REGISTRY_IMAGE":              {pinnedImage, "obraz z digestem"},
-	"DF_KUBECONFORM_SCHEMA_COMMIT":   {gitCommit, "pełny SHA commita"},
-	"DF_BASE_ALPINE":                 {minorVersion, "wydanie X.Y"},
+	KubernetesVersion:        {semver, "wersja X.Y.Z"},
+	K3sImage:                 {pinnedImage, "obraz z digestem"},
+	CoreDNSChartVersion:      {semver, "wersja X.Y.Z"},
+	CoreDNSChartURL:          {regexp.MustCompile(`^https://`), "adres https"},
+	CoreDNSChartSHA256:       {sha256Hex, "suma SHA-256"},
+	CertManagerChartVersion:  {regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`), "wersja vX.Y.Z"},
+	CertManagerChartURL:      {regexp.MustCompile(`^https://`), "adres https"},
+	CertManagerChartSHA256:   {sha256Hex, "suma SHA-256"},
+	EnvoyGatewayChartRef:     {regexp.MustCompile(`^oci://`), "referencja oci://"},
+	EnvoyGatewayChartVersion: {regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`), "wersja vX.Y.Z"},
+	EnvoyGatewayChartSHA256:  {sha256Hex, "suma SHA-256"},
+	BuildKitImage:            {pinnedImage, "obraz z digestem"},
+	SBOMGeneratorImage:       {pinnedImage, "obraz z digestem"},
+	RegistryImage:            {pinnedImage, "obraz z digestem"},
+	KubeconformSchemaCommit:  {gitCommit, "pełny SHA commita"},
+	BaseAlpine:               {minorVersion, "wydanie X.Y"},
 }
 
 // chartURLs — URL charta musi zawierać jego wersję. W Bashu URL był
 // składany z wersji; w pliku danych oba pola są wpisane wprost, więc mogą
 // się rozjechać przy ręcznej aktualizacji.
 var chartURLs = map[string]string{
-	"DF_COREDNS_CHART_URL":      "DF_COREDNS_CHART_VERSION",
-	"DF_CERT_MANAGER_CHART_URL": "DF_CERT_MANAGER_CHART_VERSION",
+	CoreDNSChartURL:     CoreDNSChartVersion,
+	CertManagerChartURL: CertManagerChartVersion,
 }
 
 // Load czyta i sprawdza ci/pins.env w repozytorium o korzeniu root.
@@ -144,13 +165,47 @@ func (p Pins) validate() error {
 	return nil
 }
 
-// Get zwraca przypięcie, które musi istnieć — validate to gwarantuje.
+// Get zwraca przypięcie o kluczu z tego pakietu. Load i Parse gwarantują,
+// że każde znane przypięcie istnieje, a klucze są stałymi — test pilnuje,
+// że każda stała ma regułę.
 func (p Pins) Get(key string) string {
-	value, ok := p[key]
-	if !ok {
-		panic(fmt.Sprintf("pins: odwołanie do nieznanego przypięcia %s", key))
+	return p[key]
+}
+
+// Charty platformy.
+const (
+	CoreDNS      = "coredns"
+	CertManager  = "cert-manager"
+	EnvoyGateway = "envoy-gateway"
+)
+
+// Chart — przypięty chart platformy.
+type Chart struct {
+	Name    string
+	Version string
+	// Source — https://…/chart.tgz albo oci://… (helm pull).
+	Source string
+	// SHA256 — suma archiwum charta z ci/pins.env, nie z serwera, z którego
+	// idzie plik: suma z tego samego miejsca chroni tylko przed uszkodzeniem
+	// w transferze, a nie przed podmianą.
+	SHA256 string
+}
+
+// OCI mówi, czy chart pochodzi z rejestru OCI.
+func (c Chart) OCI() bool { return strings.HasPrefix(c.Source, "oci://") }
+
+// Chart zwraca przypięty chart platformy (CoreDNS, CertManager,
+// EnvoyGateway).
+func (p Pins) Chart(name string) (Chart, error) {
+	switch name {
+	case CoreDNS:
+		return Chart{Name: name, Version: p[CoreDNSChartVersion], Source: p[CoreDNSChartURL], SHA256: p[CoreDNSChartSHA256]}, nil
+	case CertManager:
+		return Chart{Name: name, Version: p[CertManagerChartVersion], Source: p[CertManagerChartURL], SHA256: p[CertManagerChartSHA256]}, nil
+	case EnvoyGateway:
+		return Chart{Name: name, Version: p[EnvoyGatewayChartVersion], Source: p[EnvoyGatewayChartRef], SHA256: p[EnvoyGatewayChartSHA256]}, nil
 	}
-	return value
+	return Chart{}, fmt.Errorf("nieznany chart platformy %q", name)
 }
 
 // ImageTag zwraca wersję obrazu z przypięcia „nazwa:tag@sha256:…".

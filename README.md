@@ -46,7 +46,7 @@ zero nieudanych), i sprząta po sobie także po przerwaniu.
 - klaster lokalny wystawiony wyłącznie na loopback, bez rozluźniania
   zabezpieczeń hosta (decyzja 17)
 - manifesty sprawdzane kubeconformem i politykami jako kodem
-  (`tools/internal/policy`) — poprawne względem schematu nie znaczy zgodne
+  (`tools/internal/core/policy`) — poprawne względem schematu nie znaczy zgodne
   z decyzjami
 - wszystko z zewnątrz przypięte niezmiennie: narzędzia sumą w `mise.lock`,
   charty sumą, obrazy i BuildKit digestem, akcje GitHuba SHA commita, runner
@@ -95,7 +95,8 @@ deploy/charts/     Chart Helma docfind
 deploy/charts/platform/  Chart platformy: Gateway, TLS, wydawcy certyfikatów
 deploy/platform/   Wartości komponentów platformy (CoreDNS, cert-manager, Envoy Gateway)
 deploy/k3d/        Definicja lokalnego klastra (1 serwer, 2 węzły robocze)
-tools/             Narzędzia i bramki w Go: program dft (tools/cmd/dft), logika w tools/internal
+tools/             Narzędzia i bramki w Go: program dft (tools/cmd/dft) i warstwy
+                   tools/internal/{kit,core,adapters,stages} (decyzja 39)
 ci/                ci/dft (buduje i uruchamia dft) i ci/pins.env (przypięcia)
 deploy/environments/  Definicje środowisk dev, ci, staging, prod czytane przez dft
 bin/mise           Launcher mise w przypiętej wersji — narzędzia i zadania (mise.toml)

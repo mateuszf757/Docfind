@@ -24,6 +24,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
+	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 )
 
@@ -74,11 +75,7 @@ type Cluster struct {
 }
 
 // Ports — porty na 127.0.0.1 hosta.
-type Ports struct {
-	API   int `json:"api,omitempty"`
-	HTTP  int `json:"http,omitempty"`
-	HTTPS int `json:"https,omitempty"`
-}
+type Ports = cluster.Ports
 
 // Źródła obrazu wdrażanego na środowisko.
 const (
@@ -396,14 +393,20 @@ func (e Definition) AllowsSource(source string) bool {
 	return slices.Contains(e.Artifact.Sources, source)
 }
 
-// Run zwraca polecenie zadania mise dla tego środowiska — do podpowiedzi
+// Task zwraca polecenie zadania mise dla tego środowiska — do podpowiedzi
 // w komunikatach. Poza dev z MISE_ENV: samo `./bin/mise run dns-token`
 // trafiłoby w klaster dev, a nie w ten, który o token prosi.
-func (e Definition) Run(task string) string {
+func (e Definition) Task(task string) string {
 	if e.Name == DefaultName {
 		return "./bin/mise run " + task
 	}
 	return "MISE_ENV=" + e.Name + " ./bin/mise run " + task
+}
+
+// Target zwraca klaster środowiska dla adapterów: kubeconfig (bezwzględna
+// ścieżka), kontekst i adres serwera z definicji.
+func (e Definition) Target(root string) cluster.Target {
+	return cluster.Target{Kubeconfig: e.KubeconfigPath(root), Context: e.Cluster.Context, APIServer: e.Cluster.APIServer}
 }
 
 // KubeconfigPath zwraca bezwzględną ścieżkę kubeconfigu środowiska.

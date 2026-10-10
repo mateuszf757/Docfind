@@ -4,6 +4,10 @@
 // argumenty; zadania mise i workflowy wołają ci/dft. Kody wyjścia: 0 — wynik
 // pozytywny, 1 — warunek niespełniony, 2 — awaria narzędzia albo złe
 // wywołanie.
+//
+// cmd/dft to korzeń kompozycji (decyzja 39): czyta argumenty i zmienne,
+// składa etapy (internal/stages) z adapterami (internal/adapters)
+// i zapisuje raporty. Decyzje bramek należą do etapów.
 package main
 
 import (
@@ -13,7 +17,7 @@ import (
 	"os"
 	"slices"
 
-	"github.com/mateuszf757/Docfind/tools/internal/identity"
+	"github.com/mateuszf757/Docfind/tools/internal/adapters/git"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 )
@@ -22,14 +26,7 @@ import (
 type command struct {
 	usage string
 	help  string
-	run   func(ctx context.Context, env *workspace, args []string) error
-}
-
-// environment — to, czego potrzebuje każde polecenie: korzeń repozytorium
-// i sposób uruchamiania programów.
-type workspace struct {
-	root   string
-	runner proc.Runner
+	run   func(ctx context.Context, w *workspace, args []string) error
 }
 
 var commands = map[string]command{
@@ -39,7 +36,7 @@ var commands = map[string]command{
 		run:   runVersion,
 	},
 	"identity": {
-		usage: "dft identity <version|docker-tag [wersja]|commit|source-date-epoch|source-date [epoch]|image <usługa>|require-clean>",
+		usage: identityUsage,
 		help:  "jedno pole tożsamości artefaktu — dla skryptów, bez parsowania",
 		run:   runIdentity,
 	},
@@ -50,12 +47,12 @@ var commands = map[string]command{
 	},
 	"check": {
 		usage: "dft check <bramka> …",
-		help:  "bramki: versions, go, reproducible-tools, workflows, python, charts; obraz: runtime, base, reproducible, negatives, published, attestation, vulns; klaster: drain, tls, identity",
+		help:  "bramki: versions, go, reproducible-tools, workflows, python, charts; obraz: runtime, base, reproducible, negatives, published, attestation, vulns; klaster: drain, tls, identity, cluster-negatives",
 		run:   runCheck,
 	},
 	"build": {
 		usage: "dft build [usługa]",
-		help:  "build obrazu z wersją z gita; RELEASE=1 wydanie, PUSH=1 publikacja, NO_CACHE=1 od zera",
+		help:  "build obrazu z wersją z gita; RELEASE=1 wydanie, PUSH=1 publikacja, NO_CACHE=1 od zera, ARCHIVE=<plik> archiwum",
 		run:   runBuild,
 	},
 	"test": {
@@ -126,7 +123,7 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	runner := proc.Exec{}
-	root, err := identity.Root(ctx, runner, wd)
+	root, err := git.Root(ctx, runner, wd)
 	if err != nil {
 		return err
 	}
@@ -147,4 +144,15 @@ func expectArgs(args []string, min, max int, usage string) error {
 		return cli.Usage("użycie: %s", usage)
 	}
 	return nil
+}
+
+// service zwraca usługę z argumentów; domyślnie api, jak w zadaniach mise.
+func service(args []string, usage string) (string, error) {
+	if err := expectArgs(args, 0, 1, usage); err != nil {
+		return "", err
+	}
+	if len(args) == 1 {
+		return args[0], nil
+	}
+	return "api", nil
 }

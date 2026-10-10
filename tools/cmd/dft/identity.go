@@ -3,38 +3,33 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"strconv"
 
-	"github.com/mateuszf757/Docfind/tools/internal/identity"
+	"github.com/mateuszf757/Docfind/tools/internal/core/artifact"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 )
 
 const identityUsage = "dft identity <version|docker-tag [wersja]|commit|source-date-epoch|source-date [epoch]|image <usługa>|require-clean>"
 
-func repoOf(env *workspace) identity.Repo {
-	return identity.Repo{Dir: env.root, Runner: env.runner}
-}
-
-func runVersion(ctx context.Context, env *workspace, args []string) error {
+func runVersion(ctx context.Context, w *workspace, args []string) error {
 	if err := expectArgs(args, 0, 0, "dft version"); err != nil {
 		return err
 	}
-	return printIdentity(ctx, env, []string{"version"})
+	return printIdentity(ctx, w, []string{"version"})
 }
 
 // runIdentity wypisuje jedno pole tożsamości. Jedno pole na wywołanie,
 // bez JSON-a: skrypt bashowy bierze wynik w całości do zmiennej i nie musi
 // niczego parsować.
-func runIdentity(ctx context.Context, env *workspace, args []string) error {
+func runIdentity(ctx context.Context, w *workspace, args []string) error {
 	if len(args) == 0 {
 		return cli.Usage("użycie: %s", identityUsage)
 	}
-	return printIdentity(ctx, env, args)
+	return printIdentity(ctx, w, args)
 }
 
-func printIdentity(ctx context.Context, env *workspace, args []string) error {
-	repo := repoOf(env)
+func printIdentity(ctx context.Context, w *workspace, args []string) error {
+	repo := w.git()
 	field, rest := args[0], args[1:]
 	var value string
 	switch field {
@@ -61,7 +56,7 @@ func printIdentity(ctx context.Context, env *workspace, args []string) error {
 			}
 			version = v
 		}
-		value = identity.DockerTag(version)
+		value = artifact.DockerTag(version)
 	case "commit":
 		if err := expectArgs(rest, 0, 0, identityUsage); err != nil {
 			return err
@@ -98,7 +93,7 @@ func printIdentity(ctx context.Context, env *workspace, args []string) error {
 			}
 			epoch = e
 		}
-		value = identity.SourceDate(epoch)
+		value = artifact.SourceDate(epoch)
 	case "image":
 		if err := expectArgs(rest, 1, 1, identityUsage); err != nil {
 			return err
@@ -114,10 +109,4 @@ func printIdentity(ctx context.Context, env *workspace, args []string) error {
 	}
 	_, err := fmt.Fprintln(cli.Out, value)
 	return err
-}
-
-// imageName zwraca nazwę obrazu usługi; DF_IMAGE_REGISTRY zastępuje GHCR
-// (test publikacji na rejestrze tymczasowym).
-func imageName(service string) string {
-	return identity.ImageName(os.Getenv("DF_IMAGE_REGISTRY"), os.Getenv("GITHUB_REPOSITORY_OWNER"), service)
 }

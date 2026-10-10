@@ -5,7 +5,8 @@
 //
 // Suma pochodzi z ci/pins.env, a nie z serwera, z którego idzie plik: suma
 // ściągnięta z tego samego miejsca chroni tylko przed uszkodzeniem
-// w transferze, a nie przed podmianą.
+// w transferze, a nie przed podmianą. Mechanizm adapterów (decyzja 39) —
+// etapy dostają pliki przez porty (adapters/helm).
 package fetch
 
 import (
@@ -21,7 +22,6 @@ import (
 	"path/filepath"
 
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
-	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 )
 
 // Dir — pamięć podręczna względem korzenia repozytorium (poza gitem).
@@ -35,32 +35,7 @@ func URL(ctx context.Context, root, url, sha string) (string, error) {
 			return "", err
 		}
 	}
-	return file, verify(file, sha)
-}
-
-// OCIChart pobiera chart z rejestru OCI przez `helm pull` i sprawdza sumę.
-// `helm pull` sam nie weryfikuje niczego poza tym, co poda rejestr.
-func OCIChart(ctx context.Context, r proc.Runner, root, ref, version, sha string) (string, error) {
-	file := filepath.Join(root, Dir, fmt.Sprintf("%s-%s.tgz", path.Base(ref), version))
-	if _, err := os.Stat(file); errors.Is(err, os.ErrNotExist) {
-		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
-			return "", err
-		}
-		// Katalog tymczasowy w tym samym systemie plików: rename jest wtedy
-		// atomowy, a dwa równoległe pobrania nie piszą do jednego pliku.
-		tmp, err := os.MkdirTemp(filepath.Dir(file), "pull-")
-		if err != nil {
-			return "", err
-		}
-		defer os.RemoveAll(tmp)
-		if _, err := r.Run(ctx, proc.Cmd{Name: "helm", Args: []string{"pull", ref, "--version", version, "--destination", tmp}}); err != nil {
-			return "", fmt.Errorf("helm pull %s %s: %w", ref, version, err)
-		}
-		if err := os.Rename(filepath.Join(tmp, fmt.Sprintf("%s-%s.tgz", path.Base(ref), version)), file); err != nil {
-			return "", err
-		}
-	}
-	return file, verify(file, sha)
+	return file, Verify(file, sha)
 }
 
 func download(ctx context.Context, url, file string) (err error) {
@@ -98,9 +73,11 @@ func download(ctx context.Context, url, file string) (err error) {
 	return os.Rename(tmp.Name(), file)
 }
 
-// verify porównuje sumę pliku z przypiętą; niezgodny plik jest usuwany,
-// żeby kolejny bieg pobrał go od nowa, zamiast powtarzać błąd.
-func verify(file, want string) error {
+// Verify porównuje sumę pliku z przypiętą; niezgodny plik jest usuwany,
+// żeby kolejny bieg pobrał go od nowa, zamiast powtarzać błąd. Także dla
+// plików pobranych inną drogą (`helm pull` z rejestru OCI), która sama nie
+// weryfikuje niczego poza tym, co poda serwer.
+func Verify(file, want string) error {
 	f, err := os.Open(file)
 	if err != nil {
 		return err
