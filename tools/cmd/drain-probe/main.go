@@ -29,7 +29,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mateuszf757/Docfind/tools/internal/probeline"
+	"github.com/mateuszf757/Docfind/tools/internal/core/probe"
 )
 
 func main() {
@@ -56,7 +56,7 @@ func main() {
 	}
 	out := json.NewEncoder(os.Stdout)
 	for seq := 1; ctx.Err() == nil; seq++ {
-		r := probe(ctx, client, *url)
+		r := request(ctx, client, *url)
 		r.Seq = seq
 		if ctx.Err() != nil {
 			return // żądanie przerwane zakończeniem sondy, a nie przez drain
@@ -72,10 +72,10 @@ func main() {
 	}
 }
 
-// probe wysyła jedno żądanie i mierzy fazy zegarem monotonicznym
+// request wysyła jedno żądanie i mierzy fazy zegarem monotonicznym
 // (time.Since): w WSL zegar ścienny potrafi skoczyć po hibernacji.
-func probe(ctx context.Context, client *http.Client, url string) probeline.Result {
-	r := probeline.Result{Time: time.Now().UTC()}
+func request(ctx context.Context, client *http.Client, url string) probe.Result {
+	r := probe.Result{Time: time.Now().UTC()}
 	started := time.Now()
 	var dnsStart, connectStart time.Time
 	trace := &httptrace.ClientTrace{

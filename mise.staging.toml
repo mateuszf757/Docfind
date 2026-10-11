@@ -4,7 +4,7 @@
 #   MISE_ENV=staging ./bin/mise exec -- kubectl get pods -A
 # trafiają w klaster stagingu — dft przez DOCFIND_ENV, kubectl przez
 # KUBECONFIG. Obie wartości muszą się zgadzać z definicją; pilnuje tego
-# test w tools/internal/env.
+# test w tools/internal/core/environment.
 [env]
 DOCFIND_ENV = "staging"
 KUBECONFIG = "{{config_root}}/.cache/kubeconfig-staging"

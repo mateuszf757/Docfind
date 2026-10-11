@@ -1,5 +1,5 @@
 # Środowisko dev — pętla wewnętrzna autora: lokalny klaster k3d, obraz
-# z drzewa roboczego. Definicja czytana przez dft (tools/internal/env)
+# z drzewa roboczego. Definicja czytana przez dft (tools/internal/core/environment)
 # zamiast stałych w kodzie bramek; `dft test` renderuje z niej charty
 # i sprawdza je tak samo jak w pozostałych środowiskach.
 name: dev

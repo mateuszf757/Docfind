@@ -371,7 +371,7 @@ sekrety każdego pipeline'u z `@v…`. Binarki i charty były już weryfikowane
 sumą; obrazy i akcje nie, co było niespójne. Teraz: obrazy narzędzi, k3s, bazy
 w Dockerfile i obraz CoreDNS mają digest indeksu (działa na każdej
 architekturze), akcje pełne SHA z komentarzem wersji. Polityka w
-`tools/internal/policy` odrzuca obraz komponentu platformy bez digestu.
+`tools/internal/core/policy` odrzuca obraz komponentu platformy bez digestu.
 
 **Luki znalezione po wprowadzeniu.** Przypięcie objęło to, co projekt pobiera
 sam, ale nie to, co w trakcie biegu pobierały za niego narzędzia:
@@ -407,7 +407,7 @@ użytkownik nie powstaje przez `adduser` (zapisywał dzisiejszą datę w
 `checked-hash`, zamiast instalowany przez uv — który zapisywał w dist-info
 ctime źródła, niemożliwe do ustawienia z przestrzeni użytkownika. Każdą z tych
 przyczyn znalazło porównanie warstwa po warstwie (wtedy `ci/compare_oci.py`,
-dziś `tools/internal/oci`).
+dziś `tools/internal/kit/ociarchive`).
 
 Czasy modyfikacji są **ustawiane** na czas commita, a nie tylko przycinane.
 `rewrite-timestamp` w BuildKit przycina wyłącznie czasy nowsze od
@@ -434,7 +434,7 @@ rejestru trafiała kopia z magazynu demona, już bez niej. Teraz `dft build`
 publikuje prosto z BuildKitu (`type=image,push=true`, `--provenance=mode=max`)
 i przy każdej publikacji sprawdza w rejestrze, że indeks ma manifest atestacji,
 a konfiguracja obrazu — czyli warstwy po rozpakowaniu — jest ta sama co w
-obrazie, który przeszedł sprawdzenia (`tools/internal/registry`). Digest
+obrazie, który przeszedł sprawdzenia (`tools/internal/adapters/registry`). Digest
 opublikowanego obrazu jest wyjściem zadania `build` i trafia do jego
 podsumowania.
 
@@ -595,7 +595,8 @@ Układ:
 
 Przenoszenie szło etapami i stary skrypt znikał dopiero po parytecie: ten sam
 werdykt starego i nowego kodu na tym samym wejściu, różnice wyjaśnione.
-Kolejno: tożsamość artefaktu (`tools/internal/identity`, decyzja 30), bramki
+Kolejno: tożsamość artefaktu (wtedy `tools/internal/identity`, dziś
+`core/artifact` i `adapters/git` — decyzja 39; decyzja 30), bramki
 artefaktu (build, baza, testy na musl, warunki Etapu 1, powtarzalność),
 bramki klastrowe, wdrożenie, polityki i schematy CRD. W `ci/` zostały
 `ci/dft` — wejście, które buduje i uruchamia program — i dane `ci/pins.env`;
@@ -737,7 +738,7 @@ w trybie `-strict` potrzebuje schematu dla każdego zasobu, także z CRD
 (Gateway, HTTPRoute, Certificate, EnvoyProxy). Gotowe katalogi schematów CRD
 nie nadążają za wydaniami, więc walidacja względem starszej wersji
 przepuszczałaby pola, których API server nie przyjmie, albo odrzucała nowe.
-`tools/internal/crdschema` (wcześniej `ci/crd_schemas.py`) generuje schematy
+`tools/internal/core/crdschema` (wcześniej `ci/crd_schemas.py`) generuje schematy
 z CRD wyrenderowanych z przypiętych
 chartów, z `additionalProperties: false` wszędzie, gdzie CRD nie dopuszcza
 nieznanych pól — literówka w polu zasobu jest błędem, tak jak dla zasobów
@@ -778,7 +779,8 @@ połączeniach tylko od niego.
 adnotowany `vX.Y.Z` na commicie z `main`, w schemacie `0.<etap>.<łatka>`:
 `v0.3.0` to Etap 3, poprawki w jego obrębie podbijają łatkę, `v0.4.0` przychodzi
 z Etapem 4, a `v1.0.0` z pierwszą dostawą do klienta (Etap 10). Tag jest
-jedynym źródłem wersji. `dft version` (`tools/internal/identity`) daje na nim
+jedynym źródłem wersji. `dft version` (reguły w `tools/internal/core/artifact`,
+odczyt z gita w `tools/internal/adapters/git`) daje na nim
 `X.Y.Z`, a między tagami
 `X.Y.(Z+1)-dev.<commity od tagu>+<sha>`, czyli wersję przedpremierową
 następnej łatki. Surowe `git describe` (`0.3.0-5-gabc1234`) SemVer czyta jako
@@ -798,7 +800,7 @@ Przy okazji wyszedł błąd poprzedniej wersji `df_version`: `git describe
 --dirty` nie widzi plików nieśledzonych, więc build na tagu z nowym, jeszcze
 niedodanym plikiem podałby się za czyste wydanie. Teraz brud ocenia
 `git status --porcelain`, jak na ścieżce bez tagu; pilnują tego testy na
-prawdziwym repozytorium gita (`go test ./internal/identity` w `tools/`).
+prawdziwym repozytorium gita (`go test ./internal/adapters/git` w `tools/`).
 Podstawienie surowego `git describe` w miejsce tej logiki oblewa cztery z nich,
 w tym dokładnie ten przypadek.
 
@@ -831,7 +833,7 @@ pomijać.
 ## 31. Pod Security `restricted` na przestrzeni nazw aplikacji
 
 **Wybieram regułę w API serverze, nie tylko w CI.** Polityki z zadania test
-(dziś `tools/internal/policy`) pilnują tego, co przechodzi przez pipeline. Pod utworzony skryptem — jak sonda drainu,
+(dziś `tools/internal/core/policy`) pilnują tego, co przechodzi przez pipeline. Pod utworzony skryptem — jak sonda drainu,
 która nie miała `securityContext` — nie przechodził przez nic. Przestrzeń nazw
 `docfind` dostaje etykiety Pod Security Admission `enforce` i `warn` na poziomie
 `restricted`, z wersją profilu przypiętą do wersji klastra (`v1.36` z
@@ -1225,6 +1227,99 @@ w zakładce Actions.
 klastrze klienta i mierzy `helm rollback`; w Etapie 5 staging dostaje digest
 z mechanizmu GitOps (decyzja przed Etapem 5), a wynik wdrożenia wraca do
 GitHuba jako status środowiska `staging`.
+
+## 39. Warstwy narzędzi: kit, core, adapters, stages
+
+**Wybieram cztery warstwy z jednym kierunkiem zależności, pilnowane
+bramką.** Decyzja 23 przeniosła logikę do Go, ale układ został po
+skryptach: 31 płaskich pakietów w `tools/internal`, każdy z własnym
+wywołaniem programów i własnym klientem client-go. Nic nie zabraniało, żeby
+`policy` importował `kube`. Narzędzie (`proc`), etap (`deploy`) i system
+zewnętrzny (`kube`) leżały obok siebie; `docker` i `oci` dzieliły temat bez
+podziału; `env` znaczyło i plik definicji, i środowisko. Nie było typu
+„artefakt z digestem" ani etapu promocji — promocja żyła w `cmd/dft`,
+a sprawdzenie obrazu z rejestru było prywatną metodą wdrożenia, skopiowaną
+z różnicą do bramki atestacji. Skutek było widać w testach: bramka, która sama
+uruchamia `kubectl` i woła client-go, sprawdza się tylko na żywym klastrze
+— pokrycie runtime 3%, tls 4%, deploy 21%, drain 28%, `cmd/dft` 0%.
+
+Układ:
+
+- **kit** — narzędzia bez wiedzy o domenie: `cli` (kody wyjścia,
+  komunikaty), `proc` (uruchamianie programów), `fetch`, `poll`,
+  `manifest`, `ociarchive`.
+- **core** — typy i reguły domeny bez wejścia-wyjścia do systemów
+  zewnętrznych: `artifact` (rdzeń build-once: artefakt z digestem indeksu
+  i konfiguracji, publikacja, pochodzenie, tożsamość z decyzji 30),
+  `environment` (definicja środowiska, dawne `env`), `cluster`,
+  `container`, `loopback`, `pins`, `policy`, `crdschema`, `probe` (format
+  logu sondy drainu, dawne `probeline`), `vuln`, `reposettings`, `ci`,
+  `layers`.
+- **adapters** — każdy to jeden system zewnętrzny: `docker` (lokalny silnik
+  i BuildKit), `registry` (zdalny rejestr, go-containerregistry), `git`,
+  `kube` (API, a dla drainu, odnowienia certyfikatu i zrzutów dowodów
+  kubectl i cmctl na tym samym kontekście), `k3d`, `helm`, `github` (gh),
+  `gotool`, `uv`, `lint`, `kubeconform`, `osv`, `cloudflare`, `host`,
+  `httpclient`.
+- **stages** — etapy i bramki: `build`, `reproducible`, `admission`,
+  `deploy`, `promote`, `identity`, `drain`, `ingress` (`dft check tls`),
+  `lifecycle` (`dft check runtime`), `evidence`, `dnstoken`, `vulns`,
+  `trial`, `gocode`, `versions`, `charts`, `baseimage`, `imagetest`,
+  `reposync`. Etap mówi, czego potrzebuje, interfejsem (portem) we
+  własnym pakiecie, na typach z `core` — adapter nie może zaimportować
+  etapu, więc typy portu nie mogą mieszkać w etapie.
+- **cmd/dft** — korzeń kompozycji: argumenty, zmienne, składanie etapów
+  z adapterami, raporty i podsumowania biegu.
+
+Reguły (`core/layers`, krok `warstwy` w `dft check go`, każda reguła
+z wariantem, który ma zostać odrzucony):
+
+- cmd → stages, adapters, core, kit; stages → stages, core, kit;
+  adapters → core, kit; core → core, kit; kit → kit. Etapy nigdy nie
+  importują adapterów; adaptery nie importują siebie nawzajem — składa je
+  cmd.
+- Rdzeń i etapy nie sięgają po mechanizmy wejścia-wyjścia: `os/exec`,
+  `net`, `net/http`, `syscall`, `kit/proc`, `kit/fetch`, a z bibliotek
+  spoza modułu tylko po typy Kubernetesa, nazwy obrazów i YAML. To
+  zaostrzenie zasady „kit dostępny dla wszystkich": etap, który uruchamia
+  `kubectl` przez `kit/proc`, nie importuje adaptera, a robi jego pracę.
+- Pakiet poza warstwami (nowy `internal/foo`) to naruszenie — płaska lista
+  nie odrośnie po cichu.
+- Reguły obejmują kod produkcyjny. Test etapu może złożyć go z prawdziwym
+  adapterem na atrapach: build z gitem na repozytorium tymczasowym
+  i Dockerem na nagranych odpowiedziach sprawdza też, jak żądanie etapu
+  przekłada się na flagi buildx.
+
+Po drodze, poza przeniesieniem:
+
+- Jedna polityka wpuszczania obrazu z rejestru (`stages/admission`) dla
+  wdrożenia, promocji i bramki atestacji. Dwie kopie różniły się wymogiem
+  tagu źródła; teraz wydanie (wersja X.Y.Z) z wymaganą atestacją zawsze
+  musi pochodzić z tagu swojej wersji, także na stagingu.
+- Raporty drainu i wejścia zapisują każdy niespełniony warunek — odmowa
+  blokady drainu wcześniej do `unmet` nie trafiała.
+- Pętle „sprawdź, odczekaj" w jednym miejscu (`kit/poll`) zamiast ośmiu
+  kopii z trzema funkcjami `sleep`.
+- Klucze przypięć jako stałe (`pins.K3sImage`), charty platformy jako typ
+  (`pins.Chart`) — literówka w kluczu to błąd kompilacji, a nie panika.
+- `httpclient` łączy się wyłącznie z 127.0.0.1 — decyzja 17 w kodzie,
+  a nie w dyscyplinie.
+- Pokrycie po zmianie: etapy 70–94% (runtime 82%, wejście 82%, wdrożenie
+  73%, drain 82%), pełny bieg drainu, odnowienia certyfikatu i wdrożenia
+  sprawdzany na atrapach, bez klastra.
+
+**Co tracę:** więcej pakietów (55 zamiast 31) i interfejsy, z których
+większość ma jedną implementację produkcyjną — czytelnik skacze do
+definicji przez port, a nie wprost. Zmiana flag programu zewnętrznego
+dotyka adaptera, a nie bramki. Reguła o wejściu-wyjściu jest ostrzejsza niż
+„kit dla wszystkich"; luzuje się ją w jednym miejscu (`core/layers`),
+świadomie.
+
+**Kiedy zmieniam zdanie:** gdy port staje się przelotką — metoda, która
+tylko woła program, bez decyzji do przetestowania — etap jest zbędny i cmd
+woła adapter wprost, jak dziś przy lintach workflowów i Pythonie. Gdy
+któryś adapter zacznie potrzebować innego, to sygnał, że brakuje etapu,
+a nie wyjątku w regule.
 
 ## Czego bym dziś nie powtórzył
 
