@@ -156,14 +156,37 @@ func TestBuildLocal(t *testing.T) {
 			t.Fatalf("%s: buildów %d, oczekiwano 1", tt.driver, len(builds))
 		}
 		args := strings.Join(builds[0], " ")
-		for _, want := range []string{"--provenance=false", "--output " + tt.output, "--tag " + image + ":0.0.0-dev.1-" + commit[:7], "--tag " + image + ":" + commit[:12], "SOURCE_DATE_EPOCH=1790856000"} {
+		for _, want := range []string{"--provenance=false", "--output " + tt.output, "--tag " + image + ":" + commit[:12] + " ", "COMMIT=" + commit, "SOURCE_DATE_EPOCH=1790856000"} {
 			if !strings.Contains(args, want) {
 				t.Errorf("%s: build bez %q:\n%s", tt.driver, want, args)
 			}
 		}
-		if res.Version != "0.0.0-dev.1+"+commit[:7] {
-			t.Errorf("%s: wersja %q", tt.driver, res.Version)
+		// Wersja zależy od tagów, a nie od commita — nie trafia do obrazu
+		// (decyzja 40), a obraz ma jeden tag.
+		if strings.Contains(args, "VERSION=") || strings.Count(args, "--tag ") != 1 {
+			t.Errorf("%s: wersja w argumentach albo więcej tagów:\n%s", tt.driver, args)
 		}
+		if res.Version != "0.0.0-dev.1+"+commit[:7] || res.LocalRef() != image+":"+commit[:12] {
+			t.Errorf("%s: wersja %q, obraz %s", tt.driver, res.Version, res.LocalRef())
+		}
+	}
+}
+
+// TestBuildDirty: obraz z brudnego drzewa nie podaje się za obraz commita.
+func TestBuildDirty(t *testing.T) {
+	quiet(t)
+	root := gitRepo(t)
+	commit := commitOf(t, root)
+	if err := os.WriteFile(filepath.Join(root, "nowy"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := &fakeDocker{driver: "docker", reportCommit: commit}
+	res, err := newBuilder(t, root, f).Build(context.Background(), Options{Root: root, Service: "api", Image: image})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.LocalRef() != image+":"+commit[:12]+"-dirty" || !strings.HasSuffix(res.Version, "-dirty") {
+		t.Errorf("brudne drzewo: %s, wersja %q", res.LocalRef(), res.Version)
 	}
 }
 
@@ -177,11 +200,10 @@ func TestBuildRejects(t *testing.T) {
 		wantMsg  string
 		noBuilds bool
 	}{
-		{name: "wydanie bez tagu", opts: Options{Release: true}, wantMsg: "wymaga commita z tagiem vX.Y.Z", noBuilds: true},
 		{
-			name:     "wydanie z brudnego drzewa",
+			name:     "publikacja z brudnego drzewa",
 			prepare:  func(root string) { _ = os.WriteFile(filepath.Join(root, "nowy"), []byte("x"), 0o644) },
-			opts:     Options{Release: true},
+			opts:     Options{Push: true, SBOMGenerator: "g"},
 			wantMsg:  "drzewo robocze jest brudne",
 			noBuilds: true,
 		},
@@ -232,7 +254,7 @@ func TestBuildPush(t *testing.T) {
 		t.Fatalf("buildów %d, oczekiwano 2 (kopia lokalna i publikacja)", len(builds))
 	}
 	push := strings.Join(builds[1], " ")
-	for _, want := range []string{"--provenance=mode=max", "--attest type=sbom,generator=" + generator, "--output type=image,push=true,rewrite-timestamp=true,unpack=false"} {
+	for _, want := range []string{"--provenance=mode=max", "--attest type=sbom,generator=" + generator, "--output type=image,push=true,rewrite-timestamp=true,unpack=false", "--tag " + image + ":" + commitOf(t, root)[:12]} {
 		if !strings.Contains(push, want) {
 			t.Errorf("publikacja bez %q:\n%s", want, push)
 		}
@@ -240,7 +262,7 @@ func TestBuildPush(t *testing.T) {
 	if want := []string{image + "@" + digest, config}; !slices.Equal(reg.verified, want) {
 		t.Errorf("weryfikacja %v, oczekiwano %v", reg.verified, want)
 	}
-	if res.Publication == nil || res.Config != config || res.Ref() != image+"@"+digest {
+	if res.Publication == nil || res.Config != config || res.Ref() != image+"@"+digest || res.Pinned() != image+":"+commitOf(t, root)[:12]+"@"+digest {
 		t.Errorf("wynik %+v", res)
 	}
 }

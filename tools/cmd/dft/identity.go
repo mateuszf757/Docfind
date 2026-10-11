@@ -9,7 +9,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 )
 
-const identityUsage = "dft identity <version|docker-tag [wersja]|commit|source-date-epoch|source-date [epoch]|image <usługa>|require-clean>"
+const identityUsage = "dft identity <version|commit|source-date-epoch|source-date [epoch]|image <usługa>|require-clean>"
 
 func runVersion(ctx context.Context, w *workspace, args []string) error {
 	if err := expectArgs(args, 0, 0, "dft version"); err != nil {
@@ -42,21 +42,6 @@ func printIdentity(ctx context.Context, w *workspace, args []string) error {
 			return err
 		}
 		value = v
-	case "docker-tag":
-		if err := expectArgs(rest, 0, 1, identityUsage); err != nil {
-			return err
-		}
-		version := ""
-		if len(rest) == 1 {
-			version = rest[0]
-		} else {
-			v, err := repo.Version(ctx)
-			if err != nil {
-				return err
-			}
-			version = v
-		}
-		value = artifact.DockerTag(version)
 	case "commit":
 		if err := expectArgs(rest, 0, 0, identityUsage); err != nil {
 			return err

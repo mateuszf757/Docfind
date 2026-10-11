@@ -60,9 +60,9 @@ func Options(ctx context.Context) []remote.Option {
 
 // Inspect sprawdza budowę publikacji ref (repozytorium@digest): indeks
 // z dokładnie jednym manifestem obrazu i z manifestem atestacji, który na
-// niego wskazuje. Zwraca publikację z wersją i commitem z etykiet obrazu;
-// z niczym jej nie porównuje — to robi wywołujący (Verify, wdrożenie po
-// digeście, promocja).
+// niego wskazuje. Zwraca publikację z commitem z etykiety obrazu; z niczym
+// jej nie porównuje — to robi wywołujący (Verify, wdrożenie po digeście,
+// wydanie, promocja).
 //
 // Wynik negatywny (cli.Unmet): w rejestrze nie ma publikacji w tej postaci.
 // Awaria (zwykły błąd): rejestr nieosiągalny albo odpowiedź nieczytelna.
@@ -128,14 +128,12 @@ func (c Client) Inspect(ctx context.Context, ref string) (artifact.Publication, 
 	if err != nil {
 		return artifact.Publication{}, fmt.Errorf("konfiguracja %s: %w", image.Digest, err)
 	}
-	labels := file.Config.Labels
 	return artifact.Publication{
 		Artifact: artifact.Artifact{
 			Repository: digestRef.Context().Name(),
 			Digest:     desc.Digest.String(),
 			Config:     config.String(),
-			Version:    labels[artifact.VersionLabel],
-			Commit:     labels[artifact.RevisionLabel],
+			Commit:     file.Config.Labels[artifact.RevisionLabel],
 		},
 		Image:       image.Digest.String(),
 		Attestation: attestation,
@@ -179,6 +177,37 @@ func (c Client) Verify(ctx context.Context, ref, wantConfig string) (artifact.Pu
 		return p, cli.Unmet("w rejestrze obraz z konfiguracją %s, a sprawdzony miał %s", p.Config, wantConfig)
 	}
 	return p, p.RequireAttestations()
+}
+
+// Tag dopisuje w rejestrze tag do opublikowanego indeksu ref
+// (repozytorium@digest): ten sam manifest pod nową nazwą, bez ponownej
+// publikacji — digest się nie zmienia (wydanie, decyzja 40). Tag, który już
+// wskazuje na inny digest, to warunek niespełniony: tagi wydań się nie
+// przesuwają.
+func (c Client) Tag(ctx context.Context, ref, tag string) error {
+	digestRef, err := name.NewDigest(ref)
+	if err != nil {
+		return fmt.Errorf("referencja %q: oczekiwano repozytorium@sha256:…: %w", ref, err)
+	}
+	tagRef := digestRef.Context().Tag(tag)
+	existing, err := remote.Head(tagRef, c.opts(ctx)...)
+	var terr *transport.Error
+	switch {
+	case err == nil && existing.Digest.String() == digestRef.DigestStr():
+		return nil
+	case err == nil:
+		return cli.Unmet("tag %s wskazuje na %s, a wydanie to %s — tagi wydań się nie przesuwają", tagRef, existing.Digest, digestRef.DigestStr())
+	case !errors.As(err, &terr) || terr.StatusCode != http.StatusNotFound:
+		return fmt.Errorf("odczyt %s: %w", tagRef, err)
+	}
+	desc, err := remote.Get(digestRef, c.opts(ctx)...)
+	if err != nil {
+		return fmt.Errorf("pobranie %s z rejestru: %w", ref, err)
+	}
+	if err := remote.Tag(tagRef, desc, c.opts(ctx)...); err != nil {
+		return fmt.Errorf("tag %s: %w", tagRef, err)
+	}
+	return nil
 }
 
 // Save zapisuje obraz linux/amd64 spod ref (tag albo digest) do

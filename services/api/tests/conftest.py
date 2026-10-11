@@ -28,6 +28,7 @@ from tests.data import MINIMAL_CONFIG_YAML
 
 WriteRawVersionFile = Callable[[str], Path]
 WriteBuildInfo = Callable[[dict[str, Any]], Path]
+SetDeployedVersion = Callable[[str], None]
 WriteConfigFile = Callable[[str], Path]
 
 
@@ -41,6 +42,13 @@ def _isolated_build_info_cache() -> Iterator[None]:
     version_module.build_info.cache_clear()
     yield
     version_module.build_info.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def _no_deployed_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Wersja wdrożenia przychodzi ze zmiennej środowiskowej — ta z powłoki,
+    w której biegną testy, nie może przeciec do asercji."""
+    monkeypatch.delenv(version_module.VERSION_ENV, raising=False)
 
 
 @pytest.fixture
@@ -89,6 +97,16 @@ def given_build_info(given_raw_version_file: WriteRawVersionFile) -> WriteBuildI
         return given_raw_version_file(json.dumps(payload))
 
     return _write
+
+
+@pytest.fixture
+def given_deployed_version(monkeypatch: pytest.MonkeyPatch) -> SetDeployedVersion:
+    """Podstawia wersję wdrożenia — to, co chart ustawia w DOCFIND_VERSION."""
+
+    def _set(version: str) -> None:
+        monkeypatch.setenv(version_module.VERSION_ENV, version)
+
+    return _set
 
 
 @pytest.fixture

@@ -29,7 +29,10 @@ zero nieudanych, proxy podaje nowy certyfikat bez restartu.
 - obraz publikowany z atestacją pochodzenia, sprawdzaną w rejestrze razem
   z tym, że to obraz przetestowany; digest w wyjściach zadania `build`
   (korekta decyzji 21); po wdrożeniu `/version` sprawdzany na każdym podzie
-- wersje z tagów `vX.Y.Z`, numer minor to etap (decyzja 30)
+- wersje z tagów `vX.Y.Z`, numer minor to etap (decyzja 30); wydanie nadaje
+  numer digestowi z `main`, który przeszedł staging — bez ponownego buildu,
+  wersja wdrożenia idzie zmienną `DOCFIND_VERSION`, a nie przez obraz
+  (decyzja 40)
 - logika narzędzi i bramek przechodzi z Basha do Go (`tools/`, program `dft`):
   wersja z gita jest już liczona w Go i testowana na prawdziwych
   repozytoriach, przypięcia są plikiem danych `ci/pins.env`, a binarka
@@ -74,7 +77,8 @@ zero nieudanych), i sprząta po sobie także po przerwaniu.
 
 Zrobione w Etapach 0–1:
 
-- `/version` raportuje wersję z `git describe` i commit zgodny z HEAD
+- `/version` raportuje commit z obrazu, zgodny z HEAD, i wersję wdrożenia
+  z `DOCFIND_VERSION` (decyzja 40)
 - obraz jest samoopisujący się i waży 120 MB; buduje się z `uv.lock`, więc
   zawiera dokładnie wersje, które przeszły testy
 - konfiguracja walidowana modelem Pydantic — nieznany klucz albo zła wartość
@@ -83,7 +87,7 @@ Zrobione w Etapach 0–1:
 - `get_secret()` jako jedyne wejście do sekretów, gotowe na Vaulta z Etapu 4
 - `/metrics` z licznikiem żądań i histogramem czasu, z etykietą trasy jako
   szablonem — bez tego skan katalogów wysadziłby kardynalność
-- build wydania z brudnego drzewa jest odrzucany
+- publikacja obrazu z brudnego drzewa jest odrzucana
 - warunki zakończenia etapu sprawdzane skryptem, nie na słowo
 
 ## Struktura
@@ -142,29 +146,43 @@ Bez tych sekretów workflow niczego nie scala i zostawia ostrzeżenie w PR-ze.
 
 ## Wydania
 
-Wydanie to tag adnotowany `vX.Y.Z` na commicie z `main`. Numer minor to
-ukończony etap (`v0.3.0` = Etap 3), łatka to poprawki w jego obrębie
-(decyzja 30). Tagów `v*` pilnuje reguła: po wypchnięciu nie da się ich
-przesunąć ani usunąć, więc pomyłkę poprawia się kolejnym numerem.
+Wydanie to numer `vX.Y.Z` nadany obrazowi z `main`, który przeszedł
+staging — bez ponownego buildu (decyzja 40). Numer minor to ukończony etap
+(`v0.3.0` = Etap 3), łatka to poprawki w jego obrębie (decyzja 30). Każdy
+commit na `main` buduje się raz: obraz niesie commit, nie wersję, i trafia
+do GHCR z tagiem `<sha12>`, z atestacją BuildKitu (pochodzenie, SBOM)
+i atestacją GitHuba; digest jest w podsumowaniu zadania `build`. Wersję
+podaje wdrożenie zmienną `DOCFIND_VERSION`: ten sam digest jest na stagingu
+`0.3.1-dev.<commity od tagu>+<sha>`, a na produkcji `0.3.1`.
 
 ```bash
-git switch main && git pull --ff-only
-git tag --annotate v0.3.1 -m "Etap 3: <co zawiera wydanie>"
+# 1. digest z main na staging (z podsumowania zadania build)
+MISE_ENV=staging ./bin/mise run cluster:up -- --image ghcr.io/mateuszf757/docfind-api@sha256:…
+# 2. akceptacja tego, co stoi na stagingu, i tag z adnotacją na jego commicie
+./bin/mise run release -- v0.3.1 "Etap 3: <co zawiera wydanie>"
+# 3. wypchnięcie tagu uruchamia wydanie w CI
 git push origin v0.3.1
 ```
 
-Tag uruchamia w CI build wydania i publikuje
-`ghcr.io/mateuszf757/docfind-api:0.3.1` z atestacją BuildKitu (pochodzenie,
-SBOM) i atestacją GitHuba; digest jest w podsumowaniu zadania `build`.
-Wydanie przechodzi bramki klastrowe i skan podatności na tym samym digeście,
-a zadanie `promote` czeka na zgodę w Environment `production` — po niej
-sprawdza digest jeszcze raz, zapisuje wdrożenie (Deployments w repozytorium,
-z linkiem do atestacji) i podaje instalację dla klienta (decyzja 38).
-Obrazy z `main` między tagami mają wersję
-`0.3.2-dev.<commity od tagu>+<sha>` i tag `<sha12>`.
+`release` sprawdza pochodzenie digestu z `main` i numer (większy niż
+ostatnie wydanie, z którego wyrósł commit), uruchamia na stagingu bramki
+akceptacji — tożsamość na podach, drain każdego węzła pod ruchem,
+odnowienie certyfikatu pod ruchem, tożsamość po drainach — i zapisuje ich
+wyniki w tagu razem z digestem. Na tagu CI niczego nie buduje: dopisuje
+w rejestrze `ghcr.io/mateuszf757/docfind-api:0.3.1` do tego samego
+digestu, wystawia atestację wydania z zapisem akceptacji i skanuje digest
+z polityką wydania. Zadanie `promote` czeka na zgodę w Environment
+`production` — po niej sprawdza pochodzenie z `main` i atestację wydania,
+zapisuje wdrożenie (Deployments w repozytorium, z linkiem do atestacji)
+i podaje instalację dla klienta (decyzja 38). Tagów `v*` pilnuje reguła:
+po wypchnięciu nie da się ich przesunąć ani usunąć, więc pomyłkę poprawia
+się kolejnym numerem; tag założony ręcznie, bez zapisu akceptacji, CI
+odrzuca.
 
 ```bash
 gh attestation verify oci://ghcr.io/mateuszf757/docfind-api@sha256:… --repo mateuszf757/Docfind
+gh attestation verify oci://ghcr.io/mateuszf757/docfind-api@sha256:… --repo mateuszf757/Docfind \
+  --predicate-type https://github.com/mateuszf757/Docfind/attestations/release/v1
 ./bin/mise run check:attestation -- ghcr.io/mateuszf757/docfind-api@sha256:…
 docker buildx imagetools inspect ghcr.io/mateuszf757/docfind-api:0.3.1 --format '{{json .SBOM}}'
 ```
@@ -182,8 +200,7 @@ i bez sudo.
 ./bin/mise tasks                  # lista zadań
 ./bin/mise run test               # wersje, lint, typy, testy, polityki, kod Go — jak zadanie test w CI
 ./bin/mise run ci                 # cały pipeline po kolei, jak w CI (bez publikacji)
-./bin/mise run build              # build obrazu z wersją z gita
-RELEASE=1 ./bin/mise run build    # build wydania — tylko czyste drzewo na tagu vX.Y.Z
+./bin/mise run build              # build obrazu z HEAD — niesie commit, nie wersję
 ./bin/mise run test:image         # testy jednostkowe w obrazie na musl
 ./bin/mise run check:runtime      # warunki zakończenia Etapu 1 (raport JSON w .cache/reports)
 ./bin/mise run test:negatives     # warianty, które bramki Etapu 1 muszą odrzucić
@@ -197,10 +214,11 @@ RELEASE=1 ./bin/mise run build    # build wydania — tylko czyste drzewo na tag
 ./bin/mise run cluster:up -- --image ghcr.io/mateuszf757/docfind-api@sha256:…   # obraz z rejestru po digeście
 ./bin/mise run cluster:drain      # warunek zakończenia Etapu 2
 ./bin/mise run cluster:tls        # warunek zakończenia Etapu 3: odnowienie certyfikatu pod ruchem
-./bin/mise run cluster:identity   # na każdym podzie obraz, wersja i commit z tego drzewa
+./bin/mise run cluster:identity   # na każdym podzie obraz, commit z obrazu i wersja wdrożenia
 ./bin/mise run test:cluster       # to, co API server ma odrzucić (sonda bez securityContext)
 ./bin/mise run cluster:evidence   # dowody z klastra do .cache/reports (jak artefakt w CI)
 ./bin/mise run ci:trial           # okres próbny zadań cluster i vulns: serie zielonych biegów na main
+./bin/mise run release -- vX.Y.Z "tytuł"   # wydanie: akceptacja na stagingu i tag (sekcja Wydania)
 ./bin/mise run dns-token          # token Cloudflare dla Let's Encrypt (DNS-01), raz
 ./bin/mise run cluster:down       # usunięcie klastra
 ./bin/mise exec -- kubectl get pods -A   # kubectl z przypiętej wersji, kubeconfig projektu
@@ -228,7 +246,8 @@ MISE_ENV=staging ./bin/mise exec -- kubectl get pods -A
 | | `dev` | `ci` | `staging` | `prod` |
 |---|---|---|---|---|
 | Klaster | k3d `docfind` | k3d `docfind-ci`, efemeryczny w CI | k3d `docfind-staging`, długo żyjący | do Etapu 10 brak |
-| Obraz | z drzewa, archiwum albo rejestr | artefakt zadania build | digest z rejestru | digest wydania |
+| Obraz | z drzewa, archiwum albo rejestr | artefakt zadania build | digest z `main` | digest z `main` przyjęty jako wydanie |
+| Wersja (`DOCFIND_VERSION`) | z drzewa albo z gita dla commita obrazu | z gita dla commita obrazu | z gita dla commita obrazu | numer wydania |
 | TLS | z `mise.local.toml` | własne CA | Let's Encrypt staging | Let's Encrypt |
 
 Definicja jest listą dozwolonych operacji: `dft` odmawia wszystkiego, czego
@@ -241,6 +260,7 @@ Podgląd działającej usługi. Konfiguracja jest wymagana — bez niej kontener
 ```bash
 mkdir -p /tmp/docfind && cp deploy/config/app.yml.example /tmp/docfind/app.yml
 docker run --rm -p 127.0.0.1:8000:8000 -v /tmp/docfind:/app/config:ro \
+  -e DOCFIND_VERSION="$(./bin/mise exec -- ci/dft identity version)" \
   ghcr.io/mateuszf757/docfind-api:$(git rev-parse --short=12 HEAD)
 curl -s localhost:8000/version
 curl -s localhost:8000/metrics

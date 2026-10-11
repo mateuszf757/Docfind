@@ -75,7 +75,9 @@ func Verify(ctx context.Context, c Cluster, namespace, deployment, container str
 				r.Problem = fmt.Sprintf("nieczytelne /version: %v", err)
 				break
 			}
-			if r.Reported.Version != want.Version || r.Reported.Commit != want.Commit {
+			// Wersja to wersja wdrożenia (DOCFIND_VERSION); pusta — wdrożenie
+			// jej nie ustawia i nie ma czego porównać. Commit pochodzi z obrazu.
+			if r.Reported.Commit != want.Commit || (want.Version != "" && r.Reported.Version != want.Version) {
 				r.Problem = fmt.Sprintf("raportuje %s (%s), oczekiwano %s (%s)", r.Reported.Version, r.Reported.Commit, want.Version, want.Commit)
 			}
 		}
@@ -100,17 +102,17 @@ type Registry interface {
 	Inspect(ctx context.Context, ref string) (artifact.Publication, error)
 }
 
-// Versions — tożsamość drzewa roboczego (adapters/git).
-type Versions interface {
-	Version(ctx context.Context) (string, error)
+// Commits — commit drzewa roboczego (adapters/git).
+type Commits interface {
 	Commit(ctx context.Context) (string, error)
 }
 
-// Expect zwraca, czego oczekiwać od podów z obrazem image. Obraz po
-// digeście pochodzi z rejestru i niesie wersję i commit w etykietach; to,
-// co tam leży, jest punktem odniesienia. Obraz z tagiem lokalnym zbudowano
-// z drzewa roboczego — punktem odniesienia jest git.
-func Expect(ctx context.Context, image string, r Registry, v Versions) (artifact.Expected, error) {
+// Expect zwraca, czego oczekiwać od podów z obrazem image i wersją
+// wdrożenia version (DOCFIND_VERSION z Deploymentu). Obraz po digeście
+// pochodzi z rejestru i niesie commit w etykiecie; to, co tam leży, jest
+// punktem odniesienia. Obraz z tagiem lokalnym zbudowano z drzewa roboczego
+// — punktem odniesienia jest git.
+func Expect(ctx context.Context, image, version string, r Registry, c Commits) (artifact.Expected, error) {
 	if strings.Contains(image, "@") {
 		repository, digest, err := artifact.ParseRef(image)
 		if err != nil {
@@ -120,14 +122,10 @@ func Expect(ctx context.Context, image string, r Registry, v Versions) (artifact
 		if err != nil {
 			return artifact.Expected{}, err
 		}
-		cli.Step("punkt odniesienia: etykiety obrazu w rejestrze (%s)", digest)
-		return artifact.Expected{Image: image, Version: published.Version, Commit: published.Commit}, nil
+		cli.Step("punkt odniesienia: etykieta obrazu w rejestrze (%s)", digest)
+		return artifact.Expected{Image: image, Version: version, Commit: published.Commit}, nil
 	}
-	version, err := v.Version(ctx)
-	if err != nil {
-		return artifact.Expected{}, err
-	}
-	commit, err := v.Commit(ctx)
+	commit, err := c.Commit(ctx)
 	if err != nil {
 		return artifact.Expected{}, err
 	}

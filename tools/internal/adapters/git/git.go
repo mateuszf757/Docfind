@@ -1,6 +1,6 @@
 // Package git zbiera z repozytorium gita fakty o commicie — status, HEAD,
 // tagi wydań, odległość od tagu, czas commita — z których core/artifact
-// wylicza tożsamość artefaktu (decyzje 21 i 30).
+// wylicza tożsamość artefaktu (decyzje 21, 30 i 40), i zakłada tagi wydań.
 //
 // To jedyne miejsce, które pyta gita „co to za wersja i z jakiego commita".
 // /version, etykiety OCI i tagi w rejestrze biorą odpowiedź stąd — gdyby
@@ -74,8 +74,8 @@ func (r Repo) Commit(ctx context.Context) (string, error) {
 	return commit, nil
 }
 
-// Version zwraca wersję artefaktu: fakty z gita, reguła z core/artifact
-// (decyzja 30).
+// Version zwraca wersję drzewa roboczego: fakty z gita, reguła z
+// core/artifact (decyzja 30). Brudne drzewo dostaje przyrostek -dirty.
 //
 // Tagi spoza postaci vX.Y.Z (v0.4.0-rc.1, literówka) są pomijane, a nie
 // zatrzymują buildu: tagów v* nie da się usunąć (ruleset), więc jeden zły
@@ -89,28 +89,84 @@ func (r Repo) Version(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	src := artifact.Source{Commit: commit, Dirty: status != ""}
-	tags, err := r.releaseTags(ctx)
+	return r.version(ctx, artifact.Source{Commit: commit, Dirty: status != ""}, "HEAD")
+}
+
+// VersionOf zwraca wersję commita — tę, którą miałoby czyste drzewo na nim.
+// Obraz nie niesie wersji (decyzja 40); wdrożenie obrazu z rejestru podaje
+// ją aplikacji samo, wyliczoną z historii tego repozytorium.
+func (r Repo) VersionOf(ctx context.Context, commit string) (string, error) {
+	full, err := r.git(ctx, "rev-parse", "--verify", "--quiet", commit+"^{commit}")
+	if err != nil {
+		return "", cli.Unmet("commitu %s nie ma w lokalnym repozytorium — git fetch origin", artifact.ShortCommit(commit))
+	}
+	return r.version(ctx, artifact.Source{Commit: full}, full)
+}
+
+func (r Repo) version(ctx context.Context, src artifact.Source, rev string) (string, error) {
+	tags, err := r.releaseTags(ctx, rev)
 	if err != nil {
 		return "", err
 	}
 	if len(tags) == 0 {
-		if src.Commits, err = r.count(ctx, "HEAD"); err != nil {
+		if src.Commits, err = r.count(ctx, rev); err != nil {
 			return "", err
 		}
 		return artifact.Version(src)
 	}
-	if src.Tag, err = r.nearestTag(ctx, tags); err != nil {
+	if src.Tag, err = r.nearestTag(ctx, tags, rev); err != nil {
 		return "", err
 	}
 	if !artifact.IsReleaseTag(src.Tag) {
 		// Nie powinno się zdarzyć: describe wybiera tylko spośród podanych.
 		return "", fmt.Errorf("git describe zwrócił %q, a to nie jest tag wydania", src.Tag)
 	}
-	if src.Distance, err = r.count(ctx, src.Tag+"..HEAD"); err != nil {
+	if src.Distance, err = r.count(ctx, src.Tag+".."+rev); err != nil {
 		return "", err
 	}
 	return artifact.Version(src)
+}
+
+// LatestRelease zwraca numer najbliższego wydania osiągalnego z commita;
+// pusty — commit nie ma wydań w historii.
+func (r Repo) LatestRelease(ctx context.Context, commit string) (string, error) {
+	tags, err := r.releaseTags(ctx, commit)
+	if err != nil || len(tags) == 0 {
+		return "", err
+	}
+	tag, err := r.nearestTag(ctx, tags, commit)
+	if err != nil {
+		return "", err
+	}
+	version, _ := artifact.ReleaseOfTag(tag)
+	return version, nil
+}
+
+// TagExists mówi, czy tag istnieje w lokalnym repozytorium.
+func (r Repo) TagExists(ctx context.Context, name string) (bool, error) {
+	_, err := r.git(ctx, "rev-parse", "--verify", "--quiet", "refs/tags/"+name)
+	switch {
+	case err == nil:
+		return true, nil
+	case proc.ExitCode(err) > 0:
+		return false, nil
+	default:
+		return false, err
+	}
+}
+
+// CreateTag tworzy tag z adnotacją na commicie. Treść idzie przez stdin,
+// nie argumenty — wieloliniowa i bez cytowania dla powłoki.
+func (r Repo) CreateTag(ctx context.Context, name, commit, message string) error {
+	_, err := r.Runner.Run(ctx, proc.Cmd{
+		Name:  "git",
+		Args:  []string{"-C", r.Dir, "tag", "--annotate", "--file=-", "--cleanup=verbatim", name, commit},
+		Stdin: strings.NewReader(message),
+	})
+	if err != nil {
+		return fmt.Errorf("git tag %s: %w", name, err)
+	}
+	return nil
 }
 
 // count zwraca liczbę commitów w zakresie (`git rev-list --count`).
@@ -126,9 +182,9 @@ func (r Repo) count(ctx context.Context, rng string) (int, error) {
 	return n, nil
 }
 
-// releaseTags zwraca tagi wydań osiągalne z HEAD.
-func (r Repo) releaseTags(ctx context.Context) ([]string, error) {
-	out, err := r.git(ctx, "tag", "--list", "v*", "--merged", "HEAD")
+// releaseTags zwraca tagi wydań osiągalne z rev.
+func (r Repo) releaseTags(ctx context.Context, rev string) ([]string, error) {
+	out, err := r.git(ctx, "tag", "--list", "v*", "--merged", rev)
 	if err != nil {
 		return nil, fmt.Errorf("git tag --list: %w", err)
 	}
@@ -142,15 +198,15 @@ func (r Repo) releaseTags(ctx context.Context) ([]string, error) {
 }
 
 // nearestTag wybiera spośród tagów wydań ten, który git describe uznaje za
-// najbliższy HEAD. Jedno wywołanie z dokładnymi nazwami (--match) zamiast
+// najbliższy rev. Jedno wywołanie z dokładnymi nazwami (--match) zamiast
 // pętli z --exclude: nazwy wydań nie mają znaków wzorców glob, więc pasują
 // tylko same do siebie, a odrzucone tagi w ogóle nie są kandydatami.
-func (r Repo) nearestTag(ctx context.Context, tags []string) (string, error) {
+func (r Repo) nearestTag(ctx context.Context, tags []string, rev string) (string, error) {
 	args := []string{"describe", "--tags", "--abbrev=0"}
 	for _, tag := range tags {
 		args = append(args, "--match", tag)
 	}
-	args = append(args, "HEAD")
+	args = append(args, rev)
 	tag, err := r.git(ctx, args...)
 	if err != nil {
 		return "", fmt.Errorf("git describe: %w", err)
@@ -164,7 +220,8 @@ func (r Repo) nearestTag(ctx context.Context, tags []string) (string, error) {
 // a przebudowa nie wywołuje rolloutu, w którym nic się nie zmieniło.
 //
 // Brudne drzewo dostaje bieżący czas: jego zawartość nie odpowiada żadnemu
-// commitowi, więc nie ma czego odtwarzać, a wersja i tak niesie -dirty.
+// commitowi, więc nie ma czego odtwarzać, a tag obrazu i wersja niosą
+// -dirty.
 func (r Repo) SourceDateEpoch(ctx context.Context) (int64, error) {
 	status, err := r.Status(ctx)
 	if err != nil {
@@ -191,6 +248,12 @@ func (r Repo) SourceDateEpoch(ctx context.Context) (int64, error) {
 // ErrDirtyTree — drzewo robocze ma niezacommitowane zmiany.
 var ErrDirtyTree = errors.New("drzewo robocze jest brudne")
 
+// Dirty mówi, czy drzewo robocze ma zmiany.
+func (r Repo) Dirty(ctx context.Context) (bool, error) {
+	status, err := r.Status(ctx)
+	return status != "", err
+}
+
 // RequireClean odrzuca brudne drzewo. Obraz zbudowany z niezacommitowanych
 // zmian nie da się odtworzyć z commita, który podaje /version — czyli
 // /version kłamie. Wynik negatywny (kod 1), z listą zmian.
@@ -200,7 +263,7 @@ func (r Repo) RequireClean(ctx context.Context) error {
 		return err
 	}
 	if status != "" {
-		return cli.Unmet("%v — build wydania odrzucony:\n%s", ErrDirtyTree, status)
+		return cli.Unmet("%v:\n%s", ErrDirtyTree, status)
 	}
 	return nil
 }

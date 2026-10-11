@@ -47,6 +47,27 @@ func (c *Cluster) DeploymentImage(ctx context.Context, namespace, name, containe
 	return "", fmt.Errorf("deployment %s/%s bez kontenera %s", namespace, name, container)
 }
 
+// DeploymentEnv zwraca wartość zmiennej środowiskowej kontenera w szablonie
+// poda Deploymentu; found — zmienna jest w specyfikacji (choćby pusta).
+func (c *Cluster) DeploymentEnv(ctx context.Context, namespace, name, container, key string) (value string, found bool, err error) {
+	dep, err := c.core.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return "", false, fmt.Errorf("odczyt Deploymentu %s/%s: %w", namespace, name, err)
+	}
+	for _, ctr := range dep.Spec.Template.Spec.Containers {
+		if ctr.Name != container {
+			continue
+		}
+		for _, e := range ctr.Env {
+			if e.Name == key {
+				return e.Value, true, nil
+			}
+		}
+		return "", false, nil
+	}
+	return "", false, fmt.Errorf("deployment %s/%s bez kontenera %s", namespace, name, container)
+}
+
 // Zrzuty stanu klastra do dowodów — w postaci, którą czyta człowiek
 // (kubectl get/describe/logs), a nie w obiektach API.
 

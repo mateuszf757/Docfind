@@ -32,12 +32,12 @@ type command struct {
 var commands = map[string]command{
 	"version": {
 		usage: "dft version",
-		help:  "wersja artefaktu z gita (decyzja 30)",
+		help:  "wersja drzewa z gita (decyzja 30) — wersja wdrożenia, obraz jej nie niesie (decyzja 40)",
 		run:   runVersion,
 	},
 	"identity": {
 		usage: identityUsage,
-		help:  "jedno pole tożsamości artefaktu — dla skryptów, bez parsowania",
+		help:  "jedno pole tożsamości drzewa i obrazu — dla skryptów, bez parsowania",
 		run:   runIdentity,
 	},
 	"pins": {
@@ -52,8 +52,18 @@ var commands = map[string]command{
 	},
 	"build": {
 		usage: "dft build [usługa]",
-		help:  "build obrazu z wersją z gita; RELEASE=1 wydanie, PUSH=1 publikacja, NO_CACHE=1 od zera, ARCHIVE=<plik> archiwum",
+		help:  "build obrazu commita (decyzja 40); PUSH=1 publikacja, NO_CACHE=1 od zera, ARCHIVE=<plik> archiwum",
 		run:   runBuild,
+	},
+	"release": {
+		usage: `dft release <vX.Y.Z> ["tytuł"]`,
+		help:  "wydanie: akceptacja na stagingu obrazu, który tam stoi (tożsamość, drain, TLS), i tag z adnotacją na jego commicie — bez builda",
+		run:   runRelease,
+	},
+	"release-image": {
+		usage: "dft release-image <vX.Y.Z>",
+		help:  "w CI na tagu: zapis wydania z tagu, pochodzenie obrazu z main, tag z numerem w rejestrze; wyjścia dla atestacji i promocji",
+		run:   runReleaseImage,
 	},
 	"test": {
 		usage: "dft test",
@@ -66,8 +76,8 @@ var commands = map[string]command{
 		run:   runCluster,
 	},
 	"promote": {
-		usage: "dft promote <obraz@sha256:…>",
-		help:  "promocja digestu wydania na prod: zgoda w Environment production, wydanie, atestacje, zapis i instalacja dla klienta",
+		usage: "dft promote <obraz@sha256:…> <vX.Y.Z>",
+		help:  "promocja wydania na prod: zgoda w Environment production, pochodzenie z main, atestacja wydania, zapis i instalacja dla klienta",
 		run:   runPromote,
 	},
 	"vulns-issue": {

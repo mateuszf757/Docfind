@@ -85,6 +85,13 @@ type Admission interface {
 	Admit(ctx context.Context, ref string, p admission.Policy) (admission.Admitted, error)
 }
 
+// Versions — wersja commita z historii repozytorium (adapters/git). Obraz
+// nie niesie wersji (decyzja 40); wdrożenie podaje ją aplikacji przez
+// DOCFIND_VERSION.
+type Versions interface {
+	VersionOf(ctx context.Context, commit string) (string, error)
+}
+
 // Deployer — wdrożenie jednego środowiska.
 type Deployer struct {
 	Root string
@@ -105,6 +112,7 @@ type Deployer struct {
 	Connect   Connect
 	Builder   Builder
 	Admission Admission
+	Versions  Versions
 }
 
 // Source — skąd wziąć obraz.
@@ -117,6 +125,8 @@ type Source struct {
 	Config  string
 	// Ref — repozytorium@sha256:… indeksu w rejestrze.
 	Ref string
+	// Release — numer wydania, gdy środowisko przyjmuje tylko wydania.
+	Release string
 }
 
 // image — obraz rozstrzygnięty przed jakąkolwiek zmianą na klastrze.
@@ -236,9 +246,9 @@ func (d Deployer) resolve(ctx context.Context, src Source, tmp string) (image, e
 	case environment.SourceLocal:
 		return d.localImage(ctx)
 	case environment.SourceArchive:
-		return d.archiveImage(src, tmp)
+		return d.archiveImage(ctx, src, tmp)
 	case environment.SourceRegistry:
-		return d.registryImage(ctx, src.Ref)
+		return d.registryImage(ctx, src.Ref, src.Release)
 	default:
 		return image{}, fmt.Errorf("nieznane źródło obrazu %q", src.Kind)
 	}
@@ -269,10 +279,10 @@ func (d Deployer) localImage(ctx context.Context) (image, error) {
 
 // archiveImage sprawdza archiwum `docker save` z zadania build: konfiguracja
 // obrazu to ta, którą zadanie sprawdziło (artefakt nie został podmieniony ani
-// uszkodzony po drodze), a wersję i commit bierze z etykiet obrazu. Archiwum
-// do importu dostaje tag z digestu konfiguracji — z tego samego powodu co
-// obraz lokalny: ten sam tag zawsze znaczy tę samą zawartość.
-func (d Deployer) archiveImage(src Source, tmp string) (image, error) {
+// uszkodzony po drodze), a commit bierze z etykiety obrazu. Archiwum do
+// importu dostaje tag z digestu konfiguracji — z tego samego powodu co obraz
+// lokalny: ten sam tag zawsze znaczy tę samą zawartość.
+func (d Deployer) archiveImage(ctx context.Context, src Source, tmp string) (image, error) {
 	if src.Archive == "" || src.Config == "" {
 		return image{}, cli.Usage("obraz z archiwum wymaga ścieżki archiwum i digestu konfiguracji z zadania build")
 	}
@@ -291,9 +301,13 @@ func (d Deployer) archiveImage(src Source, tmp string) (image, error) {
 	if err != nil {
 		return image{}, fmt.Errorf("archiwum %s: %w", src.Archive, err)
 	}
-	version, commit := labels[artifact.VersionLabel], labels[artifact.RevisionLabel]
-	if version == "" || commit == "" {
-		return image{}, cli.Unmet("archiwum %s: obraz bez etykiet wersji i commita", src.Archive)
+	commit := labels[artifact.RevisionLabel]
+	if commit == "" {
+		return image{}, cli.Unmet("archiwum %s: obraz bez etykiety commita", src.Archive)
+	}
+	version, err := d.Versions.VersionOf(ctx, commit)
+	if err != nil {
+		return image{}, err
 	}
 	tag := "local-" + strings.TrimPrefix(config, "sha256:")[:12]
 	ref := d.Image + ":" + tag
@@ -307,12 +321,18 @@ func (d Deployer) archiveImage(src Source, tmp string) (image, error) {
 
 // registryImage wpuszcza obraz z rejestru według definicji środowiska.
 // Węzły pobierają go po digeście — tag w rejestrze da się nadpisać, digest
-// nie.
-func (d Deployer) registryImage(ctx context.Context, ref string) (image, error) {
-	admitted, err := d.Admission.Admit(ctx, ref, admission.For(d.Env, d.Image))
+// nie. Wersja wdrożenia to numer wydania albo wersja commita z gita.
+func (d Deployer) registryImage(ctx context.Context, ref, release string) (image, error) {
+	admitted, err := d.Admission.Admit(ctx, ref, admission.For(d.Env, d.Image, release))
 	if err != nil {
 		return image{}, err
 	}
 	a := admitted.Publication.Artifact
-	return image{tag: a.Tag(), digest: a.Digest, want: artifact.Expected{Image: a.Pinned(), Version: a.Version, Commit: a.Commit}}, nil
+	version := a.Release
+	if version == "" {
+		if version, err = d.Versions.VersionOf(ctx, a.Commit); err != nil {
+			return image{}, err
+		}
+	}
+	return image{tag: a.Tag(), digest: a.Digest, want: artifact.Expected{Image: a.Pinned(), Version: version, Commit: a.Commit}}, nil
 }

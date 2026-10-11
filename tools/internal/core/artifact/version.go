@@ -13,13 +13,9 @@ import (
 //
 // Stała, a nie `git rev-parse --short`: tamto wydłuża skrót, gdy jest
 // niejednoznaczny w danym repozytorium, a domyślną długość bierze
-// z core.abbrev w konfiguracji użytkownika. Wersja trafia do version.json,
-// czyli do warstwy obrazu — ten sam commit zbudowany lokalnie (więcej
-// obiektów, inna konfiguracja) i w CI dawałby inny obraz (decyzja 21).
+// z core.abbrev w konfiguracji użytkownika — ten sam commit miałby inną
+// wersję lokalnie i w CI.
 const ShortCommitLength = 7
-
-// DockerTagMaxLength — limit długości tagu obrazu w rejestrze.
-const DockerTagMaxLength = 128
 
 // releaseTag to tag wydania vX.Y.Z (decyzja 30). Liczby jak w SemVer: bez
 // zer wiodących — tag v01.2.3 nie wyznacza wersji, tak jak v0.4.0-rc.1.
@@ -33,6 +29,31 @@ func IsReleaseTag(tag string) bool { return releaseTag.MatchString(tag) }
 // IsRelease mówi, czy wersja to wersja wydania X.Y.Z — bez części
 // przedwydaniowej i metadanych, które ma każdy build spoza tagu (decyzja 30).
 func IsRelease(version string) bool { return releaseVersion.MatchString(version) }
+
+// ReleaseOfTag zwraca numer wydania z tagu vX.Y.Z.
+func ReleaseOfTag(tag string) (string, bool) {
+	if !IsReleaseTag(tag) {
+		return "", false
+	}
+	return strings.TrimPrefix(tag, "v"), true
+}
+
+// CompareReleases porównuje numery wydań X.Y.Z liczbowo: -1, 0 albo 1.
+// Wywołujący podaje numery, które przeszły IsRelease.
+func CompareReleases(a, b string) int {
+	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	for i := range 3 {
+		x, _ := strconv.Atoi(pa[i])
+		y, _ := strconv.Atoi(pb[i])
+		switch {
+		case x < y:
+			return -1
+		case x > y:
+			return 1
+		}
+	}
+	return 0
+}
 
 // Source — fakty o commicie z systemu kontroli wersji, z których wynika
 // wersja artefaktu. Zbiera je adapter gita; reguła jest tutaj.
@@ -49,7 +70,8 @@ type Source struct {
 	Commits int
 }
 
-// Version zwraca wersję artefaktu (decyzja 30):
+// Version zwraca wersję z gita (decyzja 30) — wersję wdrożenia, którą chart
+// podaje aplikacji w DOCFIND_VERSION; obraz jej nie niesie (decyzja 40):
 //
 //   - na tagu vX.Y.Z, przy czystym drzewie: X.Y.Z;
 //   - za tagiem albo z brudnym drzewem: X.Y.(Z+1)-dev.<commity od tagu>+<sha>,
@@ -90,26 +112,6 @@ func Version(s Source) (string, error) {
 // version.json i etykiecie org.opencontainers.image.created.
 func SourceDate(epoch int64) string {
 	return time.Unix(epoch, 0).UTC().Format("2006-01-02T15:04:05Z")
-}
-
-// DockerTag zamienia wersję na tag obrazu. SemVer dopuszcza „+" w metadanych
-// builda, tag w rejestrze nie — każdy znak spoza [A-Za-z0-9._-] staje się
-// myślnikiem. Tożsamość w version.json zostaje pełna; to tylko etykieta.
-func DockerTag(version string) string {
-	var b strings.Builder
-	for _, c := range version {
-		switch {
-		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '.', c == '_', c == '-':
-			b.WriteRune(c)
-		default:
-			b.WriteByte('-')
-		}
-	}
-	tag := b.String()
-	if len(tag) > DockerTagMaxLength {
-		tag = tag[:DockerTagMaxLength]
-	}
-	return tag
 }
 
 // DefaultOwner — właściciel repozytorium, gdy GITHUB_REPOSITORY_OWNER jest pusty.

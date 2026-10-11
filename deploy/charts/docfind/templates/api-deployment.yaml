@@ -52,6 +52,11 @@ spec:
         - name: api
           image: "{{ .Values.api.image.repository }}:{{ required "api.image.tag jest wymagany — podaj tag obrazu, nie polegaj na latest" .Values.api.image.tag }}{{ with .Values.api.image.digest }}@{{ . }}{{ end }}"
           imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          env:
+            # Różnica między wdrożeniami idzie przez wdrożenie, a nie przez
+            # obraz (decyzja 40): ten sam digest na stagingu i na produkcji.
+            - name: DOCFIND_VERSION
+              value: {{ .Values.api.version | quote }}
           ports:
             - name: http
               containerPort: {{ .Values.api.config.service.port }}

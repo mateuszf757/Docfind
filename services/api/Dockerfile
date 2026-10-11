@@ -95,12 +95,15 @@ RUN /opt/venv/bin/python -m pytest -q -p no:cacheprovider
 
 FROM python:3.14-alpine@sha256:9e9fde4d32eedce0b661d9ab91e826b62dddf28e928c230ec55f1866cac66b01 AS runtime
 
-ARG VERSION=unknown
 ARG COMMIT=unknown
 ARG SOURCE_DATE=unknown
 
+# Obraz niesie tylko to, co wynika z commita: commit i jego czas. Wersji
+# w nim nie ma (decyzja 40) — zależy od tagów, a nie od treści, i ten sam
+# commit dawałby na main i na tagu dwa różne obrazy. Wydanie nadaje numer
+# digestowi, który przeszedł staging; aplikacja dostaje wersję wdrożenia
+# zmienną DOCFIND_VERSION, jak każdą różnicę między środowiskami.
 LABEL org.opencontainers.image.title="docfind-api" \
-      org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${COMMIT}" \
       org.opencontainers.image.created="${SOURCE_DATE}" \
       org.opencontainers.image.source="https://github.com/mateuszf757/Docfind"
@@ -113,8 +116,8 @@ LABEL org.opencontainers.image.title="docfind-api" \
 # hasła, więc dwa buildy tego samego commita różniłyby się tą warstwą.
 # Konto systemowe bez hasła i bez powłoki nie potrzebuje wpisu w shadow.
 RUN mkdir -p /app/config \
- && printf '{"version":"%s","commit":"%s","source_date":"%s"}\n' \
-      "${VERSION}" "${COMMIT}" "${SOURCE_DATE}" > /app/version.json \
+ && printf '{"commit":"%s","source_date":"%s"}\n' \
+      "${COMMIT}" "${SOURCE_DATE}" > /app/version.json \
  && echo 'docfind:x:10001:' >> /etc/group \
  && echo 'docfind:x:10001:10001:docfind:/app:/sbin/nologin' >> /etc/passwd
 

@@ -56,6 +56,11 @@
             }
           }
         },
+        "version": {
+          "description": "Wersja wdrożenia dla /version (zmienna DOCFIND_VERSION, decyzja 40): wydanie X.Y.Z albo wersja deweloperska z gita; pusta — /version podaje unknown. Bez tagu v z przodu: to wersja, nie tag wydania.",
+          "type": "string",
+          "pattern": "^$|^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"
+        },
         "resources": {
           "type": "object",
           "additionalProperties": false,

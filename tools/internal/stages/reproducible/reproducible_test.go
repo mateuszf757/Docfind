@@ -26,6 +26,7 @@ type versions struct{ dirty bool }
 
 func (versions) Version(context.Context) (string, error)        { return "0.4.1-dev.1+0123456", nil }
 func (versions) Commit(context.Context) (string, error)         { return commit, nil }
+func (v versions) Dirty(context.Context) (bool, error)          { return v.dirty, nil }
 func (versions) SourceDateEpoch(context.Context) (int64, error) { return 1790856000, nil }
 func (v versions) RequireClean(context.Context) error {
 	if v.dirty {

@@ -29,10 +29,17 @@ func runBuild(ctx context.Context, w *workspace, args []string) error {
 		return err
 	}
 	opts := build.Options{Root: w.root, Service: svc, Image: imageName(svc), Out: os.Stdout, Err: os.Stderr}
-	for name, target := range map[string]*bool{"RELEASE": &opts.Release, "PUSH": &opts.Push, "NO_CACHE": &opts.NoCache} {
+	for name, target := range map[string]*bool{"PUSH": &opts.Push, "NO_CACHE": &opts.NoCache} {
 		if *target, err = envFlag(name); err != nil {
 			return err
 		}
+	}
+	// Build wydania nie istnieje od decyzji 40: wydanie nadaje numer
+	// obrazowi z main, który przeszedł staging, zamiast budować go od nowa.
+	if release, err := envFlag("RELEASE"); err != nil {
+		return err
+	} else if release {
+		return cli.Usage("RELEASE=1: wydanie nie buduje obrazu (decyzja 40) — ./bin/mise run release -- vX.Y.Z na digeście ze stagingu")
 	}
 	// ARCHIVE=<plik> — obraz zapisany do archiwum dla wdrożenia bez rejestru.
 	if path := os.Getenv("ARCHIVE"); path != "" {
@@ -78,18 +85,24 @@ func runBuild(ctx context.Context, w *workspace, args []string) error {
 	// Dwa digesty sha256 obok siebie łatwo pomylić: do wdrożenia i promocji
 	// służy digest indeksu, a digest konfiguracji tylko do porównań — pod
 	// nim w rejestrze nie ma manifestu (MANIFEST_UNKNOWN).
-	return appendSummary(fmt.Sprintf("### Opublikowany obraz %s\n\n| Wersja | Obraz do wdrożenia (digest indeksu) | Konfiguracja (tylko do porównań) |\n|---|---|---|\n| %s | `%s` | `%s` |\n\n"+
-		"Na staging, po zielonym biegu:\n\n```bash\nMISE_ENV=staging ./bin/mise run cluster:up -- --image %s\n```\n",
-		svc, res.Version, res.Ref(), res.Config, res.Ref()))
+	return appendSummary(fmt.Sprintf("### Opublikowany obraz %s\n\n| Commit | Obraz do wdrożenia (digest indeksu) | Konfiguracja (tylko do porównań) |\n|---|---|---|\n| `%s` (%s) | `%s` | `%s` |\n\n"+
+		"Na staging, po zielonym biegu — a po akceptacji tam wydanie tego samego digestu (decyzja 40):\n\n```bash\nMISE_ENV=staging ./bin/mise run cluster:up -- --image %s\n./bin/mise run release -- vX.Y.Z\n```\n",
+		svc, artifact.ShortCommit(res.Commit), res.Version, res.Ref(), res.Config, res.Ref()))
 }
 
-// builtImage zwraca obraz:tag zbudowany z bieżącego drzewa.
+// builtImage zwraca obraz:tag zbudowany z bieżącego drzewa: tag z commita,
+// z -dirty dla brudnego drzewa.
 func builtImage(ctx context.Context, w *workspace, svc string) (string, error) {
-	version, err := w.git().Version(ctx)
+	repo := w.git()
+	commit, err := repo.Commit(ctx)
 	if err != nil {
 		return "", err
 	}
-	return imageName(svc) + ":" + artifact.DockerTag(version), nil
+	dirty, err := repo.Dirty(ctx)
+	if err != nil {
+		return "", err
+	}
+	return imageName(svc) + ":" + artifact.LocalTag(commit, dirty), nil
 }
 
 func runTestImage(ctx context.Context, w *workspace, args []string) error {
@@ -231,11 +244,10 @@ func runCheckPublished(ctx context.Context, _ *workspace, args []string) error {
 	return nil
 }
 
-// runCheckAttestation sprawdza opublikowany obraz przed promocją
-// (decyzja 37): w rejestrze indeks z jednym obrazem i atestacją BuildKitu
-// z pochodzeniem i SBOM, a do tego atestacja GitHuba (Sigstore) z workflowu
-// ci tego repozytorium. Wydanie (wersja X.Y.Z w etykiecie) musi pochodzić
-// z tagu swojej wersji.
+// runCheckAttestation sprawdza opublikowany obraz przed wydaniem
+// (decyzje 37 i 40): w rejestrze indeks z jednym obrazem i atestacją
+// BuildKitu z pochodzeniem i SBOM, a do tego atestacja GitHuba (Sigstore)
+// z workflowu ci tego repozytorium, z main.
 func runCheckAttestation(ctx context.Context, w *workspace, args []string) error {
 	if err := expectArgs(args, 1, 1, "dft check attestation <obraz@sha256:…>"); err != nil {
 		return err
@@ -249,7 +261,7 @@ func runCheckAttestation(ctx context.Context, w *workspace, args []string) error
 	}
 	a := admitted.Publication.Artifact
 	return w.writeReport("attestation-"+strings.TrimPrefix(a.Digest, "sha256:")[:12], map[string]any{
-		"image": a.Ref(), "version": a.Version, "commit": a.Commit, "registry": admitted.Publication, "github": admitted.Provenance,
+		"image": a.Ref(), "commit": a.Commit, "registry": admitted.Publication, "github": admitted.Provenance,
 	})
 }
 

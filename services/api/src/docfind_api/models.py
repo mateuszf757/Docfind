@@ -20,7 +20,7 @@ wolno mu podać wersji, której nie da się powiązać z commitem.
 
 
 class BuildInfo(BaseModel):
-    """Tożsamość builda — co to za wersja i z jakiego commita powstała.
+    """Tożsamość builda — z jakiego commita powstał i jako jaka wersja jest wdrożony.
 
     Model jest niezmienny, bo instancja jest współdzielona przez cache
     w `docfind_api.version.build_info`.
@@ -28,7 +28,14 @@ class BuildInfo(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    version: str = Field(description="Wersja z git describe", examples=["1.2.3"])
+    version: str = Field(
+        description=(
+            "Wersja wdrożenia z DOCFIND_VERSION: wydanie X.Y.Z albo wersja deweloperska "
+            "z gita. Obraz jej nie niesie — ten sam digest przechodzi przez staging "
+            "i trafia na produkcję (decyzja 40)."
+        ),
+        examples=["1.2.3"],
+    )
     commit: str = Field(description="Pełne sha commita", examples=["0123456789abcdef"])
     source_date: str = Field(
         description=(

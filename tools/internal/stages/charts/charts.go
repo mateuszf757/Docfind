@@ -87,13 +87,30 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 		cluster.Release{Name: "docfind", Chart: app, Set: []string{"api.image.tag=lint", "api.image.digest=sha256:abc"}}); err != nil {
 		return err
 	}
-	digest := "sha256:" + strings.Repeat("0", 64)
-	var out strings.Builder
-	if err := c.Helm.Template(ctx, cluster.Release{Name: "docfind", Chart: app, Set: []string{"api.image.tag=lint", "api.image.digest=" + digest}}, false, &out); err != nil {
+	// Wersja wdrożenia też: tag wydania (v0.4.0) albo cokolwiek spoza SemVer
+	// ma odpaść na schemacie, zanim /version zacznie to podawać.
+	if err := c.mustReject(ctx, "chart przyjął api.version=v0.4.0 — values.schema.json nie pilnuje wersji",
+		cluster.Release{Name: "docfind", Chart: app, Set: []string{"api.image.tag=lint"}, SetString: []string{"api.version=v0.4.0"}}); err != nil {
 		return err
 	}
-	if !strings.Contains(out.String(), "docfind-api:lint@"+digest+`"`) {
-		return cli.Unmet("api.image.digest nie trafił do referencji obrazu w Deploymencie")
+	// Obraz i wersja tak, jak podaje je wdrożenie (--set-string): tag z samych
+	// cyfr — skrócony commit — zostaje tekstem, digest trafia do referencji
+	// obrazu, a wersja do DOCFIND_VERSION (decyzja 40).
+	digest := "sha256:" + strings.Repeat("0", 64)
+	var out strings.Builder
+	if err := c.Helm.Template(ctx, cluster.Release{Name: "docfind", Chart: app,
+		SetString: []string{"api.image.tag=123456789012", "api.image.digest=" + digest, "api.version=0.4.0"}}, false, &out); err != nil {
+		return err
+	}
+	image, version, err := apiContainer(out.String())
+	if err != nil {
+		return err
+	}
+	switch {
+	case !strings.HasSuffix(image, "/docfind-api:123456789012@"+digest):
+		return cli.Unmet("api.image.tag i api.image.digest nie trafiły do referencji obrazu w Deploymencie (jest %q)", image)
+	case version != "0.4.0":
+		return cli.Unmet("api.version nie trafiło do DOCFIND_VERSION kontenera api (jest %q)", version)
 	}
 
 	var renders []render
@@ -209,6 +226,34 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 }
 
 func (c Checker) path(rel string) string { return filepath.Join(c.Root, rel) }
+
+// apiContainer zwraca obraz i DOCFIND_VERSION kontenera api z renderu
+// charta aplikacji.
+func apiContainer(rendered string) (image, version string, err error) {
+	docs, err := manifest.Parse(strings.NewReader(rendered))
+	if err != nil {
+		return "", "", err
+	}
+	for _, d := range docs {
+		if manifest.String(d, "kind") != "Deployment" {
+			continue
+		}
+		pod := manifest.Map(manifest.Map(manifest.Map(d, "spec"), "template"), "spec")
+		for _, c := range manifest.List(pod, "containers") {
+			container, _ := c.(map[string]any)
+			if manifest.String(container, "name") != "api" {
+				continue
+			}
+			image = manifest.String(container, "image")
+			for _, e := range manifest.List(container, "env") {
+				if env, _ := e.(map[string]any); manifest.String(env, "name") == "DOCFIND_VERSION" {
+					version = manifest.String(env, "value")
+				}
+			}
+		}
+	}
+	return image, version, nil
+}
 
 // mustReject renderuje chart z wartościami, które schemat ma odrzucić.
 func (c Checker) mustReject(ctx context.Context, msg string, r cluster.Release) error {

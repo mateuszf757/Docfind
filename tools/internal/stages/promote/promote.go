@@ -1,12 +1,13 @@
-// Package promote to promocja digestu wydania na środowisko (decyzja 38):
-// ten sam obraz, który przeszedł sprawdzenia, po digeście — nigdy build od
-// nowa dla kolejnego środowiska.
+// Package promote to promocja wydania na środowisko (decyzje 38 i 40): ten
+// sam digest, który zbudowano na main i przyjęto na stagingu, po digeście —
+// nigdy build od nowa dla kolejnego środowiska.
 //
 // W CI promocja biegnie w zadaniu z `environment: production`, więc rusza
 // dopiero po zgodzie autora; etap najpierw sprawdza, że ta zgoda w ogóle
 // jest wymagana. Potem wpuszcza obraz tak, jak przed wdrożeniem na to
-// środowisko (stages/admission). Do Etapu 10 prod nie ma klastra: promocja
-// kończy się zapisem i instalacją, jaką wykonałby klient.
+// środowisko (stages/admission): pochodzenie z main i atestacja wydania
+// o numerze z tagu. Do Etapu 10 prod nie ma klastra: promocja kończy się
+// zapisem i instalacją, jaką wykonałby klient.
 package promote
 
 import (
@@ -14,6 +15,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/mateuszf757/Docfind/tools/internal/core/artifact"
 	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/admission"
@@ -65,8 +67,13 @@ type Promoter struct {
 	Run string
 }
 
-// Promote promuje obraz ref (repozytorium@sha256:…).
-func (p Promoter) Promote(ctx context.Context, ref string) (Promotion, error) {
+// Promote promuje obraz ref (repozytorium@sha256:…) jako wydanie z tagu
+// vX.Y.Z.
+func (p Promoter) Promote(ctx context.Context, ref, tag string) (Promotion, error) {
+	version, ok := artifact.ReleaseOfTag(tag)
+	if !ok {
+		return Promotion{}, cli.Usage("wydanie %q: oczekiwano tagu vX.Y.Z", tag)
+	}
 	cli.Step("promocja na %s (%s)", p.Env.Name, p.Env.Stage)
 	if p.Approvals != nil {
 		// GitHub tworzy środowisko bez żadnych reguł przy pierwszym zadaniu,
@@ -84,19 +91,26 @@ func (p Promoter) Promote(ctx context.Context, ref string) (Promotion, error) {
 	if !p.Env.AllowsSource(environment.SourceRegistry) {
 		return Promotion{}, cli.Unmet("środowisko %s nie przyjmuje obrazów z rejestru (artifact.sources: %v)", p.Env.Name, p.Env.Artifact.Sources)
 	}
-	admitted, err := p.Admission.Admit(ctx, ref, admission.For(p.Env, p.Repository))
+	admitted, err := p.Admission.Admit(ctx, ref, admission.For(p.Env, p.Repository, version))
 	if err != nil {
 		return Promotion{}, err
 	}
 	a := admitted.Publication.Artifact
-	release := Release{Image: a.Pinned(), Tag: a.Tag(), Digest: a.Digest, Version: a.Version, Commit: a.Commit}
+	if a.Release != version {
+		return Promotion{}, cli.Unmet("obraz przyjęty bez atestacji wydania %s — środowisko %s przyjmuje tylko wydania", version, p.Env.Name)
+	}
+	release := Release{Image: a.Pinned(), Tag: a.Tag(), Digest: a.Digest, Version: version, Commit: a.Commit}
 
-	// Chart OCI zastąpi ścieżkę w Etapie 10.
-	values := append(p.Env.AppValues(), "api.image.tag="+release.Tag, "api.image.digest="+release.Digest)
+	// Chart OCI zastąpi ścieżkę w Etapie 10. Wersja wdrożenia przez
+	// DOCFIND_VERSION — obraz jej nie niesie (decyzja 40). Obraz i wersja
+	// jako tekst (--set-string), jak przy wdrożeniu przez dft.
 	var install strings.Builder
 	fmt.Fprintf(&install, "git checkout v%s\nhelm upgrade --install %s deploy/charts/docfind --namespace %s", release.Version, p.Env.App.Release, p.Env.App.Namespace)
-	for _, v := range values {
+	for _, v := range p.Env.AppValues() {
 		fmt.Fprintf(&install, " \\\n  --set %s", v)
+	}
+	for _, v := range []string{"api.image.tag=" + release.Tag, "api.image.digest=" + release.Digest, "api.version=" + release.Version} {
+		fmt.Fprintf(&install, " \\\n  --set-string %s", v)
 	}
 	if p.Env.Cluster.Provider == environment.ProviderNone {
 		cli.Step("środowisko %s nie ma jeszcze klastra (Etap 10): zapis promocji i instalacja dla klienta", p.Env.Name)

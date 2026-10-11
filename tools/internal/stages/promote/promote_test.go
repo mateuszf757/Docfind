@@ -40,7 +40,7 @@ type gate struct {
 func (g gate) Admit(_ context.Context, ref string, p admission.Policy) (admission.Admitted, error) {
 	*g.policy = p
 	repository, d, _ := artifact.ParseRef(ref)
-	return admission.Admitted{Publication: artifact.Publication{Artifact: artifact.Artifact{Repository: repository, Digest: d, Version: "0.4.0", Commit: commit}}}, g.err
+	return admission.Admitted{Publication: artifact.Publication{Artifact: artifact.Artifact{Repository: repository, Digest: d, Commit: commit, Release: p.Release}}}, g.err
 }
 
 type approvals struct {
@@ -59,18 +59,19 @@ func TestPromote(t *testing.T) {
 	ctx := context.Background()
 	var policy admission.Policy
 	p := Promoter{Env: definition(t, "prod"), Repository: apiImage, Admission: gate{policy: &policy}, Run: "https://github.com/o/r/actions/runs/1"}
-	got, err := p.Promote(ctx, apiImage+"@"+digest)
+	got, err := p.Promote(ctx, apiImage+"@"+digest, "v0.4.0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.Release.Image != apiImage+":0.4.0@"+digest || got.Release.Tag != "0.4.0" || got.Run == "" {
 		t.Errorf("promocja %+v", got)
 	}
-	// Polityka produkcji: tylko wydania z atestacją, tylko obraz aplikacji.
-	if !policy.ReleasesOnly || !policy.Attested || policy.Repository != apiImage || policy.Environment != "prod" {
+	// Polityka produkcji: tylko wydanie z tagu, z atestacjami, tylko obraz
+	// aplikacji.
+	if !policy.ReleasesOnly || !policy.Attested || policy.Release != "0.4.0" || policy.Repository != apiImage || policy.Environment != "prod" {
 		t.Errorf("polityka %+v", policy)
 	}
-	for _, want := range []string{"git checkout v0.4.0", "--set api.image.digest=" + digest, "--set route.hostname="} {
+	for _, want := range []string{"git checkout v0.4.0", "--set-string api.image.digest=" + digest, "--set-string api.version=0.4.0", "--set route.hostname="} {
 		if !strings.Contains(got.Install, want) {
 			t.Errorf("instalacja bez %q:\n%s", want, got.Install)
 		}
@@ -82,19 +83,24 @@ func TestPromote(t *testing.T) {
 	t.Run("środowisko GitHuba bez zgody", func(t *testing.T) {
 		p := p
 		p.Approvals, p.GitHubRepo, p.GitHubEnvironment = approvals{required: false}, "o/r", "production"
-		if _, err := p.Promote(ctx, apiImage+"@"+digest); cli.ExitCode(err) != cli.ExitUnmet {
+		if _, err := p.Promote(ctx, apiImage+"@"+digest, "v0.4.0"); cli.ExitCode(err) != cli.ExitUnmet {
 			t.Errorf("promocja bez zgody: %v", err)
 		}
 		p.Approvals = approvals{err: errors.New("API")}
-		if _, err := p.Promote(ctx, apiImage+"@"+digest); cli.ExitCode(err) != cli.ExitFailure {
+		if _, err := p.Promote(ctx, apiImage+"@"+digest, "v0.4.0"); cli.ExitCode(err) != cli.ExitFailure {
 			t.Errorf("awaria API: %v", err)
 		}
 	})
 	t.Run("środowisko bez źródła rejestru", func(t *testing.T) {
 		p := Promoter{Env: definition(t, "ci"), Repository: apiImage, Admission: gate{policy: &policy}}
 		p.Env.Artifact.Sources = []string{environment.SourceArchive}
-		if _, err := p.Promote(ctx, apiImage+"@"+digest); cli.ExitCode(err) != cli.ExitUnmet {
+		if _, err := p.Promote(ctx, apiImage+"@"+digest, "v0.4.0"); cli.ExitCode(err) != cli.ExitUnmet {
 			t.Errorf("środowisko bez rejestru: %v", err)
+		}
+	})
+	t.Run("tag spoza vX.Y.Z", func(t *testing.T) {
+		if _, err := p.Promote(ctx, apiImage+"@"+digest, "v0.4.0-rc.1"); cli.ExitCode(err) != cli.ExitFailure {
+			t.Errorf("tag przedwydaniowy: %v", err)
 		}
 	})
 }

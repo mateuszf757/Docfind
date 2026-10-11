@@ -46,6 +46,22 @@ spec:
 `
 }
 
+// app — Deployment aplikacji z kontenerem api i wersją wdrożenia.
+func app(image, version string) string {
+	return `apiVersion: apps/v1
+kind: Deployment
+metadata: {name: docfind-api}
+spec:
+  template:
+    spec:
+      containers:
+      - name: api
+        image: ` + image + `
+        env: [{name: DOCFIND_VERSION, value: "` + version + `"}]
+        resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {memory: 64Mi}}
+`
+}
+
 // helm — Helm z wartościami ocenianymi jak przez values.schema.json.
 type helm struct {
 	// rejectNothing — schemat, który wszystko przepuszcza.
@@ -54,32 +70,46 @@ type helm struct {
 	cpuLimit string
 	// badConfig — app.yml w ConfigMapie, który model odrzuci.
 	badConfig bool
-	renders   []string
+	// noVersionPattern — schemat bez wzorca api.version.
+	noVersionPattern bool
+	// dropVersion — chart, który gubi api.version.
+	dropVersion bool
+	renders     []string
 }
 
 func (h *helm) Lint(context.Context, string, ...string) error { return nil }
 
 func (h *helm) Template(_ context.Context, r cluster.Release, includeCRDs bool, w io.Writer) error {
 	h.renders = append(h.renders, r.Name)
-	for _, v := range r.Set {
-		if !h.rejectNothing && (v == "api.replica=3" || v == "api.image.digest=sha256:abc" || v == "gateway.hostnme=x") {
+	values := append(slices.Clone(r.Set), r.SetString...)
+	for _, v := range values {
+		badVersion := v == "api.version=v0.4.0" && !h.noVersionPattern
+		if !h.rejectNothing && (v == "api.replica=3" || v == "api.image.digest=sha256:abc" || badVersion || v == "gateway.hostnme=x") {
 			return cli.Unmet("helm template %s: values don't meet the specifications of the schema", r.Name)
 		}
 	}
 	var out string
 	switch {
 	case strings.HasSuffix(r.Chart, "docfind"):
-		digest := ""
-		for _, v := range r.Set {
-			if d, ok := strings.CutPrefix(v, "api.image.digest="); ok {
-				digest = "@" + d
+		tag, digest, version := "lint", "", ""
+		for _, v := range values {
+			switch key, value, _ := strings.Cut(v, "="); key {
+			case "api.image.tag":
+				tag = value
+			case "api.image.digest":
+				digest = "@" + value
+			case "api.version":
+				version = value
 			}
+		}
+		if h.dropVersion {
+			version = ""
 		}
 		config := "service: {port: 8000}"
 		if h.badConfig {
 			config = "service: {port: 0}"
 		}
-		out = deployment(`"ghcr.io/x/docfind-api:lint`+digest+`"`, "") + "---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: c}\ndata:\n  app.yml: \"" + config + "\"\n"
+		out = app(`"ghcr.io/x/docfind-api:`+tag+digest+`"`, version) + "---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: c}\ndata:\n  app.yml: \"" + config + "\"\n"
 	case strings.HasSuffix(r.Chart, "platform"):
 		out = "apiVersion: v1\nkind: Namespace\nmetadata: {name: n}\n"
 	default:
@@ -157,6 +187,8 @@ func TestRunRejects(t *testing.T) {
 		want string
 	}{
 		{"schemat wszystko przepuszcza", &helm{rejectNothing: true}, appConfig{}, "values.schema.json niczego nie pilnuje"},
+		{"schemat bez wzorca wersji", &helm{noVersionPattern: true}, appConfig{}, "nie pilnuje wersji"},
+		{"chart gubi wersję wdrożenia", &helm{dropVersion: true}, appConfig{}, "DOCFIND_VERSION"},
 		{"limit CPU w charcie platformy", &helm{cpuLimit: "100m"}, appConfig{}, "render coredns łamie polityki"},
 		{"zła konfiguracja w renderze", &helm{}, rejectingConfig{}, "konfiguracja w renderze docfind-ci jest nieprawidłowa"},
 	}

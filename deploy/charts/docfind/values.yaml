@@ -13,6 +13,13 @@ api:
     digest: ""
     pullPolicy: IfNotPresent
 
+  # Wersja wdrożenia, którą /version podaje ze zmiennej DOCFIND_VERSION
+  # (decyzja 40): wydanie X.Y.Z na produkcji, wersja deweloperska z gita
+  # gdzie indziej. Obraz jej nie niesie — ten sam digest przechodzi przez
+  # staging i trafia na produkcję, a numer wydania dostaje dopiero po
+  # akceptacji. Pusta — /version przyznaje się do niewiedzy (unknown).
+  version: ""
+
   resources:
     requests:
       cpu: 50m
