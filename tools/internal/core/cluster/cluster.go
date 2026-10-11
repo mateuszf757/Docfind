@@ -138,8 +138,12 @@ type Release struct {
 	CreateNamespace bool
 	ValuesFiles     []string
 	// Set — wartości klucz=wartość (--set).
-	Set     []string
-	Timeout time.Duration
+	Set []string
+	// SetString — wartości zawsze tekstowe (--set-string): tag obrazu,
+	// digest, wersja. --set zgaduje typ, więc tag z samych cyfr (commit
+	// 123456789012) zostałby liczbą, a schemat charta odrzuciłby wdrożenie.
+	SetString []string
+	Timeout   time.Duration
 }
 
 // String — do komunikatów.

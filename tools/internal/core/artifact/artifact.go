@@ -1,10 +1,11 @@
-// Package artifact to rdzeń zasady „build once": obraz budowany raz,
-// sprawdzany i promowany między środowiskami po digeście — nigdy budowany od
-// nowa dla kolejnego środowiska.
+// Package artifact to rdzeń zasady „build once": obraz budowany raz na
+// commit, sprawdzany i promowany między środowiskami po digeście — nigdy
+// budowany od nowa dla kolejnego środowiska. Wydanie to numer nadany
+// digestowi, który przeszedł akceptację, a nie osobny build (decyzja 40).
 //
-// Tu są typy, którymi etapy (build, wdrożenie, skan, promocja) rozmawiają
-// z adapterami (git, rejestr, GitHub), i reguły tożsamości z decyzji 30 —
-// bez wywołań gita, Dockera ani rejestru.
+// Tu są typy, którymi etapy (build, wdrożenie, skan, wydanie, promocja)
+// rozmawiają z adapterami (git, rejestr, GitHub), i reguły tożsamości
+// z decyzji 30 i 40 — bez wywołań gita, Dockera ani rejestru.
 package artifact
 
 import (
@@ -26,13 +27,23 @@ type Artifact struct {
 	// rozpakowaniu), niezależna od kompresji i atestacji. Nią porównuje się
 	// kopię lokalną, archiwum z CI i publikację. Pod tym digestem rejestr nie
 	// ma manifestu — do pobrania służy Digest.
-	Config  string `json:"config,omitempty"`
-	Version string `json:"version"`
-	Commit  string `json:"commit"`
+	Config string `json:"config,omitempty"`
+	// Commit — commit, z którego zbudowano obraz (etykieta revision). Jedyna
+	// tożsamość źródła w obrazie: wersja nie jest jego treścią (decyzja 40).
+	Commit string `json:"commit"`
+	// Release — numer wydania X.Y.Z, gdy digest ma atestację wydania; pusty
+	// — obraz commita.
+	Release string `json:"release,omitempty"`
 }
 
-// Tag — tag obrazu z wersji (etykieta dla czytelnika; wybiera digest).
-func (a Artifact) Tag() string { return DockerTag(a.Version) }
+// Tag — tag obrazu w rejestrze: numer wydania albo skrócony commit
+// (etykieta dla czytelnika; obraz wybiera digest).
+func (a Artifact) Tag() string {
+	if a.Release != "" {
+		return a.Release
+	}
+	return CommitTag(a.Commit)
+}
 
 // Ref — repozytorium@digest: referencja do pobrania.
 func (a Artifact) Ref() string { return a.Repository + "@" + a.Digest }
@@ -57,7 +68,9 @@ func ParseRef(ref string) (repository, digest string, err error) {
 var ErrNotFound = errors.New("obrazu nie ma w rejestrze")
 
 // Expected — tożsamość, której oczekuje się na każdym podzie: obraz
-// w specyfikacji, wersja i commit z /version.
+// w specyfikacji i commit z /version, a do tego wersja wdrożenia, którą
+// /version podaje ze zmiennej DOCFIND_VERSION. Pusta wersja — wdrożenie jej
+// nie ustawia (sprzed decyzji 40) i nie jest sprawdzana.
 type Expected struct {
 	Image   string `json:"image"`
 	Version string `json:"version"`
@@ -70,4 +83,18 @@ func ShortCommit(commit string) string {
 		return commit[:12]
 	}
 	return commit
+}
+
+// CommitTag — tag obrazu commita w rejestrze: 12 znaków commita. Ten sam
+// commit to ten sam obraz (decyzja 21), więc tag nigdy nie przeskakuje na
+// inną treść.
+func CommitTag(commit string) string { return ShortCommit(commit) }
+
+// LocalTag — tag kopii lokalnej: obraz z brudnego drzewa nie odpowiada
+// żadnemu commitowi i nie może nosić tagu obrazu commita.
+func LocalTag(commit string, dirty bool) string {
+	if dirty {
+		return CommitTag(commit) + "-dirty"
+	}
+	return CommitTag(commit)
 }

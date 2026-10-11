@@ -12,9 +12,17 @@ const repo = "ghcr.io/mateuszf757/docfind-api"
 var digest = "sha256:" + strings.Repeat("d", 64)
 
 func TestRefs(t *testing.T) {
-	a := Artifact{Repository: repo, Digest: digest, Version: "0.3.1-dev.4+abc1234"}
-	if a.Ref() != repo+"@"+digest || a.Pinned() != repo+":0.3.1-dev.4-abc1234@"+digest {
-		t.Errorf("Ref %q, Pinned %q", a.Ref(), a.Pinned())
+	commit := "abc1234def567890" + strings.Repeat("0", 24)
+	a := Artifact{Repository: repo, Digest: digest, Commit: commit}
+	if a.Ref() != repo+"@"+digest || a.Pinned() != repo+":abc1234def56@"+digest {
+		t.Errorf("Ref %q, Pinned %q — obraz commita z tagiem z commita", a.Ref(), a.Pinned())
+	}
+	a.Release = "0.4.0"
+	if a.Pinned() != repo+":0.4.0@"+digest {
+		t.Errorf("wydanie: Pinned %q", a.Pinned())
+	}
+	if LocalTag(commit, true) != "abc1234def56-dirty" || LocalTag(commit, false) != "abc1234def56" {
+		t.Errorf("tagi lokalne: %q, %q", LocalTag(commit, true), LocalTag(commit, false))
 	}
 	for _, ref := range []string{repo + "@" + digest, repo + ":latest@" + digest} {
 		r, d, err := ParseRef(ref)

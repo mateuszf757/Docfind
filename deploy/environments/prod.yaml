@@ -9,12 +9,12 @@ cluster:
   provider: none
 
 artifact:
-  # Tylko digest wydania, który przeszedł bramki klastrowe — nie obraz z main
-  # (decyzja 30: obraz wydania i obraz z main tego samego commita mają różne
-  # digesty, bo niosą różne wersje).
+  # Tylko wydanie: digest z main, który przeszedł bramki klastrowe w CI
+  # i akceptację na stagingu, z numerem nadanym bez ponownego buildu
+  # (decyzja 40) — dokładnie ten obraz, który stał na stagingu.
   sources: [registry]
   releasesOnly: true
-  # Atestacja GitHuba z tagu wersji obrazu (refs/tags/vX.Y.Z).
+  # Pochodzenie z main i atestacja wydania z tagu vX.Y.Z (stages/admission).
   attested: true
 
 app:

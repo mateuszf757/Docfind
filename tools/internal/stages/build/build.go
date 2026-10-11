@@ -1,10 +1,12 @@
-// Package build to etap budowy: obraz usługi z tożsamością z gita,
+// Package build to etap budowy: obraz usługi z commitem z gita,
 // sprawdzenie version.json i — przy publikacji — atestacje i weryfikacja
 // w rejestrze (dawniej ci/build.sh). Git, Docker i rejestr przychodzą jako
 // porty; flagi buildx zna adapter Dockera.
 //
-// Obraz jest samoopisujący się: version.json powstaje wewnątrz niego z build
-// argów, więc nie da się go rozdzielić z tożsamością (Etap 0).
+// Obraz niesie tylko to, co wynika z commita: commit i jego czas
+// w version.json i etykietach. Wersji w nim nie ma — ten sam commit to ten sam
+// obraz, a wydanie nadaje numer digestowi, który już przeszedł bramki,
+// zamiast budować go od nowa (decyzja 40).
 package build
 
 import (
@@ -26,9 +28,8 @@ type Options struct {
 	Service string
 	// Image — nazwa obrazu bez tagu (artifact.ImageName).
 	Image string
-	// Release — build wydania: czyste drzewo na commicie z tagiem vX.Y.Z.
-	Release bool
-	// Push — publikacja do rejestru z atestacją i weryfikacją w rejestrze.
+	// Push — publikacja do rejestru z atestacją i weryfikacją w rejestrze;
+	// tylko z czystego drzewa.
 	Push bool
 	// NoCache — build od zera. Build z pamięci podręcznej trywialnie daje ten
 	// sam wynik, więc sprawdzenie powtarzalności potrzebuje drugiego od zera.
@@ -46,18 +47,26 @@ type Options struct {
 // Result — zbudowany (i ewentualnie opublikowany) artefakt.
 type Result struct {
 	artifact.Artifact
+	// Version — wersja drzewa z gita (decyzja 30): do komunikatów i dla
+	// wdrożenia, które podaje ją aplikacji; obraz jej nie niesie.
+	Version string
+	// Dirty — obraz z brudnego drzewa.
+	Dirty           bool
 	SourceDateEpoch int64
 	// Publication — publikacja zweryfikowana w rejestrze (przy Push).
 	Publication *artifact.Publication
 }
 
 // LocalRef — obraz:tag zbudowany lokalnie, na którym biegną sprawdzenia.
-func (r Result) LocalRef() string { return r.Repository + ":" + r.Tag() }
+func (r Result) LocalRef() string {
+	return r.Repository + ":" + artifact.LocalTag(r.Commit, r.Dirty)
+}
 
 // Versions — tożsamość z systemu kontroli wersji (adapters/git).
 type Versions interface {
 	Version(ctx context.Context) (string, error)
 	Commit(ctx context.Context) (string, error)
+	Dirty(ctx context.Context) (bool, error)
 	SourceDateEpoch(ctx context.Context) (int64, error)
 	RequireClean(ctx context.Context) error
 }
@@ -88,9 +97,10 @@ func (b Builder) Build(ctx context.Context, opts Options) (Result, error) {
 	if info, err := os.Stat(contextDir); err != nil || !info.IsDir() {
 		return Result{}, cli.Usage("brak usługi %q w services/", opts.Service)
 	}
-	if opts.Release {
+	// Publikowany obraz musi dać się odtworzyć z commita, który podaje.
+	if opts.Push {
 		if err := b.Versions.RequireClean(ctx); err != nil {
-			return Result{}, err
+			return Result{}, fmt.Errorf("publikacja tylko z czystego drzewa: %w", err)
 		}
 	}
 
@@ -102,42 +112,35 @@ func (b Builder) Build(ctx context.Context, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	dirty, err := b.Versions.Dirty(ctx)
+	if err != nil {
+		return Result{}, err
+	}
 	epoch, err := b.Versions.SourceDateEpoch(ctx)
 	if err != nil {
 		return Result{}, err
 	}
-	res := Result{Artifact: artifact.Artifact{Repository: opts.Image, Version: version, Commit: commit}, SourceDateEpoch: epoch}
-
-	// Build wydania to build wydanej wersji: Version daje samo X.Y.Z tylko na
-	// commicie z tagiem vX.Y.Z (decyzja 30). Commit bez tagu albo tag w innej
-	// postaci dałby obraz wydania z wersją deweloperską.
-	if opts.Release && !artifact.IsRelease(version) {
-		return res, cli.Unmet("build wydania wymaga commita z tagiem vX.Y.Z, a wersja to %s", version)
-	}
-	cli.Step("usługa=%s wersja=%s tag=%s commit=%s", opts.Service, version, res.Tag(), artifact.ShortCommit(commit))
+	res := Result{Artifact: artifact.Artifact{Repository: opts.Image, Commit: commit}, Version: version, Dirty: dirty, SourceDateEpoch: epoch}
+	cli.Step("usługa=%s commit=%s tag=%s (wersja drzewa %s)", opts.Service, artifact.ShortCommit(commit), artifact.LocalTag(commit, dirty), version)
 
 	// SOURCE_DATE_EPOCH jako build arg BuildKit rozpoznaje sam: ustawia z niego
 	// znaczniki czasu w konfiguracji i historii obrazu, a rewrite-timestamp
-	// przycina do niego czasy plików w warstwach (decyzja 21).
+	// przycina do niego czasy plików w warstwach (decyzja 21). Wersji nie ma
+	// wśród argumentów: zależy od tagów, a nie od commita (decyzja 40).
 	req := artifact.BuildRequest{
 		ContextDir: contextDir,
 		Args: []artifact.BuildArg{
-			{Name: "VERSION", Value: version},
 			{Name: "COMMIT", Value: commit},
 			{Name: "SOURCE_DATE", Value: artifact.SourceDate(epoch)},
 			{Name: "SOURCE_DATE_EPOCH", Value: strconv.FormatInt(epoch, 10)},
 		},
-		// Tag z commitem tylko poza wydaniem. Commit z tagiem vX.Y.Z buduje się
-		// dwa razy — z gałęzi i z tagu — z różną wersją w version.json,
-		// a wspólny tag <sha12> przeskakiwałby wtedy w rejestrze z obrazu
-		// z main na obraz wydania.
+		// Jeden tag: obraz commita (z -dirty dla brudnego drzewa). Ten sam
+		// commit to ten sam obraz, więc tag nigdy nie przeskakuje na inną
+		// treść; numer wydania dopisuje w rejestrze wydanie.
 		Tags:    []string{res.LocalRef()},
 		NoCache: opts.NoCache,
 		Out:     opts.Out,
 		Err:     opts.Err,
-	}
-	if !opts.Release {
-		req.Tags = append(req.Tags, opts.Image+":"+artifact.ShortCommit(commit))
 	}
 	if _, err := b.Images.Build(ctx, req); err != nil {
 		return res, fmt.Errorf("build %s: %w", res.LocalRef(), err)

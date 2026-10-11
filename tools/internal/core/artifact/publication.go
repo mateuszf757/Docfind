@@ -13,11 +13,9 @@ const SBOMPredicate = "https://spdx.dev/Document"
 // ProvenancePredicates — pochodzenie SLSA w wersjach, które wystawia BuildKit.
 var ProvenancePredicates = []string{"https://slsa.dev/provenance/v0.2", "https://slsa.dev/provenance/v1"}
 
-// Etykiety OCI, którymi build opisuje obraz (services/api/Dockerfile).
-const (
-	VersionLabel  = "org.opencontainers.image.version"
-	RevisionLabel = "org.opencontainers.image.revision"
-)
+// RevisionLabel — etykieta OCI z commitem, z którego zbudowano obraz
+// (services/api/Dockerfile). Wersji obraz nie niesie (decyzja 40).
+const RevisionLabel = "org.opencontainers.image.revision"
 
 // Publication — artefakt w rejestrze razem z tym, co przy nim leży.
 type Publication struct {

@@ -113,7 +113,7 @@ func (w *workspace) deployer(def environment.Definition) (deploy.Deployer, error
 			}
 			return c, nil
 		},
-		Builder: w.builder(), Admission: w.admission(),
+		Builder: w.builder(), Admission: w.admission(), Versions: w.git(),
 	}, nil
 }
 
@@ -149,7 +149,7 @@ func runEvidence(ctx context.Context, w *workspace, def environment.Definition) 
 	return nil
 }
 
-func runCheckDrain(ctx context.Context, w *workspace, args []string) (err error) {
+func runCheckDrain(ctx context.Context, w *workspace, args []string) error {
 	if err := expectArgs(args, 0, 0, "dft check drain   (DRAIN_NODE=<węzeł> — tylko ten węzeł)"); err != nil {
 		return err
 	}
@@ -157,19 +157,27 @@ func runCheckDrain(ctx context.Context, w *workspace, args []string) (err error)
 	if err != nil {
 		return err
 	}
-	if err := def.Require(environment.OpDrain); err != nil {
-		return err
-	}
-	if err := requireTools("kubectl", "go", "k3d"); err != nil {
-		return err
-	}
 	c, err := w.connect(def)
 	if err != nil {
 		return err
 	}
+	_, err = w.drainGate(ctx, def, c, os.Getenv("DRAIN_NODE"))
+	return err
+}
+
+// drainGate składa i uruchamia bramkę drainu na klastrze środowiska;
+// node — tylko ten węzeł (pusty — każdy z repliką). Raport trafia do
+// katalogu raportów także przy wyniku negatywnym.
+func (w *workspace) drainGate(ctx context.Context, def environment.Definition, c *kube.Cluster, node string) (report drain.Report, err error) {
+	if err := def.Require(environment.OpDrain); err != nil {
+		return drain.Report{}, err
+	}
+	if err := requireTools("kubectl", "go", "k3d"); err != nil {
+		return drain.Report{}, err
+	}
 	tmp, err := os.MkdirTemp("", "dft-drain-")
 	if err != nil {
-		return err
+		return drain.Report{}, err
 	}
 	defer func() { err = errors.Join(err, os.RemoveAll(tmp)) }()
 
@@ -177,7 +185,7 @@ func runCheckDrain(ctx context.Context, w *workspace, args []string) (err error)
 	// obraz API w dev; obraz bez bazy, powtarzalny z konstrukcji.
 	probe, err := drain.ProbeImage{Go: w.gotool(), Importer: w.k3d(), Cluster: def.Cluster.Name}.Prepare(ctx, tmp)
 	if err != nil {
-		return err
+		return drain.Report{}, err
 	}
 	deployment := def.App.Release + "-api"
 	gate := &drain.Gate{
@@ -187,7 +195,7 @@ func runCheckDrain(ctx context.Context, w *workspace, args []string) (err error)
 			Deployment:    deployment,
 			ServiceURL:    fmt.Sprintf("http://%s.%s.svc.cluster.local/search?q=drain", deployment, def.App.Namespace),
 			ProbeImage:    probe,
-			Node:          os.Getenv("DRAIN_NODE"),
+			Node:          node,
 			MinRequests:   100,
 			DrainTimeout:  180 * time.Second,
 			RolloutWait:   120 * time.Second,
@@ -198,8 +206,8 @@ func runCheckDrain(ctx context.Context, w *workspace, args []string) (err error)
 			ProbeLogDir:   w.reportDir(),
 		},
 	}
-	report, err := gate.Run(ctx)
-	return w.withReport("drain-"+def.Name, report, err)
+	report, err = gate.Run(ctx)
+	return report, w.withReport("drain-"+def.Name, report, err)
 }
 
 func runCheckTLS(ctx context.Context, w *workspace, args []string) error {
@@ -210,16 +218,23 @@ func runCheckTLS(ctx context.Context, w *workspace, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := requireTools("cmctl"); err != nil {
-		return err
-	}
-	renewProduction, err := envFlag("DOCFIND_TLS_RENEW_PRODUCTION")
-	if err != nil {
-		return err
-	}
 	c, err := w.connect(def)
 	if err != nil {
 		return err
+	}
+	_, err = w.ingressGate(ctx, def, c)
+	return err
+}
+
+// ingressGate składa i uruchamia bramkę wejścia (TLS i odnowienie
+// certyfikatu pod ruchem) na klastrze środowiska.
+func (w *workspace) ingressGate(ctx context.Context, def environment.Definition, c *kube.Cluster) (ingress.Report, error) {
+	if err := requireTools("cmctl"); err != nil {
+		return ingress.Report{}, err
+	}
+	renewProduction, err := envFlag("DOCFIND_TLS_RENEW_PRODUCTION")
+	if err != nil {
+		return ingress.Report{}, err
 	}
 	checker := &ingress.Checker{
 		Cluster: c,
@@ -237,7 +252,7 @@ func runCheckTLS(ctx context.Context, w *workspace, args []string) error {
 		},
 	}
 	report, err := checker.Run(ctx)
-	return w.withReport("tls-"+def.Name, report, err)
+	return report, w.withReport("tls-"+def.Name, report, err)
 }
 
 // runCheckIdentity sprawdza, że na klastrze działa obraz, który miał trafić
@@ -254,19 +269,46 @@ func runCheckIdentity(ctx context.Context, w *workspace, args []string) error {
 	if err != nil {
 		return err
 	}
-	deployment := def.App.Release + "-api"
 	image := ""
 	if len(args) == 1 {
 		image = args[0]
-	} else if image, err = c.DeploymentImage(ctx, def.App.Namespace, deployment, "api"); err != nil {
-		return err
 	}
-	want, err := identity.Expect(ctx, image, registry.Client{}, w.git())
+	_, err = w.identityGate(ctx, def, c, image)
+	return err
+}
+
+// identityGate sprawdza tożsamość na podach i zapisuje raport.
+func (w *workspace) identityGate(ctx context.Context, def environment.Definition, c *kube.Cluster, image string) ([]identity.Pod, error) {
+	results, err := w.verifyIdentity(ctx, def, c, image)
+	return results, w.withReport("identity-"+def.Name, results, err)
+}
+
+// verifyIdentity sprawdza tożsamość na podach aplikacji: obraz (podany albo
+// ze specyfikacji Deploymentu), commit z obrazu i wersję wdrożenia
+// z DOCFIND_VERSION Deploymentu.
+func (w *workspace) verifyIdentity(ctx context.Context, def environment.Definition, c *kube.Cluster, image string) ([]identity.Pod, error) {
+	deployment := def.App.Release + "-api"
+	if image == "" {
+		var err error
+		if image, err = c.DeploymentImage(ctx, def.App.Namespace, deployment, "api"); err != nil {
+			return nil, err
+		}
+	}
+	version, found, err := c.DeploymentEnv(ctx, def.App.Namespace, deployment, "api", "DOCFIND_VERSION")
 	if err != nil {
-		return err
+		return nil, err
 	}
-	results, err := identity.Verify(ctx, c, def.App.Namespace, deployment, "api", want)
-	return w.withReport("identity-"+def.Name, results, err)
+	switch {
+	case !found:
+		cli.Warn("Deployment %s bez DOCFIND_VERSION (wdrożenie sprzed decyzji 40) — wersji nie sprawdzam, commit tak", deployment)
+	case version == "":
+		cli.Warn("Deployment %s z pustym DOCFIND_VERSION (chart bez api.version) — /version poda unknown; wersji nie sprawdzam, commit tak", deployment)
+	}
+	want, err := identity.Expect(ctx, image, version, registry.Client{}, w.git())
+	if err != nil {
+		return nil, err
+	}
+	return identity.Verify(ctx, c, def.App.Namespace, deployment, "api", want)
 }
 
 // runCheckClusterNegatives uruchamia warianty negatywne na żywym klastrze

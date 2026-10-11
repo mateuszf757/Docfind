@@ -126,12 +126,16 @@ func (d Deployer) namespace(ctx context.Context, c Cluster) error {
 func (d Deployer) app(ctx context.Context, c Cluster, img image) error {
 	release := d.Env.App.Release
 	cli.Step("helm upgrade --install %s", release)
-	values := append(d.Env.AppValues(), "api.image.tag="+img.tag)
+	// Wersja wdrożenia trafia do aplikacji zmienną środowiskową
+	// (DOCFIND_VERSION) — różnica między wdrożeniami idzie przez wdrożenie,
+	// a nie przez obraz (decyzja 40).
+	image := []string{"api.image.tag=" + img.tag, "api.version=" + img.want.Version}
 	if img.digest != "" {
-		values = append(values, "api.image.digest="+img.digest)
+		image = append(image, "api.image.digest="+img.digest)
 	}
 	if err := d.Releases.Install(ctx, d.target(), cluster.Release{
-		Name: release, Chart: d.path("deploy/charts/docfind"), Namespace: d.Env.App.Namespace, Set: values, Timeout: 3 * time.Minute,
+		Name: release, Chart: d.path("deploy/charts/docfind"), Namespace: d.Env.App.Namespace,
+		Set: d.Env.AppValues(), SetString: image, Timeout: 3 * time.Minute,
 	}); err != nil {
 		return err
 	}

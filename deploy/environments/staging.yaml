@@ -1,7 +1,9 @@
 # Środowisko staging — akceptacja: długo żyjący drugi klaster k3d na maszynie
 # autora (rozstrzygnięcie z 2026-10-06), z topologią produkcji: 2 węzły
 # robocze, 2 repliki, PDB — inaczej drain tutaj nic nie mówi o produkcji.
-# Obrazy tylko z rejestru: digesty z main po zielonym ci i digesty wydań.
+# Obrazy tylko z rejestru: digesty z main po zielonym ci. Digest, który
+# przejdzie tu akceptację, zostaje wydaniem bez ponownego buildu
+# (`./bin/mise run release -- vX.Y.Z`, decyzja 40).
 # Od Etapu 5 wdraża Argo CD w klastrze; do tego czasu
 # `MISE_ENV=staging ./bin/mise run cluster:up -- --image <obraz@sha256:…>`.
 # Od Etapu 6 (pamięć, decyzja 2) okrojony stos albo wyłączany na czas pracy
@@ -22,7 +24,7 @@ cluster:
 
 artifact:
   sources: [registry]
-  # Pochodzenie i SBOM w rejestrze, atestacja GitHuba z workflowu ci.
+  # Pochodzenie i SBOM w rejestrze, atestacja GitHuba z workflowu ci na main.
   attested: true
 
 app:

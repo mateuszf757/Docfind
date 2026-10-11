@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mateuszf757/Docfind/tools/internal/core/artifact"
 	"github.com/mateuszf757/Docfind/tools/internal/core/reposettings"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
@@ -129,5 +130,54 @@ func TestRunsAndIssues(t *testing.T) {
 	}
 	if n, err := c.FindIssue(ctx, title); err != nil || n != 7 {
 		t.Errorf("issue o dokładnie tym tytule: %d, %v", n, err)
+	}
+}
+
+func releaseCommand(version string) string {
+	return "gh attestation verify oci://" + repo + "@" + digest + " --repo mateuszf757/Docfind --signer-workflow mateuszf757/Docfind/.github/workflows/ci.yml --predicate-type " +
+		artifact.ReleasePredicate + " --deny-self-hosted-runners --format json --source-ref refs/tags/v" + version
+}
+
+// released — atestacja wydania w postaci, jaką zwraca gh: predykat z
+// numerem wydania, certyfikat z tagu.
+func released(version string) string {
+	return `[{"verificationResult":{"statement":{"subject":[{"name":"` + repo + `","digest":{"sha256":"` + strings.TrimPrefix(digest, "sha256:") +
+		`"}}],"predicateType":"` + artifact.ReleasePredicate + `","predicate":{"version":"` + version + `","image":"` + repo + "@" + digest +
+		`","commit":"cafe"}},"signature":{"certificate":{"sourceRepositoryRef":"refs/tags/v` + version + `","sourceRepositoryDigest":"cafe","runnerEnvironment":"github-hosted"}}}}]`
+}
+
+func TestVerifyRelease(t *testing.T) {
+	a := Attestations{Repo: "mateuszf757/Docfind", Workflow: ".github/workflows/ci.yml"}
+	ctx := context.Background()
+	a.CLI = CLI{Runner: &proc.Fake{Responses: map[string]proc.FakeResponse{releaseCommand("0.4.0"): {Stdout: released("0.4.0")}}}}
+	rel, prov, err := a.VerifyRelease(ctx, repo+"@"+digest, "0.4.0")
+	if err != nil || rel.Version != "0.4.0" || rel.Commit != "cafe" || prov.SourceRef != "refs/tags/v0.4.0" || prov.SourceCommit != "cafe" {
+		t.Fatalf("wydanie %+v, pochodzenie %+v, %v", rel, prov, err)
+	}
+	// Atestacja innego wydania tego samego digestu nie jest tym wydaniem.
+	a.CLI = CLI{Runner: &proc.Fake{Responses: map[string]proc.FakeResponse{releaseCommand("0.4.1"): {Stdout: released("0.4.0")}}}}
+	if _, _, err := a.VerifyRelease(ctx, repo+"@"+digest, "0.4.1"); cli.ExitCode(err) != cli.ExitUnmet {
+		t.Errorf("cudzy numer wydania: %v", err)
+	}
+	a.CLI = CLI{Runner: &proc.Fake{Responses: map[string]proc.FakeResponse{releaseCommand("0.4.0"): {Code: 1, Stderr: "no attestations found"}}}}
+	if _, _, err := a.VerifyRelease(ctx, repo+"@"+digest, "0.4.0"); cli.ExitCode(err) != cli.ExitUnmet {
+		t.Errorf("brak atestacji wydania: %v", err)
+	}
+}
+
+func TestReleaseTag(t *testing.T) {
+	f := &proc.Fake{Responses: map[string]proc.FakeResponse{
+		"gh api repos/{owner}/{repo}/git/ref/tags/v0.4.0": {Stdout: `{"ref":"refs/tags/v0.4.0","object":{"sha":"t1","type":"tag"}}`},
+		"gh api repos/{owner}/{repo}/git/tags/t1":         {Stdout: `{"tag":"v0.4.0","message":"Etap 4\n\nImage: x\n","object":{"sha":"c1","type":"commit"}}`},
+		"gh api repos/{owner}/{repo}/git/ref/tags/v0.4.1": {Stdout: `{"ref":"refs/tags/v0.4.1","object":{"sha":"c2","type":"commit"}}`},
+	}}
+	c := CLI{Runner: f}
+	ctx := context.Background()
+	commit, message, err := c.ReleaseTag(ctx, "v0.4.0")
+	if err != nil || commit != "c1" || message != "Etap 4\n\nImage: x\n" {
+		t.Errorf("tag z adnotacją: %q, %q, %v", commit, message, err)
+	}
+	if _, _, err := c.ReleaseTag(ctx, "v0.4.1"); cli.ExitCode(err) != cli.ExitUnmet || !strings.Contains(err.Error(), "lekki") {
+		t.Errorf("lekki tag: %v", err)
 	}
 }

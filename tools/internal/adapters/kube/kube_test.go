@@ -277,7 +277,7 @@ func TestTools(t *testing.T) {
 	dep := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "docfind-api", Namespace: "docfind"},
 		Spec: appsv1.DeploymentSpec{Replicas: &replicas, Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
-			Containers: []corev1.Container{{Name: "sidecar", Image: "inny"}, {Name: "api", Image: "ghcr.io/x/api:1@sha256:abc"}},
+			Containers: []corev1.Container{{Name: "sidecar", Image: "inny"}, {Name: "api", Image: "ghcr.io/x/api:1@sha256:abc", Env: []corev1.EnvVar{{Name: "DOCFIND_VERSION", Value: "0.4.0"}}}},
 		}}},
 	}
 	c := New(fake.NewClientset(dep), nil, f, target)
@@ -300,5 +300,11 @@ func TestTools(t *testing.T) {
 	}
 	if _, err := c.DeploymentImage(ctx, "docfind", "docfind-api", "brak"); err == nil {
 		t.Error("brak kontenera przyjęty")
+	}
+	if v, found, err := c.DeploymentEnv(ctx, "docfind", "docfind-api", "api", "DOCFIND_VERSION"); err != nil || !found || v != "0.4.0" {
+		t.Errorf("zmienna wersji: %q, %v, %v", v, found, err)
+	}
+	if _, found, err := c.DeploymentEnv(ctx, "docfind", "docfind-api", "sidecar", "DOCFIND_VERSION"); err != nil || found {
+		t.Errorf("zmienna w kontenerze bez niej: %v, %v", found, err)
 	}
 }

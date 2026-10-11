@@ -41,9 +41,9 @@ func definition(t *testing.T, name string) environment.Definition {
 	return e
 }
 
-// registry — publikacja z podaną wersją i predykatami pod jednym digestem.
+// registry — publikacja z commitem i predykatami pod jednym digestem.
 type registry struct {
-	version    string
+	commit     string
 	predicates []string
 }
 
@@ -52,70 +52,93 @@ func (r registry) Inspect(_ context.Context, ref string) (artifact.Publication, 
 		return artifact.Publication{}, fmt.Errorf("nieoczekiwany ref %s", ref)
 	}
 	return artifact.Publication{
-		Artifact:   artifact.Artifact{Repository: apiImage, Digest: digest, Version: r.version, Commit: commit},
+		Artifact:   artifact.Artifact{Repository: apiImage, Digest: digest, Commit: r.commit},
 		Predicates: r.predicates,
 	}, nil
 }
 
-// attestations — atestacja GitHuba z podanego commita; zapamiętuje wymagany
-// tag źródła.
+// attestations — pochodzenie z podanej gałęzi i commita oraz atestacja
+// wydania; zapamiętuje, o co pytano.
 type attestations struct {
-	sourceCommit string
-	refuse       bool
-	asked        *string
+	sourceRef, sourceCommit string
+	refuse                  bool
+	release                 *artifact.Release
+	releaseCommit           string
+	askedRef                *string
 }
 
 func (a attestations) Verify(_ context.Context, ref, sourceRef string) (artifact.Provenance, error) {
-	*a.asked = sourceRef
-	if a.refuse {
-		return artifact.Provenance{}, cli.Unmet("atestacja GitHuba dla %s nie przeszła weryfikacji", ref)
+	*a.askedRef = sourceRef
+	if a.refuse || (sourceRef != "" && sourceRef != a.sourceRef) {
+		return artifact.Provenance{}, cli.Unmet("atestacja GitHuba dla %s nie przeszła weryfikacji (źródło %s)", ref, sourceRef)
 	}
-	return artifact.Provenance{PredicateType: artifact.ProvenanceV1, SourceRef: sourceRef, SourceCommit: a.sourceCommit}, nil
+	return artifact.Provenance{PredicateType: artifact.ProvenanceV1, SourceRef: a.sourceRef, SourceCommit: a.sourceCommit}, nil
+}
+
+func (a attestations) VerifyRelease(_ context.Context, ref, version string) (artifact.Release, artifact.Provenance, error) {
+	if a.release == nil || a.release.Version != version {
+		return artifact.Release{}, artifact.Provenance{}, cli.Unmet("brak atestacji wydania %s dla %s", version, ref)
+	}
+	return *a.release, artifact.Provenance{PredicateType: artifact.ReleasePredicate, SourceRef: "refs/tags/v" + version, SourceCommit: a.releaseCommit}, nil
+}
+
+func releaseOf(image, version, from string) *artifact.Release {
+	return &artifact.Release{Version: version, Image: image, Commit: from, AcceptedAt: "2026-10-12T10:00:00Z", Staging: "ok"}
 }
 
 func TestAdmit(t *testing.T) {
 	quiet(t)
 	attested := []string{artifact.ProvenancePredicates[0], artifact.SBOMPredicate}
+	main := attestations{sourceRef: MainRef, sourceCommit: commit}
+	withRelease := func(a attestations, r *artifact.Release, signedFrom string) attestations {
+		a.release, a.releaseCommit = r, signedFrom
+		return a
+	}
 	tests := []struct {
-		name, env, ref, version string
+		name, env, ref, release string
 		predicates              []string
-		sourceCommit            string
-		refuse, noVerifier      bool
+		att                     *attestations
 		wantCode                int
-		wantSourceRef           string
+		wantPinned              string
 	}{
-		{"obraz z main na staging", "staging", apiImage + "@" + digest, "0.3.1-dev.4+abc1234", attested, commit, false, false, cli.ExitOK, ""},
-		{"tag w referencji niczego nie wybiera", "staging", apiImage + ":latest@" + digest, "0.3.1-dev.4+abc1234", attested, commit, false, false, cli.ExitOK, ""},
-		{"wydanie na produkcję z tagu swojej wersji", "prod", apiImage + "@" + digest, "0.3.1", attested, commit, false, false, cli.ExitOK, "refs/tags/v0.3.1"},
-		{"wydanie na staging też z tagu swojej wersji", "staging", apiImage + "@" + digest, "0.3.1", attested, commit, false, false, cli.ExitOK, "refs/tags/v0.3.1"},
-		{"obraz z main na produkcję", "prod", apiImage + "@" + digest, "0.3.1-dev.4+abc1234", attested, commit, false, false, cli.ExitUnmet, ""},
-		{"obcy obraz", "staging", "docker.io/library/nginx@" + digest, "0.3.1", attested, commit, false, false, cli.ExitUnmet, ""},
-		{"tag zamiast digestu", "staging", apiImage + ":0.3.1", "0.3.1", attested, commit, false, false, cli.ExitFailure, ""},
+		{"obraz z main na staging", "staging", apiImage + "@" + digest, "", attested, &main, cli.ExitOK, apiImage + ":cccccccccccc@" + digest},
+		{"tag w referencji niczego nie wybiera", "staging", apiImage + ":latest@" + digest, "", attested, &main, cli.ExitOK, apiImage + ":cccccccccccc@" + digest},
+		{"obraz zbudowany na tagu (sprzed decyzji 40)", "staging", apiImage + "@" + digest, "", attested, &attestations{sourceRef: "refs/tags/v0.3.0", sourceCommit: commit}, cli.ExitUnmet, ""},
+		{"podpis z innego commita niż etykieta", "staging", apiImage + "@" + digest, "", attested, &attestations{sourceRef: MainRef, sourceCommit: strings.Repeat("e", 40)}, cli.ExitUnmet, ""},
+		{"bez atestacji GitHuba", "staging", apiImage + "@" + digest, "", attested, &attestations{refuse: true}, cli.ExitUnmet, ""},
 		// Publikacje sprzed decyzji 37: pochodzenie bez SBOM.
-		{"atestacja bez SBOM na staging", "staging", apiImage + "@" + digest, "0.3.0", attested[:1], commit, false, false, cli.ExitUnmet, ""},
-		{"bez atestacji GitHuba na staging", "staging", apiImage + "@" + digest, "0.3.1-dev.4+abc1234", attested, commit, true, false, cli.ExitUnmet, ""},
-		{"podpis z innego commita niż etykieta", "staging", apiImage + "@" + digest, "0.3.1-dev.4+abc1234", attested, strings.Repeat("e", 40), false, false, cli.ExitUnmet, ""},
-		{"atestacja wymagana, brak weryfikatora", "staging", apiImage + "@" + digest, "0.3.1-dev.4+abc1234", attested, commit, false, true, cli.ExitFailure, ""},
-		// dev nie wymaga atestacji — autor może postawić wydanie sprzed niej.
-		{"wydanie sprzed SBOM w dev", "dev", apiImage + "@" + digest, "0.3.0", attested[:1], commit, false, true, cli.ExitOK, ""},
+		{"atestacja bez SBOM", "staging", apiImage + "@" + digest, "", attested[:1], &main, cli.ExitUnmet, ""},
+		{"obcy obraz", "staging", "docker.io/library/nginx@" + digest, "", attested, &main, cli.ExitUnmet, ""},
+		{"tag zamiast digestu", "staging", apiImage + ":0.4.0", "", attested, &main, cli.ExitFailure, ""},
+		{"wydanie na produkcję", "prod", apiImage + "@" + digest, "0.4.0", attested, ptr(withRelease(main, releaseOf(apiImage+"@"+digest, "0.4.0", commit), commit)), cli.ExitOK, apiImage + ":0.4.0@" + digest},
+		{"produkcja bez numeru wydania", "prod", apiImage + "@" + digest, "", attested, &main, cli.ExitFailure, ""},
+		{"obraz z main bez atestacji wydania na produkcję", "prod", apiImage + "@" + digest, "0.4.0", attested, &main, cli.ExitUnmet, ""},
+		{"atestacja wydania innego digestu", "prod", apiImage + "@" + digest, "0.4.0", attested, ptr(withRelease(main, releaseOf(apiImage+"@sha256:"+strings.Repeat("0", 64), "0.4.0", commit), commit)), cli.ExitUnmet, ""},
+		{"wydanie podpisane z innego commita", "prod", apiImage + "@" + digest, "0.4.0", attested, ptr(withRelease(main, releaseOf(apiImage+"@"+digest, "0.4.0", commit), strings.Repeat("e", 40))), cli.ExitUnmet, ""},
+		// dev nie wymaga atestacji.
+		{"bez atestacji w dev", "dev", apiImage + "@" + digest, "", attested[:1], nil, cli.ExitOK, apiImage + ":cccccccccccc@" + digest},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			asked := ""
-			g := Gate{Registry: registry{version: tt.version, predicates: tt.predicates}}
-			if !tt.noVerifier {
-				g.Attestations = attestations{sourceCommit: tt.sourceCommit, refuse: tt.refuse, asked: &asked}
+			g := Gate{Registry: registry{commit: commit, predicates: tt.predicates}}
+			if tt.att != nil {
+				a := *tt.att
+				a.askedRef = &asked
+				g.Attestations = a
 			}
-			got, err := g.Admit(context.Background(), tt.ref, For(definition(t, tt.env), apiImage))
+			got, err := g.Admit(context.Background(), tt.ref, For(definition(t, tt.env), apiImage, tt.release))
 			if code := cli.ExitCode(err); code != tt.wantCode {
 				t.Fatalf("kod %d, oczekiwano %d (%v)", code, tt.wantCode, err)
 			}
-			if err == nil && (got.Publication.Digest != digest || got.Publication.Pinned() != apiImage+":"+artifact.DockerTag(tt.version)+"@"+digest) {
-				t.Errorf("przyjęty %+v", got)
+			if err == nil && got.Publication.Pinned() != tt.wantPinned {
+				t.Errorf("przyjęty %s, oczekiwano %s", got.Publication.Pinned(), tt.wantPinned)
 			}
-			if asked != tt.wantSourceRef {
-				t.Errorf("wymagany tag źródła %q, oczekiwano %q", asked, tt.wantSourceRef)
+			if tt.att != nil && tt.wantCode == cli.ExitOK && asked != MainRef {
+				t.Errorf("pochodzenie sprawdzane z %q, oczekiwano %s", asked, MainRef)
 			}
 		})
 	}
 }
+
+func ptr[T any](v T) *T { return &v }

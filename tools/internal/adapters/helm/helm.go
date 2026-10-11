@@ -41,6 +41,9 @@ func valueArgs(r cluster.Release) []string {
 	for _, v := range r.Set {
 		args = append(args, "--set", v)
 	}
+	for _, v := range r.SetString {
+		args = append(args, "--set-string", v)
+	}
 	return args
 }
 

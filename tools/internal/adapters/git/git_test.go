@@ -309,3 +309,68 @@ func TestRequireClean(t *testing.T) {
 		t.Errorf("oczekiwano listy zmian w błędzie, jest %v", err)
 	}
 }
+
+// TestVersionOfAndReleases: wersja dowolnego commita z historii — tak
+// wdrożenie podaje wersję obrazowi z rejestru, który jej nie niesie
+// (decyzja 40) — i najbliższe wydanie osiągalne z commita.
+func TestVersionOfAndReleases(t *testing.T) {
+	r := newTestRepo(t)
+	r.commit("a")
+	repo := r.repo()
+	ctx := context.Background()
+	if got, err := repo.LatestRelease(ctx, "HEAD"); err != nil || got != "" {
+		t.Errorf("bez wydań: %q, %v", got, err)
+	}
+	r.git("tag", "--annotate", "v0.3.0", "-m", "Etap 3")
+	r.commit("b")
+	built := r.git("rev-parse", "HEAD")
+	r.commit("c")
+	r.write("brud", "x")
+
+	// Brud drzewa nie dotyczy commita z historii.
+	if got, err := repo.VersionOf(ctx, built); err != nil || got != "0.3.1-dev.1+"+built[:artifact.ShortCommitLength] {
+		t.Errorf("wersja commita: %q, %v", got, err)
+	}
+	if got, err := repo.LatestRelease(ctx, built); err != nil || got != "0.3.0" {
+		t.Errorf("ostatnie wydanie: %q, %v", got, err)
+	}
+	if _, err := repo.VersionOf(ctx, strings.Repeat("0", 40)); cli.ExitCode(err) != cli.ExitUnmet || !strings.Contains(err.Error(), "git fetch") {
+		t.Errorf("nieznany commit: %v", err)
+	}
+	if dirty, err := repo.Dirty(ctx); err != nil || !dirty {
+		t.Errorf("brudne drzewo: %v, %v", dirty, err)
+	}
+}
+
+// TestCreateTag: tag z adnotacją na wskazanym commicie, z treścią zapisaną
+// dosłownie — CI czyta z niej digest wydania.
+func TestCreateTag(t *testing.T) {
+	r := newTestRepo(t)
+	r.commit("a")
+	target := r.git("rev-parse", "HEAD")
+	r.commit("b")
+	repo := r.repo()
+	ctx := context.Background()
+	if ok, err := repo.TagExists(ctx, "v0.4.0"); err != nil || ok {
+		t.Fatalf("tag przed utworzeniem: %v, %v", ok, err)
+	}
+	message := "Etap 4\n\nAkceptacja na stagingu: ok\n\nImage: x@sha256:abc\n"
+	if err := repo.CreateTag(ctx, "v0.4.0", target, message); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := repo.TagExists(ctx, "v0.4.0"); err != nil || !ok {
+		t.Errorf("tag po utworzeniu: %v, %v", ok, err)
+	}
+	if typ := r.git("cat-file", "-t", "v0.4.0"); typ != "tag" {
+		t.Errorf("tag %s zamiast z adnotacją", typ)
+	}
+	if got := r.git("rev-parse", "v0.4.0^{commit}"); got != target {
+		t.Errorf("tag na %s, oczekiwano %s", got, target)
+	}
+	if got := r.git("tag", "--list", "--format=%(contents)", "v0.4.0"); got != strings.TrimSpace(message) {
+		t.Errorf("treść tagu:\n%q\noczekiwano:\n%q", got, message)
+	}
+	if err := repo.CreateTag(ctx, "v0.4.0", target, message); err == nil {
+		t.Error("drugi tag o tej samej nazwie przyjęty")
+	}
+}

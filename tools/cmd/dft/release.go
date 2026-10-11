@@ -7,18 +7,26 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/mateuszf757/Docfind/tools/internal/adapters/kube"
+	"github.com/mateuszf757/Docfind/tools/internal/adapters/registry"
+	"github.com/mateuszf757/Docfind/tools/internal/core/artifact"
 	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
 	"github.com/mateuszf757/Docfind/tools/internal/core/vuln"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/stages/drain"
+	"github.com/mateuszf757/Docfind/tools/internal/stages/identity"
+	"github.com/mateuszf757/Docfind/tools/internal/stages/ingress"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/promote"
+	"github.com/mateuszf757/Docfind/tools/internal/stages/release"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/reposync"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/trial"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/vulns"
 )
 
-// runPromote promuje digest wydania na środowisko prod (decyzja 38).
+// runPromote promuje wydanie na środowisko prod (decyzje 38 i 40): digest
+// z main z atestacją wydania o numerze z tagu.
 func runPromote(ctx context.Context, w *workspace, args []string) error {
-	if err := expectArgs(args, 1, 1, "dft promote <obraz@sha256:…>"); err != nil {
+	if err := expectArgs(args, 2, 2, "dft promote <obraz@sha256:…> <vX.Y.Z>"); err != nil {
 		return err
 	}
 	if err := requireTools("gh"); err != nil {
@@ -34,7 +42,7 @@ func runPromote(ctx context.Context, w *workspace, args []string) error {
 	if os.Getenv("GITHUB_ACTIONS") == "true" {
 		p.Approvals, p.GitHubRepo, p.GitHubEnvironment = w.gh(), os.Getenv("GITHUB_REPOSITORY"), "production"
 	}
-	promotion, err := p.Promote(ctx, args[0])
+	promotion, err := p.Promote(ctx, args[0], args[1])
 	if err != nil {
 		return err
 	}
@@ -43,6 +51,102 @@ func runPromote(ctx context.Context, w *workspace, args []string) error {
 		return err
 	}
 	return appendSummary(promotion.Summary())
+}
+
+// runRelease — wydanie u autora (decyzja 40): akceptacja na stagingu
+// obrazu, który tam stoi, i tag z adnotacją na jego commicie. Tagu nie
+// wypycha: push robi autor, a CI na tagu dopisuje numer w rejestrze,
+// wystawia atestację wydania i czeka na zgodę na promocję.
+func runRelease(ctx context.Context, w *workspace, args []string) error {
+	if err := expectArgs(args, 1, 2, `dft release <vX.Y.Z> ["tytuł wydania"]`); err != nil {
+		return err
+	}
+	if err := requireTools("gh", "kubectl", "go", "k3d", "cmctl"); err != nil {
+		return err
+	}
+	def, err := environment.Load(w.root, "staging")
+	if err != nil {
+		return err
+	}
+	cli.Step("akceptacja na %s (%s), kontekst %s", def.Name, def.Stage, def.Cluster.Context)
+	c, err := w.connect(def)
+	if err != nil {
+		return err
+	}
+	title := ""
+	if len(args) == 2 {
+		title = args[1]
+	}
+	r, err := release.Acceptor{
+		Staging: def, Repository: imageName("api"), Cluster: c, Admission: w.admission(),
+		Gates: acceptanceGates{w: w, def: def, cluster: c}, Git: w.git(),
+	}.Accept(ctx, args[0], title)
+	if err != nil {
+		return err
+	}
+	if err := w.writeReport("release-"+r.Version, r); err != nil {
+		return err
+	}
+	cli.Step("tag %s gotowy; wypchnięcie uruchamia wydanie w CI: git push origin %s", r.Tag(), r.Tag())
+	return nil
+}
+
+// acceptanceGates — bramki akceptacji na stagingu: te same co `dft check
+// identity`, `drain` i `tls`, z raportami w katalogu raportów.
+type acceptanceGates struct {
+	w       *workspace
+	def     environment.Definition
+	cluster *kube.Cluster
+}
+
+func (g acceptanceGates) Identity(ctx context.Context) ([]identity.Pod, error) {
+	return g.w.identityGate(ctx, g.def, g.cluster, "")
+}
+
+func (g acceptanceGates) Drain(ctx context.Context) (drain.Report, error) {
+	return g.w.drainGate(ctx, g.def, g.cluster, "")
+}
+
+func (g acceptanceGates) Ingress(ctx context.Context) (ingress.Report, error) {
+	return g.w.ingressGate(ctx, g.def, g.cluster)
+}
+
+// runReleaseImage — wydanie w CI na wypchniętym tagu: zapis z tagu,
+// pochodzenie obrazu z main i tag z numerem w rejestrze — ten sam digest,
+// bez builda. Wyjścia kroku: obraz, digest, numer oraz typ i treść
+// predykatu atestacji wydania dla następnych zadań.
+func runReleaseImage(ctx context.Context, w *workspace, args []string) error {
+	if err := expectArgs(args, 1, 1, "dft release-image <vX.Y.Z>   (w CI na wypchniętym tagu)"); err != nil {
+		return err
+	}
+	if err := requireTools("gh"); err != nil {
+		return err
+	}
+	head, err := w.git().Commit(ctx)
+	if err != nil {
+		return err
+	}
+	r, err := release.Publisher{Repository: imageName("api"), Tags: w.gh(), Admission: w.admission(), Registry: registry.Client{}}.Publish(ctx, args[0], head)
+	if err != nil {
+		return err
+	}
+	repository, digest, err := artifact.ParseRef(r.Image)
+	if err != nil {
+		return err
+	}
+	predicate, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	if err := githubOutput(fmt.Sprintf("image=%s\ndigest=%s\nversion=%s\npredicate-type=%s\npredicate=%s\n",
+		repository, digest, r.Version, artifact.ReleasePredicate, predicate)); err != nil {
+		return err
+	}
+	if err := w.writeReport("release-"+r.Version, r); err != nil {
+		return err
+	}
+	return appendSummary(fmt.Sprintf("### Wydanie %s\n\n%s\n\n| Obraz (ten sam digest co na stagingu) | Commit | Akceptacja na stagingu |\n|---|---|---|\n| `%s:%s@%s` | `%s` | %s: %s |\n",
+		r.Version, r.Title, repository, r.Version, digest, artifact.ShortCommit(r.Commit), r.AcceptedAt, r.Staging))
 }
 
 func runRepoSettings(ctx context.Context, w *workspace, args []string) error {

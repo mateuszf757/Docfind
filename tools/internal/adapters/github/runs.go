@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/ci"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 )
 
 // WorkflowRuns zwraca zakończone biegi workflowu na gałęzi, od najnowszego.
@@ -69,4 +70,37 @@ func (c CLI) EditIssue(ctx context.Context, number int, body string) error {
 func (c CLI) CloseIssue(ctx context.Context, number int, comment string) error {
 	_, err := c.gh(ctx, "issue", "close", strconv.Itoa(number), "--comment", comment)
 	return err
+}
+
+// ReleaseTag zwraca commit, na który wskazuje tag z adnotacją, i treść tagu
+// — z GitHuba, a nie z lokalnego klona: checkout na tagu potrafi zastąpić tag
+// z adnotacją lekkim, a liczy się to, co jest w repozytorium. Lekki tag to
+// warunek niespełniony: wydanie to tag z adnotacją z `dft release`.
+func (c CLI) ReleaseTag(ctx context.Context, name string) (commit, message string, err error) {
+	var ref struct {
+		Object struct {
+			SHA  string `json:"sha"`
+			Type string `json:"type"`
+		} `json:"object"`
+	}
+	if err := c.api(ctx, &ref, "repos/{owner}/{repo}/git/ref/tags/"+name); err != nil {
+		return "", "", err
+	}
+	if ref.Object.Type != "tag" {
+		return "", "", cli.Unmet("tag %s jest lekki (%s) — wydanie to tag z adnotacją z ./bin/mise run release", name, ref.Object.Type)
+	}
+	var tag struct {
+		Message string `json:"message"`
+		Object  struct {
+			SHA  string `json:"sha"`
+			Type string `json:"type"`
+		} `json:"object"`
+	}
+	if err := c.api(ctx, &tag, "repos/{owner}/{repo}/git/tags/"+ref.Object.SHA); err != nil {
+		return "", "", err
+	}
+	if tag.Object.Type != "commit" {
+		return "", "", cli.Unmet("tag %s wskazuje na %s, a nie na commit", name, tag.Object.Type)
+	}
+	return tag.Object.SHA, tag.Message, nil
 }

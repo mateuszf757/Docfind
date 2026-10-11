@@ -117,7 +117,7 @@ env = { PYTHONPATH = "src" }
 run = "uv run --frozen python -m docfind_api.configtool schema --write ../../deploy/config/app.schema.json"
 
 [tasks.build]
-description = "Build obrazu z wersją z gita; RELEASE=1 tylko czyste drzewo na tagu vX.Y.Z"
+description = "Build obrazu z HEAD — obraz niesie commit, nie wersję (decyzja 40); PUSH=1 publikuje, tylko z czystego drzewa"
 usage = 'arg "[service]" default="api" help="Usługa z services/"'
 run = 'ci/dft build "${usage_service}"'
 
@@ -154,8 +154,16 @@ run = "ci/dft check vulns"
 description = "Przed promocją: atestacja BuildKitu (pochodzenie, SBOM) i atestacja GitHuba opublikowanego obrazu <obraz@sha256:…>"
 run = "ci/dft check attestation"
 
+[tasks.release]
+description = "Wydanie bez builda (decyzja 40): -- vX.Y.Z [\"tytuł\"] — akceptacja na stagingu digestu, który tam stoi (tożsamość, drain, TLS), i tag z adnotacją na jego commicie; push tagu robi autor"
+run = "ci/dft release"
+
+[tasks."release:image"]
+description = "W CI na tagu wydania: zapis z tagu, pochodzenie obrazu z main i tag X.Y.Z w rejestrze na tym samym digeście"
+run = "ci/dft release-image"
+
 [tasks.promote]
-description = "Promocja digestu wydania na prod (decyzja 38): wydanie, atestacje, zapis i instalacja dla klienta"
+description = "Promocja wydania na prod (decyzje 38 i 40): -- <obraz@sha256:…> vX.Y.Z — atestacja wydania, zapis i instalacja dla klienta"
 run = "ci/dft promote"
 
 [tasks."vulns:issue"]
@@ -199,7 +207,7 @@ description = "Warunek Etapu 2: drain każdego węzła z repliką bez utraty ż�
 run = "ci/dft check drain"
 
 [tasks."cluster:identity"]
-description = "Na każdym podzie obraz, wersja i commit z tego drzewa"
+description = "Na każdym podzie obraz z Deploymentu, commit z obrazu (rejestr albo drzewo) i wersja z DOCFIND_VERSION"
 run = "ci/dft check identity"
 
 [tasks."cluster:evidence"]

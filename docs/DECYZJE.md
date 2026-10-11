@@ -775,6 +775,12 @@ połączeniach tylko od niego.
 
 ## 30. Wersje z tagów `vX.Y.Z`, numer minor to etap
 
+> Zmienione decyzją 40: wersja nie trafia już do obrazu, a wydanie nie
+> buduje obrazu — tag `vX.Y.Z` nazywa digest z `main` przyjęty na stagingu.
+> Schemat numerów i wersje deweloperskie zostają, jako wersje wdrożenia
+> (`DOCFIND_VERSION`). Akapity o buildzie wydania i o dwóch digestach
+> jednego commita opisują stan sprzed tej zmiany.
+
 **Wybieram schemat, który czyta się razem z planem projektu.** Wydanie to tag
 adnotowany `vX.Y.Z` na commicie z `main`, w schemacie `0.<etap>.<łatka>`:
 `v0.3.0` to Etap 3, poprawki w jego obrębie podbijają łatkę, `v0.4.0` przychodzi
@@ -1186,6 +1192,11 @@ tylko wdrożenia przez `dft`.
 
 ## 38. Środowiska GitHuba jako kod, promocja wydania przed Etapem 10
 
+> Zmienione decyzją 40: promocja czeka na zadania `release`,
+> `attest-release` i `vulns`, a promowany obraz to digest z `main`
+> z atestacją wydania, a nie obraz zbudowany na tagu. Bramki klastrowe ten
+> digest przeszedł na `main` i na stagingu.
+
 **Wybieram promocję, która niczego nie instaluje, ale ma bramkę i zapis.**
 Do Etapu 10 nie ma klastra klienta, a Etap 9 obiecuje „ten sam digest na
 obu klastrach". To, co da się zrobić wcześniej, to łańcuch od tagu do
@@ -1294,8 +1305,9 @@ Po drodze, poza przeniesieniem:
 
 - Jedna polityka wpuszczania obrazu z rejestru (`stages/admission`) dla
   wdrożenia, promocji i bramki atestacji. Dwie kopie różniły się wymogiem
-  tagu źródła; teraz wydanie (wersja X.Y.Z) z wymaganą atestacją zawsze
-  musi pochodzić z tagu swojej wersji, także na stagingu.
+  tagu źródła; wtedy wydanie (wersja X.Y.Z) z wymaganą atestacją zawsze
+  musiało pochodzić z tagu swojej wersji, także na stagingu. Decyzja 40
+  zmieniła to na pochodzenie zawsze z `main` i osobną atestację wydania.
 - Raporty drainu i wejścia zapisują każdy niespełniony warunek — odmowa
   blokady drainu wcześniej do `unmet` nie trafiała.
 - Pętle „sprawdź, odczekaj" w jednym miejscu (`kit/poll`) zamiast ośmiu
@@ -1320,6 +1332,78 @@ tylko woła program, bez decyzji do przetestowania — etap jest zbędny i cmd
 woła adapter wprost, jak dziś przy lintach workflowów i Pythonie. Gdy
 któryś adapter zacznie potrzebować innego, to sygnał, że brakuje etapu,
 a nie wyjątku w regule.
+
+## 40. Jeden build na commit, wydanie bez builda
+
+**Wybieram obraz bez wersji i wydanie jako nazwę digestu, który przeszedł
+staging.** Reguła: konfiguracja nie może być w obrazie — jeśli obraz dla
+stagingu różni się od obrazu dla produkcji, to nie testowałem tego, co
+wdrażam. Różnice idą przez zmienne środowiskowe i zamontowane pliki.
+Przegląd obrazów pokazał, że konfiguracji w nich nie ma (`app.yml`
+z ConfigMapy, sekrety z montowania, wartości chartu z definicji
+środowiska), ale była wersja. Build wydania na tagu (decyzja 30) wpisywał
+`X.Y.Z` do `version.json` i etykiety, więc commit z tagiem budował się
+drugi raz i digest promowany na prod nigdy nie stał na stagingu. Staging
+sprawdzał obraz z `main` z wersją `0.3.1-dev.4+abc1234`, produkcja
+dostawała inny — z tym samym kodem, ale nie ten sam.
+
+Teraz:
+
+- **Obraz niesie tylko to, co wynika z commita:** `version.json` ma commit
+  i jego czas, etykiety OCI — `revision` i `created`. Tag w rejestrze to
+  12 znaków commita; lokalny build z brudnego drzewa dostaje `-dirty`.
+  Ten sam commit daje ten sam obraz lokalnie, na PR-ze i na `main`,
+  a `RELEASE=1` odmawia z odesłaniem do `./bin/mise run release`.
+- **Wersja wdrożenia przez zmienną:** chart ustawia `DOCFIND_VERSION`
+  z `api.version` (schemat odrzuca wszystko spoza SemVer, także `v0.4.0`),
+  a `/version` podaje ją obok commita z obrazu. `dft` wypełnia ją sam:
+  obraz z drzewa — wersja drzewa, obraz z rejestru — wersja z gita dla
+  jego commita, promocja — numer wydania. Tożsamość na podach porównuje
+  commit z obrazem i wersję z Deploymentem.
+- **Wydanie u autora, po akceptacji:** `./bin/mise run release -- vX.Y.Z
+  "tytuł"` bierze digest, który stoi na stagingu, sprawdza jego pochodzenie
+  z `main` i numer (większy niż ostatnie wydanie, z którego wyrósł commit),
+  uruchamia na tym wdrożeniu bramki akceptacji — tożsamość, drain każdego
+  węzła pod ruchem, odnowienie certyfikatu pod ruchem, tożsamość po
+  drainach — i zakłada tag z adnotacją na commicie obrazu: tytuł, wyniki
+  bramek i przyczepy `Image:`, `Commit:`, `Accepted-At:`. Wypchnięcie tagu
+  zostaje u autora.
+- **CI na tagu niczego nie buduje:** zadanie `release` czyta tag przez API
+  GitHuba — `actions/checkout` zostawia lokalnie tag bez adnotacji —
+  sprawdza, że to tag z adnotacją na commicie obrazu, a obraz ma
+  pochodzenie z `main` z tego commita, i dopisuje w rejestrze tag `X.Y.Z`
+  do tego samego digestu. `attest-release` wystawia atestację wydania
+  (Sigstore, predykat `…/attestations/release/v1` z zapisem z tagu),
+  `vulns` skanuje digest z polityką wydania w chwili wydania, a `promote`
+  po zgodzie autora wymaga pochodzenia z `main` i atestacji wydania z tagu
+  `vX.Y.Z` — z tym samym digestem i commitem. `test`, `build` i `cluster`
+  na tagu nie biegną: ten commit przeszedł je na `main`.
+- **Pochodzenie zawsze z `main`:** wpuszczanie obrazu (`stages/admission`)
+  wymaga atestacji GitHuba z `refs/heads/main` na każdym środowisku, które
+  wymaga atestacji. Wydanie to osobna atestacja, a nie inne pochodzenie.
+
+Przy okazji wyszedł błąd, którego wcześniej nie było widać: tag obrazu
+z samych cyfr (`123456789012`, mniej więcej co trzysetny commit) `helm
+--set` zamienia w liczbę i schemat charta odrzuca wdrożenie. Tag obrazu,
+digest i wersja idą teraz do Helma jako tekst (`--set-string`), a `dft
+test` renderuje chart właśnie z takim tagiem.
+
+**Co tracę:** wydanie wymaga działającego stagingu u autora — bez niego
+nie ma czego akceptować, a tag założony ręcznie CI odrzuca. Wersja nie jest
+już własnością obrazu: ten sam digest w dwóch wdrożeniach podaje różne
+wersje, a obraz uruchomiony poza chartem (`docker run`) podaje `unknown`,
+dopóki ktoś nie ustawi `DOCFIND_VERSION`. Wydanie `v0.3.0` zbudowano na
+tagu, z pochodzeniem z `refs/tags/v0.3.0` — promocji już nie przejdzie;
+następne wydanie musi wyjść z `main`. Wdrożenia sprzed tej decyzji nie mają
+`DOCFIND_VERSION`, więc tożsamość sprawdza na nich sam commit,
+z ostrzeżeniem, do pierwszego ponownego wdrożenia. Każde wydanie to
+kolejny wpis w publicznym dzienniku Rekor.
+
+**Kiedy zmieniam zdanie:** w Etapie 5, gdy staging dostanie digest
+z GitOps — akceptacja przeniesie się do zadania, które widzi wynik
+synchronizacji, a nie na maszynę autora. W Etapie 10, gdy chart stanie się
+artefaktem OCI — wersja charta i `api.version` wyjdą razem w jednym
+wydaniu.
 
 ## Czego bym dziś nie powtórzył
 

@@ -37,7 +37,8 @@ type verification struct {
 				Name   string            `json:"name"`
 				Digest map[string]string `json:"digest"`
 			} `json:"subject"`
-			PredicateType string `json:"predicateType"`
+			PredicateType string          `json:"predicateType"`
+			Predicate     json.RawMessage `json:"predicate"`
 		} `json:"statement"`
 		Signature struct {
 			Certificate struct {
@@ -50,20 +51,46 @@ type verification struct {
 	} `json:"verificationResult"`
 }
 
-// Verify sprawdza atestację obrazu ref (repozytorium@sha256:…). sourceRef,
-// jeśli niepusty, to wymagana gałąź albo tag źródła (np. refs/tags/v0.4.0
-// dla wydania). Odmowa — także gdy gh nie dosięgnie API — to warunek
-// niespełniony: obrazu bez sprawdzonej atestacji się nie wdraża.
+// Verify sprawdza atestację pochodzenia (SLSA v1) obrazu ref
+// (repozytorium@sha256:…). sourceRef, jeśli niepusty, to wymagana gałąź
+// albo tag źródła (np. refs/heads/main). Odmowa — także gdy gh nie dosięgnie
+// API — to warunek niespełniony: obrazu bez sprawdzonej atestacji się nie
+// wdraża.
 func (a Attestations) Verify(ctx context.Context, ref, sourceRef string) (artifact.Provenance, error) {
+	prov, _, err := a.verify(ctx, ref, artifact.ProvenanceV1, sourceRef, func(json.RawMessage) bool { return true })
+	return prov, err
+}
+
+// VerifyRelease sprawdza atestację wydania version obrazu ref: predykat
+// wydania (decyzja 40) z workflowu tego repozytorium, wystawiony na tagu
+// vX.Y.Z. Zwraca wydanie z predykatu i pochodzenie podpisu (commit tagu).
+func (a Attestations) VerifyRelease(ctx context.Context, ref, version string) (artifact.Release, artifact.Provenance, error) {
+	var release artifact.Release
+	prov, raw, err := a.verify(ctx, ref, artifact.ReleasePredicate, "refs/tags/v"+version, func(p json.RawMessage) bool {
+		var r artifact.Release
+		return json.Unmarshal(p, &r) == nil && r.Version == version
+	})
+	if err != nil {
+		return artifact.Release{}, artifact.Provenance{}, err
+	}
+	if err := json.Unmarshal(raw, &release); err != nil {
+		return artifact.Release{}, artifact.Provenance{}, fmt.Errorf("predykat wydania: %w", err)
+	}
+	return release, prov, nil
+}
+
+// verify uruchamia `gh attestation verify` dla typu predykatu i zwraca
+// pierwszą atestację tego digestu, której predykat przyjmuje accept.
+func (a Attestations) verify(ctx context.Context, ref, predicateType, sourceRef string, accept func(json.RawMessage) bool) (artifact.Provenance, json.RawMessage, error) {
 	repository, digest, err := artifact.ParseRef(ref)
 	if err != nil {
-		return artifact.Provenance{}, err
+		return artifact.Provenance{}, nil, err
 	}
 	want := strings.TrimPrefix(digest, "sha256:")
 	args := []string{"attestation", "verify", "oci://" + repository + "@" + digest,
 		"--repo", a.Repo,
 		"--signer-workflow", a.Repo + "/" + a.Workflow,
-		"--predicate-type", artifact.ProvenanceV1,
+		"--predicate-type", predicateType,
 		// Runner self-hosted mógłby zbudować cokolwiek pod podpisem tego
 		// workflowu (decyzja 20: tylko runnery GitHuba).
 		"--deny-self-hosted-runners",
@@ -79,18 +106,18 @@ func (a Attestations) Verify(ctx context.Context, ref, sourceRef string) (artifa
 			stderr = strings.TrimSpace(string(exit.Stderr))
 		}
 		if proc.ExitCode(err) > 0 {
-			return artifact.Provenance{}, cli.Unmet("atestacja GitHuba dla %s nie przeszła weryfikacji: %s", ref, firstLines(stderr, 3))
+			return artifact.Provenance{}, nil, cli.Unmet("atestacja GitHuba (%s) dla %s nie przeszła weryfikacji: %s", predicateType, ref, firstLines(stderr, 3))
 		}
-		return artifact.Provenance{}, err
+		return artifact.Provenance{}, nil, err
 	}
 	var results []verification
 	if err := json.Unmarshal(res.Stdout, &results); err != nil {
-		return artifact.Provenance{}, fmt.Errorf("gh attestation verify: nieczytelny wynik: %w", err)
+		return artifact.Provenance{}, nil, fmt.Errorf("gh attestation verify: nieczytelny wynik: %w", err)
 	}
 	for _, r := range results {
 		s := r.VerificationResult.Statement
 		for _, subject := range s.Subject {
-			if subject.Digest["sha256"] != want || s.PredicateType != artifact.ProvenanceV1 {
+			if subject.Digest["sha256"] != want || s.PredicateType != predicateType || !accept(s.Predicate) {
 				continue
 			}
 			c := r.VerificationResult.Signature.Certificate
@@ -98,10 +125,10 @@ func (a Attestations) Verify(ctx context.Context, ref, sourceRef string) (artifa
 				Subject: subject.Name + "@sha256:" + want, PredicateType: s.PredicateType,
 				SourceRef: c.SourceRepositoryRef, SourceCommit: c.SourceRepositoryDigest,
 				Run: c.RunInvocationURI, Runner: c.RunnerEnvironment,
-			}, nil
+			}, s.Predicate, nil
 		}
 	}
-	return artifact.Provenance{}, cli.Unmet("gh zweryfikował %d atestacji, ale żadna nie dotyczy %s z predykatem %s", len(results), ref, artifact.ProvenanceV1)
+	return artifact.Provenance{}, nil, cli.Unmet("gh zweryfikował %d atestacji, ale żadna nie dotyczy %s z predykatem %s", len(results), ref, predicateType)
 }
 
 func firstLines(s string, n int) string {

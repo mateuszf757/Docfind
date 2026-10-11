@@ -1,9 +1,9 @@
 // Package admission to wpuszczanie obrazu z rejestru na środowisko —
-// jedna polityka dla wdrożenia na klaster, promocji na środowisko bez
-// klastra i bramki atestacji: repozytorium aplikacji, publikacja
-// w rejestrze (indeks z atestacją, wersja i commit w etykietach), wydanie
-// tam, gdzie definicja przyjmuje tylko wydania, i atestacja GitHuba
-// z commitem obrazu.
+// jedna polityka dla wdrożenia na klaster, wydania, promocji i bramki
+// atestacji: repozytorium aplikacji, publikacja w rejestrze (indeks
+// z atestacją, commit w etykiecie), pochodzenie z main podpisane przez
+// GitHuba, a tam, gdzie definicja przyjmuje tylko wydania, atestacja
+// wydania o podanym numerze (decyzja 40).
 package admission
 
 import (
@@ -15,6 +15,10 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 )
 
+// MainRef — jedyne źródło obrazów z atestacją: obraz buduje się raz, na
+// main, a wydanie nadaje mu numer bez ponownego buildu (decyzja 40).
+const MainRef = "refs/heads/main"
+
 // Registry — publikacja w rejestrze (adapters/registry).
 type Registry interface {
 	Inspect(ctx context.Context, ref string) (artifact.Publication, error)
@@ -23,6 +27,7 @@ type Registry interface {
 // Attestations — atestacje GitHuba (adapters/github).
 type Attestations interface {
 	Verify(ctx context.Context, ref, sourceRef string) (artifact.Provenance, error)
+	VerifyRelease(ctx context.Context, ref, version string) (artifact.Release, artifact.Provenance, error)
 }
 
 // Policy — czego środowisko wymaga od obrazu z rejestru.
@@ -32,25 +37,31 @@ type Policy struct {
 	// Repository — jedyne repozytorium, z którego obrazy wchodzą; puste —
 	// dowolne (bramka atestacji sprawdza wskazany obraz).
 	Repository string
-	// ReleasesOnly — tylko wydania X.Y.Z.
-	ReleasesOnly bool
 	// Attested — pochodzenie i SBOM w atestacji BuildKitu oraz atestacja
-	// GitHuba (decyzja 37).
+	// GitHuba z main (decyzje 37 i 40).
 	Attested bool
+	// ReleasesOnly — tylko wydanie Release z atestacją wydania.
+	ReleasesOnly bool
+	// Release — numer wydania X.Y.Z, gdy ReleasesOnly.
+	Release string
 }
 
-// For zwraca politykę środowiska dla obrazu aplikacji repository.
-func For(e environment.Definition, repository string) Policy {
-	return Policy{Environment: e.Name, Repository: repository, ReleasesOnly: e.Artifact.ReleasesOnly, Attested: e.Artifact.Attested}
+// For zwraca politykę środowiska dla obrazu aplikacji repository; release —
+// numer wydania dla środowiska, które przyjmuje tylko wydania.
+func For(e environment.Definition, repository, release string) Policy {
+	return Policy{Environment: e.Name, Repository: repository, Attested: e.Artifact.Attested, ReleasesOnly: e.Artifact.ReleasesOnly, Release: release}
 }
 
 // Admitted — obraz przyjęty na środowisko.
 type Admitted struct {
-	// Publication — publikacja w rejestrze z wersją i commitem z etykiet.
+	// Publication — publikacja w rejestrze z commitem z etykiety; Release
+	// ustawione, gdy obraz przyjęto jako wydanie.
 	Publication artifact.Publication `json:"registry"`
-	// Provenance — zweryfikowana atestacja GitHuba; nil, gdy środowisko jej
+	// Provenance — zweryfikowane pochodzenie z main; nil, gdy środowisko go
 	// nie wymaga.
 	Provenance *artifact.Provenance `json:"github,omitempty"`
+	// Release — zweryfikowana atestacja wydania; nil poza wydaniami.
+	Release *artifact.Release `json:"release,omitempty"`
 }
 
 // Gate sprawdza obrazy.
@@ -71,34 +82,29 @@ func (g Gate) Admit(ctx context.Context, ref string, p Policy) (Admitted, error)
 	if p.Repository != "" && repository != p.Repository {
 		return Admitted{}, cli.Unmet("obraz z repozytorium %s, a aplikacja to %s — inne obrazy na środowisko %s nie trafiają", repository, p.Repository, p.Environment)
 	}
+	if p.ReleasesOnly && !artifact.IsRelease(p.Release) {
+		return Admitted{}, cli.Usage("środowisko %s przyjmuje tylko wydania — podaj numer wydania X.Y.Z (jest %q)", p.Environment, p.Release)
+	}
 	plain := repository + "@" + digest
 	published, err := g.Registry.Inspect(ctx, plain)
 	if err != nil {
 		return Admitted{}, err
 	}
-	version, commit := published.Version, published.Commit
-	if version == "" || commit == "" {
-		return Admitted{}, cli.Unmet("%s: obraz bez etykiet wersji i commita", plain)
-	}
-	if p.ReleasesOnly && !artifact.IsRelease(version) {
-		return Admitted{}, cli.Unmet("środowisko %s przyjmuje tylko wydania, a %s to wersja %s", p.Environment, plain, version)
+	commit := published.Commit
+	if commit == "" {
+		return Admitted{}, cli.Unmet("%s: obraz bez etykiety commita", plain)
 	}
 	admitted := Admitted{Publication: published}
-	if p.Attested {
+	if p.Attested || p.ReleasesOnly {
 		if err := published.RequireAttestations(); err != nil {
 			return Admitted{}, err
 		}
 		if g.Attestations == nil {
 			return Admitted{}, errors.New("polityka wymaga atestacji, a bramka nie ma weryfikatora")
 		}
-		// Wydanie musi pochodzić z tagu swojej wersji — obraz z main o tej
-		// samej treści ma inny digest (decyzja 30), ale tag można by też
-		// przesunąć na inny commit; podpis mówi, z którego zbudowano.
-		sourceRef := ""
-		if artifact.IsRelease(version) {
-			sourceRef = "refs/tags/v" + version
-		}
-		verified, err := g.Attestations.Verify(ctx, plain, sourceRef)
+		// Pochodzenie z main: obraz buduje się tylko tam, a podpis mówi,
+		// z którego commita — tag można by przesunąć, podpisu nie.
+		verified, err := g.Attestations.Verify(ctx, plain, MainRef)
 		if err != nil {
 			return Admitted{}, err
 		}
@@ -108,6 +114,24 @@ func (g Gate) Admit(ctx context.Context, ref string, p Policy) (Admitted, error)
 		admitted.Provenance = &verified
 		cli.Step("atestacja GitHuba: %s z %s (%s), %s, bieg %s", verified.PredicateType, verified.SourceRef, artifact.ShortCommit(verified.SourceCommit), verified.Runner, verified.Run)
 	}
-	cli.Step("rejestr: %s, atestacja %v, wersja %s, commit %s", published.Digest, published.Predicates, version, artifact.ShortCommit(commit))
+	if p.ReleasesOnly {
+		release, signed, err := g.Attestations.VerifyRelease(ctx, plain, p.Release)
+		if err != nil {
+			return Admitted{}, err
+		}
+		_, releasedDigest, _ := artifact.ParseRef(release.Image)
+		switch {
+		case release.Version != p.Release:
+			return Admitted{}, cli.Unmet("atestacja wydania mówi o %s, a promowane jest %s", release.Version, p.Release)
+		case releasedDigest != digest:
+			return Admitted{}, cli.Unmet("atestacja wydania %s dotyczy %s, a obraz to %s", p.Release, release.Image, plain)
+		case release.Commit != commit || signed.SourceCommit != commit:
+			return Admitted{}, cli.Unmet("wydanie %s z commita %s (podpis z %s), a obraz zbudowano z %s", p.Release, release.Commit, signed.SourceCommit, commit)
+		}
+		admitted.Release = &release
+		admitted.Publication.Release = p.Release
+		cli.Step("atestacja wydania %s: tag %s (%s), akceptacja na stagingu %s", p.Release, signed.SourceRef, artifact.ShortCommit(signed.SourceCommit), release.AcceptedAt)
+	}
+	cli.Step("rejestr: %s, atestacja %v, commit %s", published.Digest, published.Predicates, artifact.ShortCommit(commit))
 	return admitted, nil
 }

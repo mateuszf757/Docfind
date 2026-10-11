@@ -44,20 +44,26 @@ func TestIsReleaseTag(t *testing.T) {
 	}
 }
 
-func TestDockerTag(t *testing.T) {
-	long := strings.Repeat("a", 200)
+func TestReleaseNumbers(t *testing.T) {
+	if v, ok := ReleaseOfTag("v0.4.0"); !ok || v != "0.4.0" {
+		t.Errorf("ReleaseOfTag: %q, %v", v, ok)
+	}
+	if _, ok := ReleaseOfTag("v0.4.0-rc.1"); ok {
+		t.Error("tag przedwydaniowy jako wydanie")
+	}
 	tests := []struct {
-		version, want string
+		a, b string
+		want int
 	}{
-		{"0.3.0", "0.3.0"},
-		{"0.3.1-dev.2+abc1234", "0.3.1-dev.2-abc1234"},
-		{"0.3.1-dev.0+abc1234-dirty", "0.3.1-dev.0-abc1234-dirty"},
-		{"1.0.0+żółć", "1.0.0-----"},
-		{long, long[:DockerTagMaxLength]},
+		{"0.4.0", "0.3.9", 1},
+		{"0.3.10", "0.3.9", 1},
+		{"1.0.0", "0.99.99", 1},
+		{"0.3.1", "0.3.1", 0},
+		{"0.3.1", "0.4.0", -1},
 	}
 	for _, tt := range tests {
-		if got := DockerTag(tt.version); got != tt.want {
-			t.Errorf("DockerTag(%q) = %q, oczekiwano %q", tt.version, got, tt.want)
+		if got := CompareReleases(tt.a, tt.b); got != tt.want {
+			t.Errorf("CompareReleases(%s, %s) = %d, oczekiwano %d", tt.a, tt.b, got, tt.want)
 		}
 	}
 }

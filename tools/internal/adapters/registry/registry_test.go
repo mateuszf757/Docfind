@@ -246,12 +246,11 @@ func TestVerifyPublished(t *testing.T) {
 	}
 }
 
-// TestInspectLabels: wdrożenie po digeście bierze wersję i commit z etykiet
+// TestInspectLabels: wdrożenie po digeście bierze commit z etykiety
 // konfiguracji obrazu w rejestrze — z tego, co tam leży, a nie z gita.
 func TestInspectLabels(t *testing.T) {
 	repo := testRegistry(t)
 	img, err := mutate.Config(randomImage(t), v1.Config{Labels: map[string]string{
-		artifact.VersionLabel:  "0.3.0",
 		artifact.RevisionLabel: strings.Repeat("a", 40),
 	}})
 	if err != nil {
@@ -262,8 +261,8 @@ func TestInspectLabels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Version != "0.3.0" || got.Commit != strings.Repeat("a", 40) {
-		t.Errorf("wersja i commit z etykiet: %+v", got.Artifact)
+	if got.Commit != strings.Repeat("a", 40) || got.Release != "" {
+		t.Errorf("commit z etykiety: %+v", got.Artifact)
 	}
 	if got.Config != configOf(t, img) || got.Digest != ref[strings.Index(ref, "@")+1:] {
 		t.Errorf("digesty: %+v (ref %s)", got, ref)
@@ -292,4 +291,40 @@ func TestSaveImage(t *testing.T) {
 	if !errors.Is(err, artifact.ErrNotFound) {
 		t.Errorf("brak obrazu: %v", err)
 	}
+}
+
+// TestTag: tag wydania na opublikowanym indeksie — ten sam digest, bez
+// ponownej publikacji; ponowienie jest bez zmian, a tag na innym digeście
+// odmową.
+func TestTag(t *testing.T) {
+	repo := testRegistry(t)
+	img := randomImage(t)
+	ref := pushIndex(t, repo, attestedIndex(t, img, digestOf(t, img)))
+	ctx := context.Background()
+	for range 2 {
+		if err := (Client{}).Tag(ctx, ref, "0.4.0"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tagged, err := remote.Head(mustTag(t, repo+":0.4.0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := ref[strings.Index(ref, "@")+1:]; tagged.Digest.String() != want {
+		t.Errorf("tag wskazuje na %s, oczekiwano %s", tagged.Digest, want)
+	}
+	other := randomImage(t)
+	otherRef := pushIndex(t, repo, attestedIndex(t, other, digestOf(t, other)))
+	if err := (Client{}).Tag(ctx, otherRef, "0.4.0"); cli.ExitCode(err) != cli.ExitUnmet {
+		t.Errorf("przesunięcie tagu wydania: %v", err)
+	}
+}
+
+func mustTag(t *testing.T, ref string) name.Tag {
+	t.Helper()
+	tag, err := name.NewTag(ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tag
 }

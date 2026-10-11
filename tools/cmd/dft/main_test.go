@@ -82,6 +82,10 @@ func TestUsageErrors(t *testing.T) {
 		"okres próbny z N=0":            func() error { return runTrial(ctx, w, []string{"0", "cluster"}) },
 		"ustawienia z nieznaną flagą":   func() error { return runRepoSettings(ctx, w, []string{"--force"}) },
 		"tożsamość bez pola":            func() error { return runIdentity(ctx, w, nil) },
+		"promocja bez numeru wydania":   func() error { return runPromote(ctx, w, []string{"ghcr.io/x/api@sha256:abc"}) },
+		"wydanie bez numeru":            func() error { return runRelease(ctx, w, nil) },
+		"wydanie w CI bez numeru":       func() error { return runReleaseImage(ctx, w, nil) },
+		"tag obrazu z wersji":           func() error { return runIdentity(ctx, w, []string{"docker-tag"}) },
 	} {
 		if err := call(); cli.ExitCode(err) != cli.ExitFailure {
 			t.Errorf("%s: kod %d (%v), oczekiwano złego wywołania", name, cli.ExitCode(err), err)
@@ -89,6 +93,18 @@ func TestUsageErrors(t *testing.T) {
 	}
 	if calls := w.runner.(*proc.Fake).Calls; len(calls) > 0 {
 		t.Errorf("przed odmową uruchomiono %v", calls)
+	}
+}
+
+// TestReleaseBuildRefused: build wydania nie istnieje od decyzji 40 —
+// RELEASE=1 kończy się złym wywołaniem z instrukcją, zanim cokolwiek ruszy.
+func TestReleaseBuildRefused(t *testing.T) {
+	quiet(t)
+	t.Setenv("RELEASE", "1")
+	w := &workspace{root: t.TempDir(), runner: &proc.Fake{}}
+	err := runBuild(context.Background(), w, nil)
+	if cli.ExitCode(err) != cli.ExitFailure || !strings.Contains(err.Error(), "./bin/mise run release") {
+		t.Errorf("RELEASE=1: %v", err)
 	}
 }
 

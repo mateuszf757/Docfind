@@ -130,16 +130,17 @@ func saved(t *testing.T, img v1.Image) (string, string) {
 
 func TestArchiveImage(t *testing.T) {
 	quiet(t)
-	d := Deployer{Env: definition(t, "ci"), Image: apiImage}
-	img := labelled(t, map[string]string{artifact.VersionLabel: "0.0.0-dev.1+abc1234", artifact.RevisionLabel: commit})
+	d := Deployer{Env: definition(t, "ci"), Image: apiImage, Versions: versions{}}
+	img := labelled(t, map[string]string{artifact.RevisionLabel: commit})
 	path, config := saved(t, img)
 
-	got, err := d.archiveImage(Source{Kind: environment.SourceArchive, Archive: path, Config: config}, t.TempDir())
+	got, err := d.archiveImage(context.Background(), Source{Kind: environment.SourceArchive, Archive: path, Config: config}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	wantRef := apiImage + ":local-" + strings.TrimPrefix(config, "sha256:")[:12]
-	if got.want.Image != wantRef || got.want.Version != "0.0.0-dev.1+abc1234" || got.want.Commit != commit || got.digest != "" {
+	// Wersja wdrożenia z historii repozytorium, nie z obrazu (decyzja 40).
+	if got.want.Image != wantRef || got.want.Version != "0.3.1-dev.4+ccccccc" || got.want.Commit != commit || got.digest != "" {
 		t.Errorf("obraz z archiwum: %+v, oczekiwano %s", got, wantRef)
 	}
 	// Archiwum do importu niesie nowy tag, a obraz zostaje ten sam.
@@ -152,14 +153,14 @@ func TestArchiveImage(t *testing.T) {
 	}
 
 	t.Run("inna konfiguracja niż sprawdzona w zadaniu build", func(t *testing.T) {
-		_, err := d.archiveImage(Source{Kind: environment.SourceArchive, Archive: path, Config: "sha256:" + strings.Repeat("0", 64)}, t.TempDir())
+		_, err := d.archiveImage(context.Background(), Source{Kind: environment.SourceArchive, Archive: path, Config: "sha256:" + strings.Repeat("0", 64)}, t.TempDir())
 		if cli.ExitCode(err) != cli.ExitUnmet || !strings.Contains(err.Error(), "zadanie build sprawdziło") {
 			t.Errorf("podmienione archiwum przyjęte: %v", err)
 		}
 	})
-	t.Run("obraz bez etykiet", func(t *testing.T) {
+	t.Run("obraz bez etykiety commita", func(t *testing.T) {
 		path, config := saved(t, labelled(t, nil))
-		_, err := d.archiveImage(Source{Kind: environment.SourceArchive, Archive: path, Config: config}, t.TempDir())
+		_, err := d.archiveImage(context.Background(), Source{Kind: environment.SourceArchive, Archive: path, Config: config}, t.TempDir())
 		if cli.ExitCode(err) != cli.ExitUnmet {
 			t.Errorf("obraz bez wersji przyjęty: %v", err)
 		}
@@ -172,6 +173,9 @@ type recorder struct {
 	calls []string
 	// fail — wywołanie, które ma zawieść.
 	fail string
+	// version — api.version z instalacji charta aplikacji: to podaje
+	// aplikacja na /version (DOCFIND_VERSION).
+	version string
 }
 
 func (r *recorder) call(format string, args ...any) error {
@@ -228,7 +232,12 @@ func (f fakeCharts) Fetch(_ context.Context, c pins.Chart) (string, error) {
 	return "/cache/" + c.Name + ".tgz", f.call("fetch %s", c.Name)
 }
 func (f fakeCharts) Install(_ context.Context, _ cluster.Target, r cluster.Release) error {
-	return f.call("install %s %s", r.Name, strings.Join(r.Set, " "))
+	for _, v := range r.SetString {
+		if version, ok := strings.CutPrefix(v, "api.version="); ok {
+			f.version = version
+		}
+	}
+	return f.call("install %s %s", r.Name, strings.Join(append(r.Set, r.SetString...), " "))
 }
 
 type fakeCluster struct {
@@ -258,7 +267,7 @@ func (f fakeCluster) Pods(context.Context, string, string) ([]cluster.Pod, error
 	return []cluster.Pod{{Name: "api-1", Images: map[string]string{"api": f.image}}}, nil
 }
 func (f fakeCluster) ProxyGet(context.Context, string, string, string, string) ([]byte, error) {
-	return []byte(`{"version":"0.3.1-dev.4+abc1234","commit":"` + commit + `"}`), f.call("identity")
+	return []byte(`{"version":"` + f.recorder.version + `","commit":"` + commit + `"}`), f.call("identity")
 }
 
 type fakeAdmission struct{ *recorder }
@@ -266,14 +275,21 @@ type fakeAdmission struct{ *recorder }
 func (f fakeAdmission) Admit(_ context.Context, ref string, p admission.Policy) (admission.Admitted, error) {
 	repository, digest, _ := artifact.ParseRef(ref)
 	return admission.Admitted{Publication: artifact.Publication{Artifact: artifact.Artifact{
-		Repository: repository, Digest: digest, Version: "0.3.1-dev.4+abc1234", Commit: commit,
+		Repository: repository, Digest: digest, Commit: commit,
 	}}}, f.call("admit %s attested=%v", p.Environment, p.Attested)
+}
+
+// versions — wersja commita z historii repozytorium.
+type versions struct{}
+
+func (versions) VersionOf(_ context.Context, c string) (string, error) {
+	return "0.3.1-dev.4+" + c[:7], nil
 }
 
 type fakeBuilder struct{ *recorder }
 
 func (f fakeBuilder) Build(context.Context, build.Options) (build.Result, error) {
-	return build.Result{Artifact: artifact.Artifact{Repository: apiImage, Version: "0.3.1-dev.4+abc1234", Commit: commit}}, f.call("build")
+	return build.Result{Artifact: artifact.Artifact{Repository: apiImage, Commit: commit}, Version: "0.3.1-dev.4+ccccccc-dirty", Dirty: true}, f.call("build")
 }
 
 func deployer(t *testing.T, env string, rec *recorder, exists bool, podImage string) Deployer {
@@ -294,7 +310,7 @@ func deployer(t *testing.T, env string, rec *recorder, exists bool, podImage str
 		Root: root, Env: definition(t, env), Pins: p, Service: "api", Image: apiImage, LogDir: t.TempDir(),
 		Clusters: fakeClusters{rec, exists}, Engine: fakeEngine{rec}, Host: fakeHost{}, Charts: fakeCharts{rec}, Releases: fakeCharts{rec},
 		Connect: func(cluster.Target) (Cluster, error) { return fakeCluster{rec, podImage}, rec.call("connect") },
-		Builder: fakeBuilder{rec}, Admission: fakeAdmission{rec},
+		Builder: fakeBuilder{rec}, Admission: fakeAdmission{rec}, Versions: versions{},
 	}
 }
 
@@ -313,7 +329,7 @@ func TestUpFromRegistry(t *testing.T) {
 	t.Setenv("DOCFIND_ACME_EMAIL", "")
 	digest := "sha256:" + strings.Repeat("d", 64)
 	rec := &recorder{}
-	d := deployer(t, "dev", rec, false, apiImage+":0.3.1-dev.4-abc1234@"+digest)
+	d := deployer(t, "dev", rec, false, apiImage+":cccccccccccc@"+digest)
 	d.Env.Artifact.Sources = []string{environment.SourceRegistry}
 	if err := d.Up(context.Background(), Source{Kind: environment.SourceRegistry, Ref: apiImage + "@" + digest}); err != nil {
 		t.Fatalf("%v\n%s", err, strings.Join(rec.calls, "\n"))
@@ -328,7 +344,9 @@ func TestUpFromRegistry(t *testing.T) {
 		t.Errorf("wywołania:\n%s\noczekiwano początku:\n%s", strings.Join(rec.calls, "\n"), strings.Join(want, "\n"))
 	}
 	joined := strings.Join(rec.calls, "\n")
-	for _, wantCall := range []string{"install platform gateway.name=", "namespace docfind v1.36", "install docfind route.hostname=", "api.image.digest=" + digest, "identity"} {
+	// Obraz commita: tag z commita, digest, a wersja wdrożenia z historii
+	// repozytorium (DOCFIND_VERSION), nie z obrazu.
+	for _, wantCall := range []string{"install platform gateway.name=", "namespace docfind v1.36", "install docfind route.hostname=", "api.image.tag=cccccccccccc", "api.version=0.3.1-dev.4+ccccccc", "api.image.digest=" + digest, "identity"} {
 		if !strings.Contains(joined, wantCall) {
 			t.Errorf("brak %q w:\n%s", wantCall, joined)
 		}
@@ -352,7 +370,7 @@ func TestUpLocalBuild(t *testing.T) {
 		t.Fatalf("%v\n%s", err, strings.Join(rec.calls, "\n"))
 	}
 	joined := strings.Join(rec.calls, "\n")
-	for _, wantCall := range []string{"build", "tag " + local, "k3d import " + local, "api.image.tag=local-aaaaaaaaaaaa"} {
+	for _, wantCall := range []string{"build", "tag " + local, "k3d import " + local, "api.image.tag=local-aaaaaaaaaaaa", "api.version=0.3.1-dev.4+ccccccc-dirty"} {
 		if !strings.Contains(joined, wantCall) {
 			t.Errorf("brak %q w:\n%s", wantCall, joined)
 		}

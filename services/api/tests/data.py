@@ -15,12 +15,20 @@ from docfind_api.models import BuildInfo
 
 COMMIT_SHA: Final = "0123456789abcdef0123456789abcdef01234567"
 
-RELEASE_BUILD: Final = BuildInfo(
-    version="1.2.3",
-    commit=COMMIT_SHA,
-    source_date="2026-09-22T10:00:00Z",
-)
-"""Poprawna, kompletna tożsamość builda."""
+BUILD_FILE: Final[dict[str, Any]] = {
+    "commit": COMMIT_SHA,
+    "source_date": "2026-09-22T10:00:00Z",
+}
+"""version.json z obrazu — tylko to, co wynika z commita (decyzja 40)."""
+
+DEPLOYED_VERSION: Final = "1.2.3"
+"""Wersja, którą wdrożenie podaje w DOCFIND_VERSION."""
+
+RELEASE_BUILD: Final = BuildInfo(version=DEPLOYED_VERSION, **BUILD_FILE)
+"""Poprawna, kompletna tożsamość: obraz z version.json, wdrożony jako wydanie."""
+
+LEGACY_BUILD_FILE: Final[dict[str, Any]] = {**BUILD_FILE, "version": "0.3.0"}
+"""version.json z obrazu sprzed decyzji 40, który niósł też wersję."""
 
 MALFORMED_VERSION_JSON: Final = "{to nie jest json"
 """Uszkodzony plik — na przykład przerwany zapis."""
@@ -28,8 +36,8 @@ MALFORMED_VERSION_JSON: Final = "{to nie jest json"
 NON_OBJECT_VERSION_JSON: Final = "[1, 2, 3]"
 """Poprawny JSON, ale nie obiekt — nie da się z niego odczytać pól."""
 
-PARTIAL_BUILD: Final[dict[str, Any]] = {"version": "9.9.9"}
-"""Tożsamość bez commita i czasu budowania."""
+PARTIAL_BUILD: Final[dict[str, Any]] = {"commit": COMMIT_SHA}
+"""Tożsamość bez czasu budowania."""
 
 SAMPLE_QUERY: Final = "kubernetes"
 
