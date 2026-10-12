@@ -47,6 +47,20 @@ acme:
 # Pody proxy Envoy. Tworzy je kontroler Envoy Gateway na podstawie zasobu
 # EnvoyProxy — to jest jedyne miejsce, w którym da się ustawić ich repliki,
 # zasoby i PDB.
+# Magazyn sekretów platformy (OpenBao, decyzja 42) dla External Secrets
+# Operator (decyzja 43). Te same nazwy co w deploy/platform/openbao.
+secretStore:
+  name: openbao
+  server: https://openbao-active.openbao.svc:8200
+  mount: docfind
+  authMount: kubernetes
+  audience: openbao
+  # Konto w przestrzeni cert-managera i rola, która czyta tylko token DNS.
+  serviceAccount: openbao-secrets
+  dnsTokenRole: cert-manager-dns
+  dnsTokenPath: platform/cloudflare
+  refreshInterval: 1h
+
 proxy:
   replicas: 2
   # Bez limitu CPU (decyzja 16): proxy na ścieżce każdego żądania to ostatnie

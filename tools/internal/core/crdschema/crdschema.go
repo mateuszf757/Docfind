@@ -26,37 +26,72 @@ import (
 
 // Strict zwraca kopię schematu OpenAPI v3 w postaci, którą rozumie walidator
 // JSON Schema.
+//
+// Przejście zna strukturę schematu: schematy podrzędne są tylko pod
+// properties (wartości mapy; klucze to nazwy pól), items,
+// additionalProperties, allOf, anyOf, oneOf i not. Reszta — default, enum,
+// example, opisy — to dane, kopiowane bez zmian. Wcześniej przekształcenie
+// szło przez każdą mapę: CRD SecretStore z ESO ma pole o nazwie
+// „properties", więc mapa pól dostawała additionalProperties: false — „pole"
+// ze schematem false, którego kubeconform nie kompiluje i zgłasza jako brak
+// schematu.
 func Strict(schema any) any {
-	switch v := schema.(type) {
-	case []any:
-		out := make([]any, len(v))
-		for i, item := range v {
-			out[i] = Strict(item)
-		}
-		return out
-	case map[string]any:
-		out := make(map[string]any, len(v))
-		for key, value := range v {
-			out[key] = Strict(value)
-		}
-		// OpenAPI `nullable` nie istnieje w JSON Schema — null trzeba
-		// dopuścić typem.
-		if nullable, _ := out["nullable"].(bool); nullable {
-			if t, ok := out["type"].(string); ok {
-				out["type"] = []any{t, "null"}
+	m, ok := schema.(map[string]any)
+	if !ok {
+		return schema
+	}
+	out := make(map[string]any, len(m))
+	for key, value := range m {
+		switch key {
+		case "properties":
+			if fields, ok := value.(map[string]any); ok {
+				strict := make(map[string]any, len(fields))
+				for name, sub := range fields {
+					strict[name] = Strict(sub)
+				}
+				out[key] = strict
+				continue
+			}
+		case "items", "additionalProperties", "not":
+			if list, ok := value.([]any); ok && key == "items" {
+				out[key] = strictAll(list)
+				continue
+			}
+			if _, ok := value.(map[string]any); ok {
+				out[key] = Strict(value)
+				continue
+			}
+		case "allOf", "anyOf", "oneOf":
+			if list, ok := value.([]any); ok {
+				out[key] = strictAll(list)
+				continue
 			}
 		}
-		delete(out, "nullable")
-		preserves, _ := out["x-kubernetes-preserve-unknown-fields"].(bool)
-		_, hasProperties := out["properties"]
-		_, hasAdditional := out["additionalProperties"]
-		if hasProperties && !hasAdditional && !preserves {
-			out["additionalProperties"] = false
-		}
-		return out
-	default:
-		return v
+		out[key] = value
 	}
+	// OpenAPI `nullable` nie istnieje w JSON Schema — null trzeba dopuścić
+	// typem.
+	if nullable, _ := out["nullable"].(bool); nullable {
+		if t, ok := out["type"].(string); ok {
+			out["type"] = []any{t, "null"}
+		}
+	}
+	delete(out, "nullable")
+	preserves, _ := out["x-kubernetes-preserve-unknown-fields"].(bool)
+	_, hasProperties := out["properties"]
+	_, hasAdditional := out["additionalProperties"]
+	if hasProperties && !hasAdditional && !preserves {
+		out["additionalProperties"] = false
+	}
+	return out
+}
+
+func strictAll(schemas []any) []any {
+	out := make([]any, len(schemas))
+	for i, s := range schemas {
+		out[i] = Strict(s)
+	}
+	return out
 }
 
 // Write zapisuje <dir>/<grupa>/<rodzaj>_<wersja>.json dla każdej wersji

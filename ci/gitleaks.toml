@@ -3,7 +3,22 @@
 # .gitleaks.toml w korzeniu repozytorium nie ma znaczenia, bo inaczej PR
 # mógłby dopisać konfigurację, która wyłącza skan dla niego samego.
 #
-# Reguły domyślne gitleaks w wersji z mise.lock, bez wyjątków ścieżek —
-# wyjątek dla konkretnego ustalenia to odcisk w ci/gitleaks-ignore.
+# Reguły domyślne gitleaks w wersji z mise.lock. Wyjątek dla konkretnego
+# ustalenia to odcisk w ci/gitleaks-ignore; tutaj tylko wzorce, które
+# z definicji sekretem nie są i wracałyby przy każdej aktualizacji.
 [extend]
 useDefault = true
+
+# Sumy SHA-256 chartów i plików w ci/pins.env — publiczne, opublikowane przez
+# autorów (decyzja 20). Reguła generic-api-key widzi „SECRETS" w nazwie
+# DF_EXTERNAL_SECRETS_CHART_SHA256 i 64 znaki hex jako klucz API, a odcisk
+# zmieniałby się przy każdej aktualizacji charta. Oba warunki naraz: tylko
+# ten plik i tylko dopasowanie w postaci DF_…_SHA256=<64 znaki hex> — inny
+# wpis w tym pliku dalej jest skanowany. Na dopasowaniu, nie na linii:
+# w trybie git linia z diffu ma prefiks „+".
+[[allowlists]]
+description = "publiczne sumy SHA-256 w ci/pins.env"
+condition = "AND"
+paths = ['''^ci/pins\.env$''']
+regexTarget = "match"
+regexes = ['''^DF_[A-Z0-9_]+_SHA256=[0-9a-f]{64}$''']

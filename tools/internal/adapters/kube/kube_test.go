@@ -190,18 +190,12 @@ func TestRolloutAndPods(t *testing.T) {
 	}
 }
 
-func TestStoreSecret(t *testing.T) {
-	cs := fake.NewClientset()
+func TestSecretData(t *testing.T) {
+	cs := fake.NewClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "token", Namespace: "cert-manager"}, Data: map[string][]byte{"api-token": []byte("t")}})
 	c := New(cs, nil, nil, cluster.Target{})
 	ctx := context.Background()
-	for _, value := range []string{"pierwszy", "drugi"} {
-		if err := c.StoreSecret(ctx, "cert-manager", "token", map[string][]byte{"api-token": []byte(value)}); err != nil {
-			t.Fatal(err)
-		}
-		data, err := c.SecretData(ctx, "cert-manager", "token")
-		if err != nil || string(data["api-token"]) != value {
-			t.Errorf("Secret ma %q, oczekiwano %q (%v)", data["api-token"], value, err)
-		}
+	if data, err := c.SecretData(ctx, "cert-manager", "token"); err != nil || string(data["api-token"]) != "t" {
+		t.Errorf("SecretData: %v, %v", data, err)
 	}
 	if ok, err := c.SecretExists(ctx, "cert-manager", "brak"); ok || err != nil {
 		t.Errorf("SecretExists dla brakującego: %v, %v", ok, err)
@@ -306,5 +300,67 @@ func TestTools(t *testing.T) {
 	}
 	if _, found, err := c.DeploymentEnv(ctx, "docfind", "docfind-api", "sidecar", "DOCFIND_VERSION"); err != nil || found {
 		t.Errorf("zmienna w kontenerze bez niej: %v, %v", found, err)
+	}
+}
+
+// TestAccess: Secret tworzony raz i niezmienny (klucz odpieczętowania nie
+// zostanie podmieniony), stan StatefulSetu i wolumeny po etykietach.
+func TestAccess(t *testing.T) {
+	ctx := context.Background()
+	replicas := int32(3)
+	cs := fake.NewClientset(
+		&appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: "openbao", Namespace: "openbao"}, Spec: appsv1.StatefulSetSpec{Replicas: &replicas},
+			Status: appsv1.StatefulSetStatus{ReadyReplicas: 2, UpdateRevision: "openbao-abc"}},
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "data-openbao-0", Namespace: "openbao", Labels: map[string]string{"app.kubernetes.io/name": "openbao"}}},
+		&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "inny", Namespace: "openbao"}},
+	)
+	c := New(cs, nil, nil, cluster.Target{})
+	for i, value := range []string{"pierwszy", "drugi"} {
+		created, err := c.CreateSecretIfMissing(ctx, "openbao", "openbao-seal", map[string][]byte{"key": []byte(value)})
+		if err != nil || created != (i == 0) {
+			t.Fatalf("utworzenie %d: %v, %v", i, created, err)
+		}
+	}
+	s, err := cs.CoreV1().Secrets("openbao").Get(ctx, "openbao-seal", metav1.GetOptions{})
+	if err != nil || string(s.Data["key"]) != "pierwszy" || s.Immutable == nil || !*s.Immutable {
+		t.Errorf("Secret: %v, %v", s, err)
+	}
+	sts, err := c.StatefulSet(ctx, "openbao", "openbao")
+	if err != nil || sts.Wanted != 3 || sts.Ready != 2 || sts.UpdateRevision != "openbao-abc" {
+		t.Errorf("StatefulSet: %+v, %v", sts, err)
+	}
+	pvcs, err := c.PersistentVolumeClaims(ctx, "openbao", "app.kubernetes.io/name=openbao")
+	if err != nil || len(pvcs) != 1 || pvcs[0] != "data-openbao-0" {
+		t.Errorf("wolumeny: %v, %v", pvcs, err)
+	}
+}
+
+// TestExternalSecret: stan z warunku Ready i czas synchronizacji;
+// wymuszenie to adnotacja force-sync z czasem.
+func TestExternalSecret(t *testing.T) {
+	ctx := context.Background()
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{externalSecretGVR: "ExternalSecretList"})
+	u := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "external-secrets.io/v1", "kind": "ExternalSecret",
+		"metadata": map[string]any{"name": "cloudflare-api-token", "namespace": "cert-manager"},
+		"status": map[string]any{"refreshTime": "2026-10-12T10:00:00Z", "conditions": []any{
+			map[string]any{"type": "Ready", "status": "False", "reason": "SecretSyncedError", "message": "permission denied"},
+		}},
+	}}
+	if _, err := dyn.Resource(externalSecretGVR).Namespace("cert-manager").Create(ctx, u, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	c := New(fake.NewClientset(), dyn, nil, cluster.Target{})
+	es, err := c.ExternalSecret(ctx, "cert-manager", "cloudflare-api-token")
+	if err != nil || es.Ready || es.Reason != "SecretSyncedError" || es.Message != "permission denied" || es.RefreshTime.Hour() != 10 {
+		t.Errorf("ExternalSecret: %+v, %v", es, err)
+	}
+	at := time.Date(2026, 10, 12, 11, 0, 0, 0, time.UTC)
+	if err := c.ForceSync(ctx, "cert-manager", "cloudflare-api-token", at); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := dyn.Resource(externalSecretGVR).Namespace("cert-manager").Get(ctx, "cloudflare-api-token", metav1.GetOptions{})
+	if got.GetAnnotations()["force-sync"] != "1791802800" {
+		t.Errorf("adnotacja: %v", got.GetAnnotations())
 	}
 }

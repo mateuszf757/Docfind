@@ -39,3 +39,22 @@ roles:
     audience: openbao
     policies: [platform-admin]
     ttl: 15m
+
+  # ESO w przestrzeni cert-managera (SecretStore openbao, chart platformy):
+  # odczyt tokenu Cloudflare. Token ESO żyje tyle, ile jedna synchronizacja.
+  - name: cert-manager-dns
+    auth: kubernetes
+    serviceAccount: openbao-secrets
+    namespace: cert-manager
+    audience: openbao
+    policies: [cert-manager-dns]
+    ttl: 5m
+
+  # `dft dns-token` i migracja przy `cluster up`: zapis tokenu Cloudflare.
+  - name: dns-token-writer
+    auth: kubernetes
+    serviceAccount: openbao-dns-writer
+    namespace: openbao
+    audience: openbao
+    policies: [dns-token-writer]
+    ttl: 5m

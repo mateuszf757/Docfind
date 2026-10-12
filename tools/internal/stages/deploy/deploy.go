@@ -67,7 +67,6 @@ type Releases interface {
 type Cluster interface {
 	identity.Cluster
 	Nodes(ctx context.Context) ([]cluster.Node, error)
-	SecretExists(ctx context.Context, namespace, name string) (bool, error)
 	Certificate(ctx context.Context, namespace, name string) (cluster.Certificate, error)
 	Gateway(ctx context.Context, namespace, name string) (cluster.Gateway, error)
 	EnsureNamespace(ctx context.Context, name string, labels map[string]string) error
@@ -101,6 +100,12 @@ type SecretStore interface {
 	Bootstrap(ctx context.Context) (secrets.Status, error)
 }
 
+// DNSToken — token Cloudflare dla wydawców ACME w OpenBao i jego Secret od
+// ESO (stages/dnstoken); hint — jak go zapisać, gdy go nie ma.
+type DNSToken interface {
+	Ensure(ctx context.Context, hint string) error
+}
+
 // Deployer — wdrożenie jednego środowiska.
 type Deployer struct {
 	Root string
@@ -124,6 +129,8 @@ type Deployer struct {
 	Versions  Versions
 	// SecretStores — magazyn sekretów na klastrze środowiska.
 	SecretStores func(t cluster.Target) (SecretStore, error)
+	// DNSTokens — token Cloudflare w środowisku z Let's Encrypt.
+	DNSTokens func(t cluster.Target) (DNSToken, error)
 }
 
 // Source — skąd wziąć obraz.

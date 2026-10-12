@@ -2,11 +2,15 @@ package dnstoken
 
 import (
 	"context"
+	"errors"
 	"io"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/sensitive"
 )
 
 const token = "sekretny-token-123"
@@ -65,19 +69,106 @@ func TestReadToken(t *testing.T) {
 	}
 }
 
-type secrets map[string]map[string][]byte
-
-func (s secrets) StoreSecret(_ context.Context, namespace, name string, data map[string][]byte) error {
-	s[namespace+"/"+name] = data
-	return nil
+// vault — OpenBao: wersje sekretu i role, którymi zapisywano.
+type vault struct {
+	versions []string
+	roles    []string
 }
 
+func (v *vault) PutSecret(_ context.Context, account, role, path string, data map[string]sensitive.Value) (int, error) {
+	if path != VaultPath || account != WriterAccount {
+		return 0, errors.New("nie ta ścieżka albo konto")
+	}
+	v.roles = append(v.roles, role)
+	v.versions = append(v.versions, data[SecretKey].Reveal())
+	return len(v.versions), nil
+}
+func (v *vault) SecretVersion(context.Context, string, string, string) (int, bool, error) {
+	return len(v.versions), len(v.versions) > 0, nil
+}
+
+// kluster — Secret sprzed OpenBao (legacy) i ExternalSecret, który ESO
+// synchronizuje po force-sync, o ile w OpenBao jest wartość (synced).
+type kluster struct {
+	legacy  string
+	synced  func() bool
+	forced  []time.Time
+	refresh time.Time
+}
+
+func (k *kluster) SecretData(context.Context, string, string) (map[string][]byte, error) {
+	if k.legacy == "" {
+		return nil, errors.New("not found")
+	}
+	return map[string][]byte{SecretKey: []byte(k.legacy)}, nil
+}
+func (k *kluster) ForceSync(_ context.Context, _, _ string, at time.Time) error {
+	k.forced = append(k.forced, at)
+	if k.synced() {
+		k.refresh = at
+	}
+	return nil
+}
+func (k *kluster) ExternalSecret(context.Context, string, string) (cluster.ExternalSecret, error) {
+	if !k.synced() {
+		return cluster.ExternalSecret{Reason: "SecretSyncedError", Message: "secret not found"}, nil
+	}
+	return cluster.ExternalSecret{Ready: true, RefreshTime: k.refresh}, nil
+}
+
+func sync(v *vault, k *kluster) Sync {
+	clock := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	return Sync{Vault: v, Cluster: k, Timeout: time.Second, Now: func() time.Time { clock = clock.Add(time.Second); return clock }}
+}
+
+// TestStore: nowa wersja w OpenBao rolą zapisu, potem wymuszona
+// synchronizacja i czekanie na Secret.
 func TestStore(t *testing.T) {
-	s := secrets{}
-	if err := Store(context.Background(), s, token); err != nil {
+	quiet(t)
+	v := &vault{}
+	k := &kluster{}
+	k.synced = func() bool { return len(v.versions) > 0 }
+	if err := sync(v, k).Store(context.Background(), sensitive.New(token)); err != nil {
 		t.Fatal(err)
 	}
-	if got := string(s[SecretNamespace+"/"+SecretName][SecretKey]); got != token {
-		t.Errorf("Secret ma %q", got)
+	if strings.Join(v.versions, ",") != token || strings.Join(v.roles, ",") != WriterRole || len(k.forced) != 1 {
+		t.Errorf("wersje %v, role %v, wymuszenia %d", v.versions, v.roles, len(k.forced))
 	}
+}
+
+// TestEnsure: Secret sprzed OpenBao przeniesiony do OpenBao (raz), brak
+// tokenu w obu miejscach — warunek niespełniony z instrukcją, ESO bez
+// synchronizacji — warunek niespełniony z powodem od ESO.
+func TestEnsure(t *testing.T) {
+	quiet(t)
+	ctx := context.Background()
+	v := &vault{}
+	k := &kluster{legacy: "token-sprzed-openbao"}
+	k.synced = func() bool { return len(v.versions) > 0 }
+	if err := sync(v, k).Ensure(ctx, "dns-token"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(v.versions, ",") != "token-sprzed-openbao" {
+		t.Fatalf("migracja: %v", v.versions)
+	}
+	if err := sync(v, k).Ensure(ctx, "dns-token"); err != nil || len(v.versions) != 1 {
+		t.Errorf("drugie wdrożenie przeniosło token jeszcze raz: %v, %v", v.versions, err)
+	}
+
+	empty := &vault{}
+	none := &kluster{synced: func() bool { return false }}
+	if err := sync(empty, none).Ensure(ctx, "./bin/mise run dns-token"); cli.ExitCode(err) != cli.ExitUnmet || !strings.Contains(err.Error(), "./bin/mise run dns-token") {
+		t.Errorf("brak tokenu: %v", err)
+	}
+	stuck := &kluster{synced: func() bool { return false }}
+	if err := sync(v, stuck).Ensure(ctx, "dns-token"); cli.ExitCode(err) != cli.ExitUnmet || !strings.Contains(err.Error(), "SecretSyncedError") {
+		t.Errorf("ESO bez synchronizacji: %v", err)
+	}
+}
+
+func quiet(t *testing.T) {
+	t.Helper()
+	oldOut, oldErr := cli.Out, cli.Err
+	cli.Out, cli.Err = io.Discard, io.Discard
+	t.Cleanup(func() { cli.Out, cli.Err = oldOut, oldErr })
 }

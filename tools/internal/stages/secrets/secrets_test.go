@@ -40,11 +40,14 @@ type world struct {
 	// promoteAfter i raftReads — awans nowych replik na głosujące po tylu
 	// odczytach konfiguracji Raft (autopilot, czas stabilizacji).
 	promoteAfter, raftReads int
+	kv                      map[string][]map[string]sensitive.Value
+	// loggedIn — role, którymi się logowano.
+	loggedIn []string
 }
 
 func newWorld() *world {
 	return &world{
-		sealed: map[string]bool{}, tokens: map[string]bool{}, voters: 3,
+		sealed: map[string]bool{}, tokens: map[string]bool{}, voters: 3, kv: map[string][]map[string]sensitive.Value{},
 		// Audyt z konfiguracji serwera — jest od startu.
 		auths: map[string]string{"token": "token"}, audits: map[string]string{"stdout": "file"},
 		mounts:   map[string]string{"sys": "system", "cubbyhole": "cubbyhole", "identity": "identity"},
@@ -84,11 +87,13 @@ func (s *server) KubernetesLogin(_ context.Context, mount, role string, jwt sens
 	if s.w.loginErr != nil {
 		return sensitive.Value{}, s.w.loginErr
 	}
-	if mount != store.AuthMount || role != store.AdminRole || jwt.Reveal() != "jwt-admin" || !s.w.roles[role] {
+	if mount != store.AuthMount || jwt.Reveal() != "jwt-"+role || !s.w.roles[role] {
 		return sensitive.Value{}, errDenied
 	}
-	s.w.tokens["adm-1"] = true
-	return sensitive.New("adm-1"), nil
+	s.w.loggedIn = append(s.w.loggedIn, role)
+	token := "tok-" + role
+	s.w.tokens[token] = true
+	return sensitive.New(token), nil
 }
 func (s *server) RevokeSelf(context.Context) error {
 	if err := s.authorized(); err != nil {
@@ -167,6 +172,18 @@ func (s *server) RaftServers(context.Context) ([]store.RaftServer, error) {
 		out = append(out, store.RaftServer{NodeID: fmt.Sprintf("openbao-%d", i), Voter: i < voting, Leader: i == 0})
 	}
 	return out, s.authorized()
+}
+
+func (s *server) KVPut(_ context.Context, mount, path string, data map[string]sensitive.Value) (int, error) {
+	if err := s.authorized(); err != nil {
+		return 0, err
+	}
+	s.w.kv[mount+"/"+path] = append(s.w.kv[mount+"/"+path], data)
+	return len(s.w.kv[mount+"/"+path]), nil
+}
+func (s *server) KVVersion(_ context.Context, mount, path string) (int, bool, error) {
+	n := len(s.w.kv[mount+"/"+path])
+	return n, n > 0, s.authorized()
 }
 
 func clone(m map[string]string) map[string]string {
@@ -264,11 +281,17 @@ func (k *kluster) DeletePod(_ context.Context, _, name string) error {
 	}
 	return nil
 }
+
+// accountRoles — konto w przestrzeni openbao → rola, dla której fałszywy
+// serwer przyjmie jego token.
+var accountRoles = map[string]string{store.AdminAccount: store.AdminRole, "openbao-dns-writer": "dns-token-writer"}
+
 func (k *kluster) ServiceAccountToken(_ context.Context, ns, name, audience string, ttl time.Duration) (sensitive.Value, error) {
-	if ns != store.Namespace || name != store.AdminAccount || audience != store.Audience || ttl > 10*time.Minute {
+	role, ok := accountRoles[name]
+	if ns != store.Namespace || !ok || audience != store.Audience || ttl > 10*time.Minute {
 		return sensitive.Value{}, errors.New("nie to konto")
 	}
-	return sensitive.New("jwt-admin"), nil
+	return sensitive.New("jwt-" + role), nil
 }
 
 type keys struct{ saved int }
@@ -346,7 +369,7 @@ func TestBootstrapAgain(t *testing.T) {
 	if w.mounts["secret"] != "kv" {
 		t.Error("montowanie spoza gita usunięte — z danymi")
 	}
-	if !slices.Equal(w.revoked, []string{"root-1", "adm-1"}) || len(w.tokens) != 0 {
+	if !slices.Equal(w.revoked, []string{"root-1", "tok-platform-admin"}) || len(w.tokens) != 0 {
 		t.Errorf("tokeny: odwołane %v, ważne %v", w.revoked, w.tokens)
 	}
 }
@@ -498,5 +521,28 @@ func TestCheckRestart(t *testing.T) {
 	}
 	if rep.RestartedPod == "" || rep.RestartedPod == "openbao-0" || !slices.Equal(k.deleted, []string{rep.RestartedPod}) {
 		t.Errorf("restart: %q, usunięte %v", rep.RestartedPod, k.deleted)
+	}
+}
+
+// TestPutSecret: zapis rolą wąską (nie administracyjną), wersja z metadanych,
+// token odwołany po każdej operacji.
+func TestPutSecret(t *testing.T) {
+	quiet(t)
+	w, k := newWorld(), newKluster()
+	s, _ := newStore(t, w, k)
+	if _, err := s.Bootstrap(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	w.loggedIn, w.revoked = nil, nil
+	ctx := context.Background()
+	if _, ok, err := s.SecretVersion(ctx, "openbao-dns-writer", "dns-token-writer", "platform/cloudflare"); err != nil || ok {
+		t.Fatalf("pusty sekret: %v, %v", ok, err)
+	}
+	v, err := s.PutSecret(ctx, "openbao-dns-writer", "dns-token-writer", "platform/cloudflare", map[string]sensitive.Value{"api-token": sensitive.New("cf")})
+	if err != nil || v != 1 || w.kv["docfind/platform/cloudflare"][0]["api-token"].Reveal() != "cf" {
+		t.Fatalf("zapis: wersja %d, %v", v, err)
+	}
+	if !slices.Equal(w.loggedIn, []string{"dns-token-writer", "dns-token-writer"}) || len(w.revoked) != 2 || len(w.tokens) != 0 {
+		t.Errorf("role %v, odwołane %v, ważne %v", w.loggedIn, w.revoked, w.tokens)
 	}
 }

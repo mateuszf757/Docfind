@@ -68,3 +68,40 @@ func TestWrite(t *testing.T) {
 		t.Error("brak CRD przyjęty")
 	}
 }
+
+// TestStrictFieldNamedLikeKeyword: pola o nazwach słów kluczowych schematu
+// (CRD SecretStore z ESO ma pole „properties") i dane w default nie są
+// traktowane jak schemat. Wcześniej mapa pól dostawała additionalProperties:
+// false — „pole" ze schematem false, którego kubeconform nie kompiluje
+// i zgłasza jako brak schematu — a pole „nullable" znikało.
+func TestStrictFieldNamedLikeKeyword(t *testing.T) {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"rules": map[string]any{"type": "array", "items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"properties": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+					"nullable":   map[string]any{"type": "boolean"},
+				},
+			}},
+			"options": map[string]any{"type": "object", "default": map[string]any{"nullable": true, "properties": "x"}},
+		},
+	}
+	out := Strict(schema).(map[string]any)
+	rule := out["properties"].(map[string]any)["rules"].(map[string]any)["items"].(map[string]any)
+	fields := rule["properties"].(map[string]any)
+	if _, ok := fields["additionalProperties"]; ok {
+		t.Errorf("mapa pól dostała additionalProperties: %v", fields)
+	}
+	if _, ok := fields["nullable"]; !ok {
+		t.Error("pole o nazwie nullable usunięte")
+	}
+	if rule["additionalProperties"] != false {
+		t.Error("obiekt reguły nie jest zamknięty")
+	}
+	def := out["properties"].(map[string]any)["options"].(map[string]any)["default"].(map[string]any)
+	if def["nullable"] != true || def["properties"] != "x" {
+		t.Errorf("wartość default zmieniona: %v", def)
+	}
+}

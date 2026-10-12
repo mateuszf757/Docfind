@@ -57,6 +57,9 @@ const (
 	OpenBaoChartVersion      = "DF_OPENBAO_CHART_VERSION"
 	OpenBaoChartURL          = "DF_OPENBAO_CHART_URL"
 	OpenBaoChartSHA256       = "DF_OPENBAO_CHART_SHA256"
+	ExternalSecretsVersion   = "DF_EXTERNAL_SECRETS_CHART_VERSION"
+	ExternalSecretsURL       = "DF_EXTERNAL_SECRETS_CHART_URL"
+	ExternalSecretsSHA256    = "DF_EXTERNAL_SECRETS_CHART_SHA256"
 	BuildKitImage            = "DF_BUILDKIT_IMAGE"
 	SBOMGeneratorImage       = "DF_SBOM_GENERATOR_IMAGE"
 	RegistryImage            = "DF_REGISTRY_IMAGE"
@@ -81,6 +84,9 @@ var rules = map[string]rule{
 	OpenBaoChartVersion:      {semver, "wersja X.Y.Z"},
 	OpenBaoChartURL:          {regexp.MustCompile(`^https://`), "adres https"},
 	OpenBaoChartSHA256:       {sha256Hex, "suma SHA-256"},
+	ExternalSecretsVersion:   {semver, "wersja X.Y.Z"},
+	ExternalSecretsURL:       {regexp.MustCompile(`^https://`), "adres https"},
+	ExternalSecretsSHA256:    {sha256Hex, "suma SHA-256"},
 	BuildKitImage:            {pinnedImage, "obraz z digestem"},
 	SBOMGeneratorImage:       {pinnedImage, "obraz z digestem"},
 	RegistryImage:            {pinnedImage, "obraz z digestem"},
@@ -95,6 +101,7 @@ var chartURLs = map[string]string{
 	CoreDNSChartURL:     CoreDNSChartVersion,
 	CertManagerChartURL: CertManagerChartVersion,
 	OpenBaoChartURL:     OpenBaoChartVersion,
+	ExternalSecretsURL:  ExternalSecretsVersion,
 }
 
 // Load czyta i sprawdza ci/pins.env w repozytorium o korzeniu root.
@@ -181,10 +188,11 @@ func (p Pins) Get(key string) string {
 
 // Charty platformy.
 const (
-	CoreDNS      = "coredns"
-	CertManager  = "cert-manager"
-	EnvoyGateway = "envoy-gateway"
-	OpenBao      = "openbao"
+	CoreDNS         = "coredns"
+	CertManager     = "cert-manager"
+	EnvoyGateway    = "envoy-gateway"
+	OpenBao         = "openbao"
+	ExternalSecrets = "external-secrets"
 )
 
 // Chart — przypięty chart platformy.
@@ -203,7 +211,7 @@ type Chart struct {
 func (c Chart) OCI() bool { return strings.HasPrefix(c.Source, "oci://") }
 
 // Chart zwraca przypięty chart platformy (CoreDNS, CertManager,
-// EnvoyGateway, OpenBao).
+// EnvoyGateway, OpenBao, ExternalSecrets).
 func (p Pins) Chart(name string) (Chart, error) {
 	switch name {
 	case CoreDNS:
@@ -214,6 +222,8 @@ func (p Pins) Chart(name string) (Chart, error) {
 		return Chart{Name: name, Version: p[EnvoyGatewayChartVersion], Source: p[EnvoyGatewayChartRef], SHA256: p[EnvoyGatewayChartSHA256]}, nil
 	case OpenBao:
 		return Chart{Name: name, Version: p[OpenBaoChartVersion], Source: p[OpenBaoChartURL], SHA256: p[OpenBaoChartSHA256]}, nil
+	case ExternalSecrets:
+		return Chart{Name: name, Version: p[ExternalSecretsVersion], Source: p[ExternalSecretsURL], SHA256: p[ExternalSecretsSHA256]}, nil
 	}
 	return Chart{}, fmt.Errorf("nieznany chart platformy %q", name)
 }

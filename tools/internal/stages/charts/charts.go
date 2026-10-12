@@ -144,6 +144,7 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 		{pins.CertManager, "cert-manager", "deploy/platform/cert-manager/values.yaml"},
 		{pins.EnvoyGateway, "envoy-gateway-system", "deploy/platform/envoy-gateway/values.yaml"},
 		{pins.OpenBao, "openbao", "deploy/platform/openbao/values.yaml"},
+		{pins.ExternalSecrets, "external-secrets", "deploy/platform/external-secrets/values.yaml"},
 	} {
 		chart, err := c.Pins.Chart(pc.pin)
 		if err != nil {
@@ -155,7 +156,7 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 		}
 		// CRD Envoy Gateway (w tym Gateway API) — źródło schematów poniżej.
 		r := cluster.Release{Name: pc.pin, Chart: archive, Namespace: pc.namespace, ValuesFiles: []string{c.path(pc.values)}}
-		if err := add(pc.pin, true, pc.pin == pins.EnvoyGateway, r); err != nil {
+		if err := add(pc.pin, true, pc.pin == pins.EnvoyGateway || pc.pin == pins.ExternalSecrets, r); err != nil {
 			return err
 		}
 	}
@@ -179,11 +180,12 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 		}
 	}
 
-	// Schematy zasobów z CRD — Gateway API, Envoy Gateway, cert-manager —
-	// z tych samych CRD, które instalują przypięte charty (decyzja 28).
+	// Schematy zasobów z CRD — Gateway API, Envoy Gateway, cert-manager,
+	// External Secrets — z tych samych CRD, które instalują przypięte charty
+	// (decyzja 28).
 	schemaDir := filepath.Join(tmp, "crd-schemas")
 	var crds []map[string]any
-	for _, name := range []string{pins.EnvoyGateway, pins.CertManager} {
+	for _, name := range []string{pins.EnvoyGateway, pins.CertManager, pins.ExternalSecrets} {
 		docs, err := parseFile(filepath.Join(tmp, name+".yaml"))
 		if err != nil {
 			return err

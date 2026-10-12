@@ -253,9 +253,6 @@ type fakeCluster struct {
 func (f fakeCluster) Nodes(context.Context) ([]cluster.Node, error) {
 	return []cluster.Node{{Name: "s", Ready: true}, {Name: "a", Ready: true}}, f.call("nodes")
 }
-func (f fakeCluster) SecretExists(context.Context, string, string) (bool, error) {
-	return true, f.call("secret")
-}
 func (f fakeCluster) Certificate(context.Context, string, string) (cluster.Certificate, error) {
 	return cluster.Certificate{Ready: true}, nil
 }
@@ -325,8 +322,14 @@ func deployer(t *testing.T, env string, rec *recorder, exists bool, podImage str
 		Connect: func(cluster.Target) (Cluster, error) { return fakeCluster{rec, podImage}, rec.call("connect") },
 		Builder: fakeBuilder{rec}, Admission: fakeAdmission{rec}, Versions: versions{},
 		SecretStores: func(cluster.Target) (SecretStore, error) { return fakeSecretStore{rec}, nil },
+		DNSTokens:    func(cluster.Target) (DNSToken, error) { return fakeDNSToken{rec}, nil },
 	}
 }
+
+// fakeDNSToken — token Cloudflare; zapisuje wywołanie z podpowiedzią.
+type fakeDNSToken struct{ *recorder }
+
+func (f fakeDNSToken) Ensure(_ context.Context, hint string) error { return f.call("dns-token ensure") }
 
 func must(s string, err error) string {
 	if err != nil {
@@ -374,8 +377,28 @@ func TestUpFromRegistry(t *testing.T) {
 	if strings.Contains(joined, "k3d import") {
 		t.Error("obraz z rejestru importowany do węzłów — węzły pobierają go same")
 	}
+	if strings.Contains(joined, "dns-token") {
+		t.Error("token Cloudflare sprawdzany w środowisku z wewnętrznym CA")
+	}
 	if raw, err := os.ReadFile(d.Env.KubeconfigPath(d.Root)); err != nil || string(raw) != "kubeconfig" {
 		t.Errorf("kubeconfig: %q, %v", raw, err)
+	}
+}
+
+// TestUpLetsEncrypt: w środowisku z Let's Encrypt token Cloudflare jest
+// sprawdzany po OpenBao (żyje w nim), a nie przed chartem platformy — na
+// nowym klastrze `dns-token` ma gdzie go zapisać dopiero po OpenBao.
+func TestUpLetsEncrypt(t *testing.T) {
+	quiet(t)
+	digest := "sha256:" + strings.Repeat("d", 64)
+	rec := &recorder{}
+	d := deployer(t, "staging", rec, true, apiImage+":cccccccccccc@"+digest)
+	d.Env.Gateway.ACMEEmail = "ops@example.com"
+	if err := d.Up(context.Background(), Source{Kind: environment.SourceRegistry, Ref: apiImage + "@" + digest}); err != nil {
+		t.Fatalf("%v\n%s", err, strings.Join(rec.calls, "\n"))
+	}
+	if i, j := slices.Index(rec.calls, "openbao bootstrap"), slices.Index(rec.calls, "dns-token ensure"); i < 0 || j < i {
+		t.Errorf("token przed OpenBao albo wcale:\n%s", strings.Join(rec.calls, "\n"))
 	}
 }
 

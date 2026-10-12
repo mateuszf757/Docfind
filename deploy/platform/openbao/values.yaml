@@ -250,3 +250,11 @@ extraObjects:
       name: openbao-admin
       namespace: openbao
     automountServiceAccountToken: false
+  # Konto `dft dns-token`: rola dns-token-writer zapisuje tylko token
+  # Cloudflare (decyzja 43).
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: openbao-dns-writer
+      namespace: openbao
+    automountServiceAccountToken: false
