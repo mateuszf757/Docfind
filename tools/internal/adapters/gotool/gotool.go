@@ -71,16 +71,25 @@ func (g Go) CCompiler(ctx context.Context) (string, bool) {
 	return cc, err == nil
 }
 
-// Vulncheck zwraca podatności w kodzie osiągalnym z modułu (govulncheck).
+// Vulncheck zwraca podatności w kodzie osiągalnym z modułu (govulncheck)
+// i migawkę bazy, z której pochodzą. dir — moduł z innego commita (punkt
+// odniesienia); pusty — ModuleDir. govulncheck zawsze z ModuleDir, czyli
+// w wersji przypiętej przez bieżący go.mod, a cudzy moduł dostaje przez -C:
+// punkt odniesienia oceniony tym samym skanerem, nie tym z tamtego commita.
+//
 // Z -format json govulncheck kończy się kodem 0 także przy podatnościach —
 // wynik niesie strumień; niezerowy kod to awaria (np. brak dostępu do
 // vuln.go.dev). Błąd awarii nie owija pierwotnego (%v, nie %w): niezerowy
 // kod narzędzia nie może udawać wyniku.
-func (g Go) Vulncheck(ctx context.Context) ([]vuln.Finding, error) {
+func (g Go) Vulncheck(ctx context.Context, dir string) ([]vuln.Finding, vuln.Database, error) {
+	args := []string{"tool", "govulncheck"}
+	if dir != "" {
+		args = append(args, "-C", dir)
+	}
 	var out bytes.Buffer
-	_, err := g.Runner.Run(ctx, proc.Cmd{Name: "go", Args: []string{"tool", "govulncheck", "-format", "json", "./..."}, Dir: g.ModuleDir, Stdout: &out, Stderr: g.Err})
+	_, err := g.Runner.Run(ctx, proc.Cmd{Name: "go", Args: append(args, "-format", "json", "./..."), Dir: g.ModuleDir, Stdout: &out, Stderr: g.Err})
 	if err != nil {
-		return nil, fmt.Errorf("govulncheck nie wykonał się — awaria narzędzia, nie wynik: %v", err)
+		return nil, vuln.Database{}, fmt.Errorf("govulncheck nie wykonał się — awaria narzędzia, nie wynik: %v", err)
 	}
 	return ParseGovulncheck(&out)
 }

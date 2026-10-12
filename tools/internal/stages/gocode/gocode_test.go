@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mateuszf757/Docfind/tools/internal/core/artifact"
 	"github.com/mateuszf757/Docfind/tools/internal/core/vuln"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 )
@@ -90,6 +92,10 @@ type toolchain struct {
 	cc       bool
 	tested   []bool
 	findings []vuln.Finding
+	// baseline — ustalenia w kodzie z punktu odniesienia, baselineDB — data
+	// bazy w jego skanie (pusta — ta sama co w bieżącym).
+	baseline   []vuln.Finding
+	baselineDB string
 	// builds — zawartość binarki dft po GOCACHE (od zera) i bez.
 	cached, fresh string
 }
@@ -101,8 +107,31 @@ func (f *toolchain) Test(_ context.Context, race bool) error {
 	return nil
 }
 func (f *toolchain) CCompiler(context.Context) (string, bool) { return "gcc", f.cc }
-func (f *toolchain) Vulncheck(context.Context) ([]vuln.Finding, error) {
-	return f.findings, nil
+
+const vulnDB = "2026-10-08T22:31:09Z"
+
+func (f *toolchain) Vulncheck(_ context.Context, dir string) ([]vuln.Finding, vuln.Database, error) {
+	if dir == "" {
+		return f.findings, vuln.Database{Ecosystem: "Go", Newest: vulnDB}, nil
+	}
+	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
+		return nil, vuln.Database{}, fmt.Errorf("punkt odniesienia bez modułu: %w", err)
+	}
+	db := vuln.Database{Ecosystem: "Go", Newest: vulnDB}
+	if f.baselineDB != "" {
+		db.Newest = f.baselineDB
+	}
+	return f.baseline, db, nil
+}
+
+// sources — repozytorium z commitami po nazwie; Export zapisuje go.mod.
+type sources map[string]bool
+
+func (s sources) Export(_ context.Context, rev, dir string) error {
+	if !s[rev] {
+		return fmt.Errorf("%s: %w", rev, artifact.ErrUnknownCommit)
+	}
+	return os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/m\n"), 0o644)
 }
 func (f *toolchain) Build(_ context.Context, pkg, output string, env ...string) error {
 	content := f.cached
@@ -153,6 +182,58 @@ func TestVulncheckException(t *testing.T) {
 		if code := cli.ExitCode(c.Vulncheck(context.Background())); code != want {
 			t.Errorf("wyjątek do %s: kod %d, oczekiwano %d", expires, code, want)
 		}
+	}
+}
+
+// TestVulncheckModes: tryby z decyzji 37. Z punktem odniesienia blokuje
+// tylko to, czego nie było w kodzie z commita bazowego, w trybie raportu
+// nic, a raport dostaje Publish także przy wyniku negatywnym — przy
+// awarii raportu nie ma.
+func TestVulncheckModes(t *testing.T) {
+	silence(t)
+	old := vuln.Finding{ID: "GO-2026-0001", Package: "stdlib", Version: "v1.27.1", Severity: vuln.SeverityUnknown, Fixed: []string{"v1.27.2"}}
+	added := vuln.Finding{ID: "GO-2026-0002", Package: "golang.org/x/net", Version: "v0.59.0", Severity: vuln.SeverityUnknown, Fixed: []string{"v0.60.0"}}
+	tests := []struct {
+		name         string
+		tc           toolchain
+		baseline     string
+		reportOnly   bool
+		wantCode     int
+		wantBlocking int
+		wantBaseline string
+		wantReport   bool
+	}{
+		{"bez punktu odniesienia", toolchain{findings: []vuln.Finding{old, added}}, "", false, cli.ExitUnmet, 2, "", true},
+		{"nowa podatność względem bazy", toolchain{findings: []vuln.Finding{old, added}, baseline: []vuln.Finding{old}}, "abc", false, cli.ExitUnmet, 1, "tools/ z abc", true},
+		{"tylko podatności z bazy", toolchain{findings: []vuln.Finding{old}, baseline: []vuln.Finding{old}}, "abc", false, cli.ExitOK, 0, "tools/ z abc", true},
+		{"tylko raport", toolchain{findings: []vuln.Finding{old, added}}, "", true, cli.ExitOK, 2, "", true},
+		{"brak commita bazowego", toolchain{findings: []vuln.Finding{old}}, "nieznany", false, cli.ExitUnmet, 1, "", true},
+		{"baza zmieniła się między skanami", toolchain{findings: []vuln.Finding{old}, baseline: []vuln.Finding{old}, baselineDB: "2026-10-09T08:00:00Z"}, "abc", false, cli.ExitFailure, 0, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var published []vuln.Report
+			c := Checker{Go: &tt.tc, Today: time.Date(2026, 10, 11, 0, 0, 0, 0, time.UTC),
+				VulnBaseline: tt.baseline, Sources: sources{"abc": true}, VulnReportOnly: tt.reportOnly,
+				Publish: func(rep vuln.Report) error { published = append(published, rep); return nil }}
+			err := c.Vulncheck(context.Background())
+			if code := cli.ExitCode(err); code != tt.wantCode {
+				t.Fatalf("kod %d, oczekiwano %d (%v)", code, tt.wantCode, err)
+			}
+			if !tt.wantReport {
+				if len(published) != 0 {
+					t.Errorf("raport po awarii: %+v", published)
+				}
+				return
+			}
+			if len(published) != 1 {
+				t.Fatalf("raporty: %+v", published)
+			}
+			rep := published[0]
+			if rep.Blocking != tt.wantBlocking || rep.Baseline != tt.wantBaseline || rep.ReportOnly != tt.reportOnly || len(rep.Databases) != 1 {
+				t.Errorf("raport: %+v", rep)
+			}
+		})
 	}
 }
 

@@ -62,7 +62,7 @@ type Scan struct {
 // ma); reportOnly — raport bez blokowania (main, nocą). Raport wraca także
 // przy wyniku negatywnym.
 func (s Scan) Run(ctx context.Context, target Target, baselineCommit string, reportOnly bool) (vuln.Report, error) {
-	rep := vuln.Report{Scanner: "osv-scanner", ScannedAt: s.Today, ReportOnly: reportOnly}
+	rep := vuln.Report{Subject: "obrazu api", Scanner: "osv-scanner", ScannedAt: s.Today, ReportOnly: reportOnly}
 	tmp, err := os.MkdirTemp("", "dft-vulns-")
 	if err != nil {
 		return rep, err
@@ -165,32 +165,50 @@ type Issues interface {
 	CloseIssue(ctx context.Context, number int, comment string) error
 }
 
-// SyncIssue przenosi wynik nocnego skanu do issue zamiast czerwieni na main
-// (decyzja 37): blokujące podatności — issue otwarte albo zaktualizowane;
-// brak blokujących — otwarte issue zamknięte z komentarzem.
-func SyncIssue(ctx context.Context, issues Issues, rep vuln.Report) error {
+// SyncIssue przenosi wynik nocnych skanów — obrazu i kodu narzędzi — do
+// jednego issue zamiast czerwieni na main (decyzja 37): blokujące
+// podatności w którymkolwiek — issue otwarte albo zaktualizowane; brak
+// blokujących we wszystkich — otwarte issue zamknięte z komentarzem.
+//
+// missing — skany, które nie dały raportu (zadanie przed nimi nie przeszło).
+// Brak raportu to brak wiedzy, a nie brak podatności: issue nie zostaje
+// zamknięte, a wynik jest niespełniony, żeby bieg nocny nie wyglądał na
+// kompletny.
+func SyncIssue(ctx context.Context, issues Issues, reports []vuln.Report, missing []string) error {
+	if len(reports) == 0 {
+		return cli.Unmet("żaden nocny skan nie dał raportu (%s) — issue bez zmian", strings.Join(missing, ", "))
+	}
+	blocking := 0
+	for _, r := range reports {
+		blocking += r.Blocking
+	}
 	number, err := issues.FindIssue(ctx, vuln.IssueTitle)
 	if err != nil {
 		return err
 	}
-	switch {
-	case rep.Blocking > 0 && number == 0:
-		if err := issues.CreateIssue(ctx, vuln.IssueTitle, rep.IssueBody()); err != nil {
+	switch body := vuln.IssueBody(reports, missing); {
+	case blocking > 0 && number == 0:
+		if err := issues.CreateIssue(ctx, vuln.IssueTitle, body); err != nil {
 			return err
 		}
-		cli.Step("issue „%s” otwarte: %d blokujących", vuln.IssueTitle, rep.Blocking)
-	case rep.Blocking > 0:
-		if err := issues.EditIssue(ctx, number, rep.IssueBody()); err != nil {
+		cli.Step("issue „%s” otwarte: %d blokujących", vuln.IssueTitle, blocking)
+	case blocking > 0:
+		if err := issues.EditIssue(ctx, number, body); err != nil {
 			return err
 		}
-		cli.Step("issue #%d zaktualizowane: %d blokujących", number, rep.Blocking)
+		cli.Step("issue #%d zaktualizowane: %d blokujących", number, blocking)
+	case len(missing) > 0:
+		cli.Warn("brak blokujących w %d raportach, ale skany bez raportu nie pozwalają zamknąć issue", len(reports))
 	case number != 0:
-		if err := issues.CloseIssue(ctx, number, fmt.Sprintf("Skan z %s: brak blokujących podatności.", rep.ScannedAt.Format("2006-01-02"))); err != nil {
+		if err := issues.CloseIssue(ctx, number, fmt.Sprintf("Skan z %s: brak blokujących podatności.", reports[0].ScannedAt.Format("2006-01-02"))); err != nil {
 			return err
 		}
 		cli.Step("issue #%d zamknięte — brak blokujących podatności", number)
 	default:
 		cli.Step("brak blokujących podatności, brak otwartego issue")
+	}
+	if len(missing) > 0 {
+		return cli.Unmet("bez raportu: %s — skan się nie wykonał", strings.Join(missing, ", "))
 	}
 	return nil
 }

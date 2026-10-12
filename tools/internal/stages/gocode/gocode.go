@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"go/format"
 	"go/parser"
@@ -22,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mateuszf757/Docfind/tools/internal/core/artifact"
 	"github.com/mateuszf757/Docfind/tools/internal/core/layers"
 	"github.com/mateuszf757/Docfind/tools/internal/core/vuln"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
@@ -33,8 +35,17 @@ type Toolchain interface {
 	Staticcheck(ctx context.Context) error
 	Test(ctx context.Context, race bool) error
 	CCompiler(ctx context.Context) (string, bool)
-	Vulncheck(ctx context.Context) ([]vuln.Finding, error)
+	// Vulncheck skanuje moduł w dir (pusty — ModuleDir) i podaje migawkę
+	// bazy, z której jest wynik.
+	Vulncheck(ctx context.Context, dir string) ([]vuln.Finding, vuln.Database, error)
 	Build(ctx context.Context, pkg, output string, env ...string) error
+}
+
+// Sources — kod modułu z innego commita (adapters/git).
+type Sources interface {
+	// Export zapisuje w dir drzewo modułu z commita rev; brak commita —
+	// artifact.ErrUnknownCommit.
+	Export(ctx context.Context, rev, dir string) error
 }
 
 // Checker uruchamia bramki na module Go w ModuleDir.
@@ -48,6 +59,16 @@ type Checker struct {
 	// względem którego wygasają.
 	Exceptions []vuln.Exception
 	Today      time.Time
+	// VulnBaseline — commit, którego kod jest punktem odniesienia
+	// govulncheck (na PR-ze commit bazowy): blokuje tylko to, czego tam nie
+	// było. Kod bierze Sources. Pusty — blokuje każda podatność.
+	VulnBaseline string
+	Sources      Sources
+	// VulnReportOnly — raport bez blokowania (main, nocą; decyzja 37).
+	VulnReportOnly bool
+	// Publish dostaje raport govulncheck, także przy wyniku negatywnym
+	// (plik raportu, podsumowanie biegu); nil — bez raportu.
+	Publish func(vuln.Report) error
 }
 
 // All uruchamia wszystkie bramki poza powtarzalnością i zgłasza
@@ -219,28 +240,97 @@ func (c Checker) Test(ctx context.Context) error {
 
 // Vulncheck ocenia podatności w kodzie osiągalnym (govulncheck) tą samą
 // polityką co skan obrazu (decyzja 37): blokuje osiągalna podatność
-// z poprawką, chyba że ma ważny wyjątek (zakres go); bez poprawki —
-// ostrzeżenie.
+// z poprawką, chyba że ma ważny wyjątek (zakres go), była już
+// w VulnBaseline albo bieg tylko raportuje; bez poprawki — ostrzeżenie.
 func (c Checker) Vulncheck(ctx context.Context) error {
-	findings, err := c.Go.Vulncheck(ctx)
-	if err != nil {
+	rep, err := c.vulnReport(ctx)
+	// Raport także przy wyniku negatywnym — awaria skanu raportu nie ma.
+	if err != nil && cli.ExitCode(err) != cli.ExitUnmet {
 		return err
 	}
-	evaluated, unused := vuln.Policy{Exceptions: c.Exceptions, Today: c.Today}.Evaluate(findings)
-	blocking := 0
-	for _, f := range evaluated {
-		if f.Blocking {
-			blocking++
-		}
-		fmt.Fprintf(cli.Out, "  %s %s (%s) poprawka: %s %s\n", f.ID, f.Package, f.Version, strings.Join(f.Fixed, ", "), f.Note)
+	if c.Publish != nil {
+		err = errors.Join(err, c.Publish(rep))
 	}
-	for _, u := range unused {
+	return err
+}
+
+func (c Checker) vulnReport(ctx context.Context) (vuln.Report, error) {
+	rep := vuln.Report{Subject: "kodu narzędzi Go", Target: "tools/", Scanner: "govulncheck", ScannedAt: c.Today, ReportOnly: c.VulnReportOnly}
+	findings, db, err := c.Go.Vulncheck(ctx, "")
+	if err != nil {
+		return rep, err
+	}
+	rep.Databases = []vuln.Database{db}
+	cli.Step("baza %s, najnowsza zmiana %s", db.Ecosystem, db.Newest)
+
+	policy := vuln.Policy{Exceptions: c.Exceptions, Today: c.Today}
+	if c.VulnBaseline != "" {
+		baseline, ok, err := c.baselineVulns(ctx, db)
+		if err != nil {
+			return rep, err
+		}
+		if ok {
+			rep.Baseline = "tools/ z " + c.VulnBaseline
+			policy.Baseline = baseline
+		}
+	}
+
+	rep.Findings, rep.Unused = policy.Evaluate(findings)
+	for _, f := range rep.Findings {
+		mark := "  "
+		if f.Blocking {
+			rep.Blocking++
+			mark = "✗ "
+		}
+		fmt.Fprintf(cli.Out, "%s%s %s (%s) poprawka: %s %s\n", mark, f.ID, f.Package, f.Version, strings.Join(f.Fixed, ", "), f.Note)
+	}
+	for _, u := range rep.Unused {
 		cli.Warn("wyjątek %s (zakres go) nie pasuje do żadnej podatności — do usunięcia", u)
 	}
-	if blocking > 0 {
-		return cli.Unmet("govulncheck: %d osiągalnych podatności z poprawką bez wyjątku w kodzie z tools/", blocking)
+	cli.Step("govulncheck: %d osiągalnych podatności, blokujących: %d", len(rep.Findings), rep.Blocking)
+	if rep.Blocking > 0 && !c.VulnReportOnly {
+		return rep, cli.Unmet("govulncheck: %d osiągalnych podatności z poprawką bez wyjątku w kodzie z tools/", rep.Blocking)
 	}
-	return nil
+	return rep, nil
+}
+
+// baselineVulns skanuje kod modułu z VulnBaseline tym samym govulncheck.
+// ok == false — commitu nie ma w repozytorium: bez porównania blokuje każda
+// podatność, jak przy braku obrazu bazowego.
+//
+// Biblioteka standardowa w obu skanach pochodzi z bieżącego toolchainu, bo
+// govulncheck ocenia ją po wersji go, którym biegnie. Nowa podatność
+// w stdlib jest więc w obu skanach i nie blokuje PR-a, ale nowe wywołanie
+// podatnej funkcji stdlib — tak. PR, który obniża wersję Go, nie jest tu
+// wyłapany; wyłapie go raport na main i skan nocny.
+func (c Checker) baselineVulns(ctx context.Context, db vuln.Database) (_ []vuln.Finding, ok bool, err error) {
+	tmp, err := os.MkdirTemp("", "dft-govulncheck-")
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { err = errors.Join(err, os.RemoveAll(tmp)) }()
+	switch err := c.Sources.Export(ctx, c.VulnBaseline, tmp); {
+	case errors.Is(err, artifact.ErrUnknownCommit):
+		cli.Warn("commitu %s nie ma w repozytorium — bez porównania blokuje każda osiągalna podatność z poprawką", c.VulnBaseline)
+		return nil, false, nil
+	case err != nil:
+		return nil, false, err
+	}
+	findings, baseDB, err := c.Go.Vulncheck(ctx, tmp)
+	if err != nil {
+		return nil, false, fmt.Errorf("punkt odniesienia %s: %w", c.VulnBaseline, err)
+	}
+	// Oba skany pytają vuln.go.dev na żywo. Zmiana bazy między nimi (kilka
+	// razy w tygodniu, przy oknie kilkunastu sekund) dałaby różnicę, której
+	// nie wprowadził PR — jest więc wykrywana i przerywa bieg, zamiast po
+	// cichu zmienić werdykt. Kopia bazy na bieg (vulndb.zip, -db file://)
+	// usunęłaby ten przypadek kosztem pobierania i rozpakowywania w każdym
+	// biegu.
+	if baseDB.Newest != db.Newest {
+		return nil, false, fmt.Errorf("baza govulncheck zmieniła się między skanami (%s, punkt odniesienia %s) — uruchom ponownie", db.Newest, baseDB.Newest)
+	}
+	cli.Step("punkt odniesienia tools/ z %s: %d osiągalnych podatności", c.VulnBaseline, len(findings))
+	return findings, true, nil
 }
 
 // Binary to wynik jednego buildu w sprawdzeniu powtarzalności.

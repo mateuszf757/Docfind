@@ -1155,7 +1155,7 @@ bez ważnego wyjątku:
 | PR | tylko podatności, których nie ma w obrazie z `main` dla commita bazowego — ta sama migawka bazy dla obu skanów |
 | tag `v*` | każda — wydanie z naprawialną HIGH bez wyjątku nie trafi do promocji |
 | push na `main` | nic — raport w podsumowaniu biegu |
-| nocą | nic — raport do issue „Podatności w obrazie api (skan nocny)", zamykanego, gdy blokujących nie ma |
+| nocą | nic — raport do issue „Podatności w obrazie api i narzędziach Go (skan nocny)", zamykanego, gdy blokujących nie ma |
 
 Wyjątki leżą w `ci/vuln-exceptions.yaml`: podatność, pakiet, uzasadnienie
 i data nie dalsza niż 90 dni. Po dacie podatność znów blokuje, a wyjątek,
@@ -1164,6 +1164,44 @@ z jakiej bazy powstał: sumę i najnowszy wpis każdej bazy ekosystemu.
 govulncheck podlega tej samej polityce (wyjątki z zakresu `go`): baza Go
 też zmienia się codziennie, a dotąd każda nowa osiągalna podatność
 zatrzymywała każdy PR, bez drogi świadomego przyjęcia.
+
+**Uzupełnienie (2026-10-12): govulncheck w tych samych trybach co skan
+obrazu.** Wspólne były dotąd tylko wyjątki: govulncheck blokował każdą
+osiągalną podatność z poprawką na każdym zdarzeniu. Nowa podatność
+w bibliotece standardowej zatrzymywała więc każdy PR, także taki, który nie
+dotykał kodu Go. Na `main` i nocą czerwony `test` pomijał build, skan obrazu
+i issue — noc, która ma zgłaszać nowe podatności, nie zgłaszała żadnej.
+
+| Zdarzenie | govulncheck blokuje |
+|---|---|
+| PR | tylko podatności, których nie ma w kodzie `tools/` z commita bazowego — ten sam govulncheck, ta sama baza |
+| push na `main`, nocą | nic — raport `vulns-go.json`, nocą do wspólnego issue |
+| tag `v*` | — (`test` na tagu nie biegnie) |
+| lokalnie, bez flag | każda, jak dotąd |
+
+Kod commita bazowego daje `git archive`, a nie `git worktree` — bez hooków
+autora i bez drugiego drzewa w `.git`. Skanuje go govulncheck przypięty
+w bieżącym `go.mod` (`-C`), więc obie strony ocenia ten sam skaner. Baza Go
+jest pytana na żywo (kopia `vulndb.zip` na bieg to dodatkowe pobranie
+i rozpakowanie), dlatego oba skany muszą podać tę samą datę bazy
+(`db_last_modified`). Inaczej bieg kończy się awarią do ponownego
+uruchomienia, a nie werdyktem z różnicy, której PR nie wprowadził.
+
+Nocne issue ma sekcję każdego skanu. Skan, który nie dał raportu, nie
+pozwala go zamknąć, a `vulns-issue` kończy się wynikiem niespełnionym: brak
+raportu to brak wiedzy, nie brak podatności. Których raportów oczekiwać, wie
+`dft`, a nie workflow.
+
+govulncheck zostaje w wymaganym zadaniu `test`, a nie w `vulns`: `vulns`
+jest jeszcze w okresie próbnym, więc przeniesienie zdjęłoby blokadę
+z PR-ów.
+
+Co tracę: około 10 s drugiego skanu na PR-ze. Bibliotekę standardową oba
+skany oceniają wersją bieżącego toolchainu, więc PR, który obniża Go, nie
+zostanie zablokowany — zobaczy go raport z `main` i noc. Nowe wywołanie
+podatnej funkcji stdlib blokuje: pierwszy bieg wyłapał tak tę samą zmianę
+(GO-2026-6604 w `os.Root`, tylko Windows — przyjęte wyjątkiem do
+2026-10-16, razem z resztą poprawek Go 1.27.2).
 
 Blokada działa na PR-ze dopiero wtedy, gdy `vulns` jest wymaganym statusem
 reguły `main`. Wchodzi tam razem z `cluster`, po tym samym okresie próbnym

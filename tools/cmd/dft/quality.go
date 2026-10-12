@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mateuszf757/Docfind/tools/internal/adapters/git"
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/kube"
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/kubeconform"
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/lint"
@@ -27,7 +28,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/stages/vulns"
 )
 
-const checkUsage = "dft check <versions|go|reproducible-tools|workflows|python|charts> | <runtime|base|reproducible|negatives> [usługa] | <drain|tls|identity|cluster-negatives> | published <obraz@digest> <digest konfiguracji> | attestation <obraz@digest> | vulns [źródło obrazu]"
+const checkUsage = "dft check <versions|reproducible-tools|workflows|python|charts> | <runtime|base|reproducible|negatives> [usługa] | <drain|tls|identity|cluster-negatives> | published <obraz@digest> <digest konfiguracji> | attestation <obraz@digest> | go [--vulns-baseline <commit>] [--vulns-report-only] | vulns [źródło obrazu]"
 
 // checks — bramki `dft check <nazwa>`.
 var checks = map[string]func(ctx context.Context, w *workspace, args []string) error{
@@ -64,8 +65,10 @@ func runCheck(ctx context.Context, w *workspace, args []string) error {
 // runTest to zadanie test z CI: wersje, workflowy i skrypty, Python
 // aplikacji, charty, kod narzędzi. Kończy się na pierwszej grupie, która nie
 // przeszła — każda zakłada, że poprzednie przeszły (dawniej ci/run-tests.sh).
+// Flagi govulncheck — goVulnFlags.
 func runTest(ctx context.Context, w *workspace, args []string) error {
-	if err := expectArgs(args, 0, 0, "dft test"); err != nil {
+	mode, err := parseGoVulnFlags("dft test", args)
+	if err != nil {
 		return err
 	}
 	// Wymagania na starcie i zgłaszane razem: brak narzędzia w połowie biegu
@@ -81,7 +84,7 @@ func runTest(ctx context.Context, w *workspace, args []string) error {
 		{"workflowy i skrypty", func() error { return w.workflows().Check(ctx) }},
 		{"Python aplikacji", func() error { return checkPython(ctx, w) }},
 		{"charty", func() error { return checkCharts(ctx, w) }},
-		{"kod Go", func() error { return checkGo(ctx, w) }},
+		{"kod Go", func() error { return checkGo(ctx, w, mode) }},
 	} {
 		cli.Step("— %s —", step.name)
 		if err := step.run(); err != nil {
@@ -124,26 +127,59 @@ func checkCharts(ctx context.Context, w *workspace) (err error) {
 	}.Run(ctx, tmp)
 }
 
+// goVulnMode — tryb govulncheck w `dft test` i `dft check go`, ten sam co
+// skanu obrazu (decyzja 37):
+//
+//	bez flag                  blokuje każda osiągalna podatność z poprawką
+//	--vulns-baseline REV      kod tools/ z REV jako punkt odniesienia:
+//	                          blokuje tylko to, czego tam nie ma (PR: commit
+//	                          bazowy; lokalnie np. origin/main)
+//	--vulns-report-only       raport bez blokowania (main, nocą)
+type goVulnMode struct {
+	baseline   string
+	reportOnly bool
+}
+
+func parseGoVulnFlags(command string, args []string) (goVulnMode, error) {
+	usage := command + " [--vulns-baseline <commit>] [--vulns-report-only]"
+	fs := flag.NewFlagSet(command, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var mode goVulnMode
+	fs.StringVar(&mode.baseline, "vulns-baseline", "", "")
+	fs.BoolVar(&mode.reportOnly, "vulns-report-only", false, "")
+	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
+		return mode, cli.Usage("użycie: %s", usage)
+	}
+	return mode, nil
+}
+
 // goChecker — bramki kodu narzędzi z wyjątkami podatności z zakresu go.
-func goChecker(w *workspace) (gocode.Checker, error) {
+func goChecker(w *workspace, mode goVulnMode) (gocode.Checker, error) {
 	today := time.Now().UTC()
 	exceptions, err := vuln.LoadExceptions(filepath.Join(w.root, vuln.ExceptionsFile), today)
 	if err != nil {
 		return gocode.Checker{}, err
 	}
+	moduleDir := filepath.Join(w.root, "tools")
 	return gocode.Checker{
-		ModuleDir: filepath.Join(w.root, "tools"),
+		ModuleDir: moduleDir,
 		Go:        w.gotool(),
 		// GitHub Actions ustawia CI=true. Tam brak kompilatora C dla -race
 		// to awaria, a nie po cichu pominięty detektor wyścigów.
-		RequireRace: os.Getenv("CI") == "true",
-		Exceptions:  vuln.InScope(exceptions, vuln.ScopeGo),
-		Today:       today,
+		RequireRace:    os.Getenv("CI") == "true",
+		Exceptions:     vuln.InScope(exceptions, vuln.ScopeGo),
+		Today:          today,
+		VulnBaseline:   mode.baseline,
+		Sources:        git.Repo{Dir: moduleDir, Runner: w.runner},
+		VulnReportOnly: mode.reportOnly,
+		Publish: func(rep vuln.Report) error {
+			return errors.Join(w.writeReport(reportVulnsGo, rep), appendSummary(rep.Summary()))
+		},
 	}, nil
 }
 
-func checkGo(ctx context.Context, w *workspace) error {
-	c, err := goChecker(w)
+func checkGo(ctx context.Context, w *workspace, mode goVulnMode) error {
+	c, err := goChecker(w, mode)
 	if err != nil {
 		return err
 	}
@@ -161,13 +197,14 @@ func runCheckVersions(ctx context.Context, w *workspace, args []string) error {
 }
 
 func runCheckGo(ctx context.Context, w *workspace, args []string) error {
-	if err := expectArgs(args, 0, 0, "dft check go"); err != nil {
+	mode, err := parseGoVulnFlags("dft check go", args)
+	if err != nil {
 		return err
 	}
 	if err := requireTools("go"); err != nil {
 		return err
 	}
-	return checkGo(ctx, w)
+	return checkGo(ctx, w, mode)
 }
 
 func runCheckWorkflows(ctx context.Context, w *workspace, args []string) error {
@@ -212,7 +249,7 @@ func runCheckReproducibleTools(ctx context.Context, w *workspace, args []string)
 		return err
 	}
 	defer func() { err = errors.Join(err, os.RemoveAll(tmp)) }()
-	c, err := goChecker(w)
+	c, err := goChecker(w, goVulnMode{})
 	if err != nil {
 		return err
 	}
@@ -233,6 +270,13 @@ func runCheckReproducibleTools(ctx context.Context, w *workspace, args []string)
 	}
 	return err
 }
+
+// Raporty podatności w .cache/reports — nocą oba trafiają do jednego issue
+// (runVulnsIssue).
+const (
+	reportVulnsImage = "vulns-api"
+	reportVulnsGo    = "vulns-go"
+)
 
 // runCheckVulns skanuje obraz API i ocenia podatności polityką z decyzji 37.
 //
@@ -285,7 +329,7 @@ func runCheckVulns(ctx context.Context, w *workspace, args []string) error {
 	if err != nil && cli.ExitCode(err) != cli.ExitUnmet {
 		return err
 	}
-	if reportErr := w.writeReport("vulns-api", rep); reportErr != nil {
+	if reportErr := w.writeReport(reportVulnsImage, rep); reportErr != nil {
 		return errors.Join(err, reportErr)
 	}
 	return errors.Join(err, appendSummary(rep.Summary()))

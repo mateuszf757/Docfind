@@ -66,8 +66,8 @@ var commands = map[string]command{
 		run:   runReleaseImage,
 	},
 	"test": {
-		usage: "dft test",
-		help:  "zadanie test z CI: wersje, workflowy, Python, charty, kod Go",
+		usage: "dft test [--vulns-baseline <commit>] [--vulns-report-only]",
+		help:  "zadanie test z CI: wersje, workflowy, Python, charty, kod Go; flagi — tryb govulncheck (decyzja 37)",
 		run:   runTest,
 	},
 	"cluster": {
@@ -81,8 +81,8 @@ var commands = map[string]command{
 		run:   runPromote,
 	},
 	"vulns-issue": {
-		usage: "dft vulns-issue <raport vulns-api.json>",
-		help:  "wynik nocnego skanu podatności jako issue: otwiera, aktualizuje albo zamyka (gh)",
+		usage: "dft vulns-issue <katalog raportów>",
+		help:  "wynik nocnych skanów podatności (obraz, kod Go) jako jedno issue: otwiera, aktualizuje albo zamyka (gh)",
 		run:   runVulnsIssue,
 	},
 	"trial": {

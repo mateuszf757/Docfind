@@ -135,8 +135,35 @@ jobs:
       # charty, polityki, ruff, mypy, pytest, schemat i bramki kodu Go
       # (gofmt, vet, staticcheck, testy z -race, govulncheck). Osobny krok
       # w CI, którego nie ma w zadaniu, to krok, który lokalnie nie biegnie.
+      #
+      # govulncheck w trybie skanu obrazu (decyzja 37): na PR-ze blokuje
+      # tylko podatności, których nie ma w kodzie tools/ z commita bazowego,
+      # na main i nocą tylko raportuje — nowa podatność w bazie Go nie
+      # zatrzymuje builda ani nocnego skanu obrazu, tylko trafia do issue.
+      # Lokalnie bez flag: blokuje każda.
       - name: wersje, lint, typy, testy, polityki, schemat, kod Go
-        run: ./bin/mise run test
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            ./bin/mise run test -- --vulns-baseline "$BASE_SHA"
+          else
+            ./bin/mise run test -- --vulns-report-only
+          fi
+
+      # Raport govulncheck także przy czerwonym kroku — wtedy jest
+      # najbardziej potrzebny. Brak pliku znaczy, że test nie doszedł do
+      # kodu Go; nocą zgłosi to vulns-issue.
+      - name: raport podatności kodu Go
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: raport-podatnosci-go
+          path: .cache/reports/vulns-go.json
+          include-hidden-files: true
+          retention-days: 30
+          if-no-files-found: warn
 
       # Dwa buildy narzędzi Go — z pamięcią podręczną i od zera — dają te
       # same bajty. Sumy trafiają do podsumowania, do porównania z lokalnymi.
@@ -459,11 +486,11 @@ jobs:
 
       # Raport z wersją baz — także po porażce. Katalog .cache jest ukryty;
       # w raporcie nie ma sekretów.
-      - name: raport podatności
+      - name: raport podatności obrazu
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: raport-podatnosci
+          name: raport-podatnosci-api
           path: .cache/reports/vulns-api.json
           include-hidden-files: true
           retention-days: 30
@@ -471,9 +498,15 @@ jobs:
 
   # Nocą wynik skanu idzie do issue, a nie na czerwono na main: podatność
   # opublikowana w nocy w pakiecie obrazu nie jest porażką ostatniego commita.
+  #
+  # Jedno issue na oba skany: obrazu (zadanie vulns) i kodu narzędzi Go
+  # (govulncheck w zadaniu test). Zadanie biegnie także wtedy, gdy któryś
+  # skan się nie wykonał — vulns zależy od test i build, więc czerwony test
+  # pomijałby go razem z issue. Brak raportu dft zgłasza wtedy w issue
+  # i wynikiem niespełnionym, a issue nie zamyka.
   vulns-issue:
-    needs: vulns
-    if: github.event_name == 'schedule'
+    needs: [test, vulns]
+    if: ${{ !cancelled() && github.event_name == 'schedule' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -492,16 +525,22 @@ jobs:
       - name: Go i gh (mise)
         run: ./bin/mise install go gh
 
+      # Wzorzec zamiast nazw: brak artefaktu skanu, który się nie wykonał,
+      # nie przerywa kroku. Których raportów oczekiwać, wie dft.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: raport-podatnosci
-          path: ${{ runner.temp }}/raport
+          pattern: raport-podatnosci-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/raporty
 
       - name: issue skanu nocnego
         env:
           GH_TOKEN: ${{ github.token }}
-          REPORT: ${{ runner.temp }}/raport/vulns-api.json
-        run: ./bin/mise run vulns:issue -- "$REPORT"
+          REPORTS: ${{ runner.temp }}/raporty
+        run: |
+          # Bez żadnego artefaktu katalog nie powstaje.
+          mkdir -p "$REPORTS"
+          ./bin/mise run vulns:issue -- "$REPORTS"
 
   # Promocja wydania na prod (decyzje 38 i 40): ten sam digest, który
   # zbudowano na main, przeszedł tam bramki klastrowe, potem akceptację na

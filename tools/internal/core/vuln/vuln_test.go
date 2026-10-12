@@ -123,10 +123,17 @@ func TestSeverityFromCVSS(t *testing.T) {
 }
 
 func TestIssueBody(t *testing.T) {
-	rep := Report{Target: "obraz.tar", Blocking: 1, Findings: []Finding{{ID: "CVE-1", Package: "zlib", Severity: SeverityHigh, Fixed: []string{"1.3.2-r1"}, Blocking: true, Note: "a|b"}},
+	image := Report{Subject: "obrazu api", Target: "obraz.tar", Scanner: "osv-scanner", Blocking: 1,
+		Findings:  []Finding{{ID: "CVE-1", Package: "zlib", Severity: SeverityHigh, Fixed: []string{"1.3.2-r1"}, Blocking: true, Note: "a|b"}},
 		Databases: []Database{{Ecosystem: "Alpine", Newest: "2026-10-06", SHA256: strings.Repeat("a", 64)}}}
-	body := rep.IssueBody()
-	for _, want := range []string{"| HIGH | CVE-1 | zlib  | 1.3.2-r1 | tak | a/b |", "Alpine do 2026-10-06 (`aaaaaaaaaaaa`)", "dft vulns-issue"} {
+	code := Report{Subject: "kodu narzędzi Go", Target: "tools/", Scanner: "govulncheck", Baseline: "tools/ z abc",
+		Databases: []Database{{Ecosystem: "Go (https://vuln.go.dev)", Newest: "2026-10-08T22:31:09Z"}}}
+	body := IssueBody([]Report{image, code}, []string{"vulns-go.json"})
+	for _, want := range []string{
+		"### Podatności obrazu api", "| HIGH | CVE-1 | zlib  | 1.3.2-r1 | tak | a/b |", "osv-scanner, bazy: Alpine do 2026-10-06 (`aaaaaaaaaaaa`)",
+		"### Podatności kodu narzędzi Go", "punkt odniesienia: tools/ z abc", "govulncheck, bazy: Go (https://vuln.go.dev) do 2026-10-08T22:31:09Z\n",
+		"**Bez raportu:** vulns-go.json", "dft vulns-issue",
+	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("treść bez %q:\n%s", want, body)
 		}

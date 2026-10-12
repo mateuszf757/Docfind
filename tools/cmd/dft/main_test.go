@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -86,6 +87,11 @@ func TestUsageErrors(t *testing.T) {
 		"wydanie bez numeru":            func() error { return runRelease(ctx, w, nil) },
 		"wydanie w CI bez numeru":       func() error { return runReleaseImage(ctx, w, nil) },
 		"tag obrazu z wersji":           func() error { return runIdentity(ctx, w, []string{"docker-tag"}) },
+		"test z argumentem":             func() error { return runTest(ctx, w, []string{"go"}) },
+		"bramka Go z nieznaną flagą":    func() error { return runCheckGo(ctx, w, []string{"--baseline-commit", "abc"}) },
+		"issue z pliku zamiast katalogu": func() error {
+			return runVulnsIssue(ctx, w, []string{filepath.Join(w.root, "vulns-api.json")})
+		},
 	} {
 		if err := call(); cli.ExitCode(err) != cli.ExitFailure {
 			t.Errorf("%s: kod %d (%v), oczekiwano złego wywołania", name, cli.ExitCode(err), err)

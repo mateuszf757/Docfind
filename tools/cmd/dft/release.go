@@ -3,8 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/kube"
@@ -201,21 +204,38 @@ func runTrial(ctx context.Context, w *workspace, args []string) error {
 	return nil
 }
 
-// runVulnsIssue — wynik nocnego skanu do issue (stages/vulns).
+// runVulnsIssue — wynik nocnych skanów do jednego issue (stages/vulns).
+// Argument to katalog z raportami obu skanów; których szukać, wie dft, a nie
+// workflow — nowy skan nie zostanie pominięty przez zapomniany argument.
+// Brak pliku to skan, który się nie wykonał, a nie błąd wywołania.
 func runVulnsIssue(ctx context.Context, w *workspace, args []string) error {
-	if err := expectArgs(args, 1, 1, "dft vulns-issue <raport vulns-api.json>"); err != nil {
+	if err := expectArgs(args, 1, 1, "dft vulns-issue <katalog raportów>"); err != nil {
 		return err
+	}
+	if info, err := os.Stat(args[0]); err != nil || !info.IsDir() {
+		return cli.Usage("dft vulns-issue: %s nie jest katalogiem raportów", args[0])
 	}
 	if err := requireTools("gh"); err != nil {
 		return err
 	}
-	raw, err := os.ReadFile(args[0])
-	if err != nil {
-		return err
+	var reports []vuln.Report
+	var missing []string
+	for _, name := range []string{reportVulnsImage, reportVulnsGo} {
+		file := name + ".json"
+		raw, err := os.ReadFile(filepath.Join(args[0], file))
+		if errors.Is(err, fs.ErrNotExist) {
+			cli.Warn("brak raportu %s", file)
+			missing = append(missing, file)
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		var rep vuln.Report
+		if err := json.Unmarshal(raw, &rep); err != nil {
+			return fmt.Errorf("raport %s: %w", file, err)
+		}
+		reports = append(reports, rep)
 	}
-	var rep vuln.Report
-	if err := json.Unmarshal(raw, &rep); err != nil {
-		return fmt.Errorf("raport %s: %w", args[0], err)
-	}
-	return vulns.SyncIssue(ctx, w.gh(), rep)
+	return vulns.SyncIssue(ctx, w.gh(), reports, missing)
 }
