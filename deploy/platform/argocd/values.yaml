@@ -1,0 +1,129 @@
+# Argo CD (decyzja 46): wdraża aplikację z charta OCI w GHCR, w zakresie
+# wersji z definicji środowiska (delivery.argocd). Wartości do charta
+# argo-cd przypiętego w ci/pins.env; projekt i Application — chart
+# deploy/charts/delivery.
+#
+# Tryb Core: kontroler aplikacji, repo-server i Redis — bez serwera API, UI,
+# Dex, powiadomień i ApplicationSet. Dostęp to Kubernetes RBAC z kubeconfigu
+# (kubectl, `argocd admin dashboard` na localhost), bez kont i haseł Argo.
+# Serwer API to główna powierzchnia ataku Argo CD (logowanie, webhooki,
+# proxy rozszerzeń — część łatek 3.5.4), a nikt spoza maszyny autora nie ma
+# z nim rozmawiać. Chart 10.9.7 nie umie go wyłączyć (server.enabled jest od
+# 10.10.0), więc zero replik; ApplicationSet tak samo.
+
+global:
+  # Tag i digest indeksu (decyzja 20). Podpis Sigstore (bundle w referrerach
+  # OCI) sprawdzony przy przypięciu przez gh attestation verify: certyfikat
+  # dla workflowu argoproj/argo-cd image-reuse.yaml@refs/tags/v3.5.4, commit
+  # d6d5b248ce00 — ten sam, na który wskazuje tag v3.5.4 w repozytorium.
+  image:
+    tag: "v3.5.4@sha256:49dff79439bb38b1b942b19a113fe1fec7e6b6c671ddf9fe6a4a7c46bde0b77b"
+  networkPolicy:
+    create: true
+    # Odmowa ruchu przychodzącego do każdego poda w przestrzeni argocd poza
+    # regułami charta (repo-server i Redis tylko od komponentów Argo).
+    defaultDenyIngress: true
+
+configs:
+  cm:
+    # Bez serwera API nikt się nie loguje — konto admin byłoby hasłem do
+    # pilnowania bez użytku.
+    admin.enabled: false
+
+# Decyzja 16: requesty i limit pamięci, bez limitu CPU. Zmierzone na stagingu
+# (kubectl top, jedna Application) — do przeglądu po pierwszym tygodniu.
+controller:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 192Mi
+    limits:
+      memory: 512Mi
+
+repoServer:
+  replicas: 1
+  # helm template wykonuje repo-server: limit pamięci chroni węzeł przed
+  # chartem, który rozdyma render.
+  resources:
+    requests:
+      cpu: 20m
+      memory: 96Mi
+    limits:
+      memory: 512Mi
+
+redis:
+  # Łatki bezpieczeństwa linii 8.6 (8.6.6 i 8.6.7, wrzesień 2026) — chart
+  # 10.9.7 przypina 8.6.4 z czerwca. Digest indeksu taki sam w ECR Public
+  # (domyślny rejestr charta, bez limitów Docker Hub) i na Docker Hubie.
+  image:
+    tag: "8.6.7-alpine@sha256:ac2da09bc822f325a9f68f533120b86fa39c1b8db46b3aa7c1bbea7fdfd4fcba"
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+# Hook przed instalacją: hasło Redis w Secrecie argocd-redis.
+redisSecretInit:
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 64Mi
+
+server:
+  replicas: 0
+  resources:
+    requests:
+      cpu: 10m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+
+applicationSet:
+  replicas: 0
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
+dex:
+  enabled: false
+
+notifications:
+  enabled: false
+
+# Ruch wychodzący: chart opisuje tylko przychodzący. DNS do CoreDNS, ruch
+# w przestrzeni argocd (kontroler → repo-server, Redis), API server i HTTPS
+# (repo-server → rejestr charta). API server tylko po porcie: adres węzła
+# serwera (endpoint usługi kubernetes, :6443) zależy od klastra — jak w ESO.
+extraObjects:
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: argocd-egress
+    spec:
+      podSelector: {}
+      policyTypes:
+        - Egress
+      egress:
+        - to:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: kube-system
+              podSelector:
+                matchLabels:
+                  k8s-app: kube-dns
+          ports:
+            - {protocol: UDP, port: 53}
+            - {protocol: TCP, port: 53}
+        - to:
+            - podSelector: {}
+        - ports:
+            - {protocol: TCP, port: 6443}
+            - {protocol: TCP, port: 443}

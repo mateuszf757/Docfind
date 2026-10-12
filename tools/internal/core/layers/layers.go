@@ -60,13 +60,16 @@ var ioStd = []string{"os/exec", "net", "net/http", "syscall"}
 // zdalny rejestr) to adaptery. Dwa YAML-e: sigs.k8s.io/yaml do odczytu
 // przez typy Go, go.yaml.in/yaml/v3 do edycji drzewa z zachowaniem
 // komentarzy (pakowanie charta, decyzja 45) — tej sigs.k8s.io/yaml nie
-// umie, a sam korzysta z go.yaml.in/yaml pod spodem.
+// umie, a sam korzysta z go.yaml.in/yaml pod spodem. Masterminds/semver —
+// zakresy wersji tą samą biblioteką co Argo CD (decyzja 46), żeby dft
+// wybierał z rejestru tę samą wersję, którą wybierze Argo.
 var pureExternal = []string{
 	"k8s.io/api/",
 	"k8s.io/apimachinery/",
 	"sigs.k8s.io/yaml",
 	"go.yaml.in/yaml/v3",
 	"github.com/google/go-containerregistry/pkg/name",
+	"github.com/Masterminds/semver/v3",
 }
 
 // Package — pakiet modułu: ścieżka względem modułu i importy z plików
@@ -141,7 +144,7 @@ func check(module string, layer Layer, imp string) string {
 			return ""
 		}
 	}
-	return "biblioteka spoza listy dozwolonych dla rdzenia i etapów (typy Kubernetesa, nazwy obrazów, YAML)"
+	return "biblioteka spoza listy dozwolonych dla rdzenia i etapów (typy Kubernetesa, nazwy obrazów, YAML, SemVer)"
 }
 
 func reason(from, to Layer) string {

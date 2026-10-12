@@ -178,3 +178,78 @@ Pod nie może odczytać `/run/secrets/metrics-token` — Secret zniknął albo
 jest pusty. `kubectl -n docfind get externalsecret docfind-api-secrets`
 i sekcja External Secrets Operator wyżej. Metryki są wtedy zamknięte,
 a nie otwarte.
+
+## Argo CD — dostawa aplikacji na staging
+
+Argo CD w trybie Core w przestrzeni `argocd` (kontroler, repo-server,
+Redis — bez serwera API i UI w klastrze). Application `docfind` śledzi
+`ghcr.io/mateuszf757/charts/docfind` w zakresie z
+`deploy/environments/staging.yaml` (`delivery.argocd.versions`),
+z `selfHeal` i `prune` (decyzja 46). Chart publikuje CI na `main` po
+bramkach klastra (decyzja 45). Polecenia poniżej z `MISE_ENV=staging`.
+
+### Stan
+
+```bash
+MISE_ENV=staging ./bin/mise exec -- kubectl -n argocd get application docfind \
+  -o jsonpath='{.status.sync.status} {.status.sync.revision} {.status.health.status}{"\n"}'
+MISE_ENV=staging ./bin/mise run cluster:identity
+MISE_ENV=staging ./bin/mise exec -- argocd admin dashboard -n argocd --port 8090   # UI na localhost:8090 (8080 to HTTP klastra dev)
+```
+
+Zdrowy stan: `Synced <wersja> Healthy`, gdzie wersja to najwyższa w GHCR
+spełniająca zakres (wersja z podsumowania ostatniego biegu `ci` na `main`,
+zadanie `chart`), a `cluster:identity` przechodzi.
+
+### Nowa wersja nie dociera
+
+**Objaw:** CI opublikował chart, a Application stoi na starszej wersji.
+
+```bash
+MISE_ENV=staging ./bin/mise exec -- kubectl -n argocd get application docfind -o jsonpath='{.status.conditions}'
+```
+
+- `ComparisonError` z `401`/`403` przy tagach — pakiet `charts/docfind`
+  w GHCR nie jest publiczny albo GHCR nie odpowiada;
+- `version matching constraint not found` — zakres nie obejmuje żadnej
+  opublikowanej wersji (literówka w `versions`, zły chart);
+- `invalid semver version in tags` — w repozytorium charta jest tag, który
+  parsuje się jako SemVer z błędem (np. zero wiodące w części
+  przedwydaniowej); Argo przerywa wtedy rozwiązywanie — usuń ten tag w GHCR;
+- bez warunku — Argo trzyma listę tagów w pamięci do 3 minut; odśwież:
+  `kubectl -n argocd annotate application docfind argocd.argoproj.io/refresh=hard --overwrite`.
+
+`MISE_ENV=staging ./bin/mise run cluster:up` liczy wersję z rejestru tak jak
+Argo, wpuszcza jej obraz polityką stagingu, zleca odświeżenie i czeka do
+10 minut, wypisując, na co czeka.
+
+### Cofnięcie wdrożenia
+
+Nie `helm rollback` ani `kubectl edit`/`set image` — `selfHeal` przywróci
+stan z charta w kilka sekund. Przypnij ostatnią dobrą wersję w definicji:
+
+```yaml
+delivery:
+  argocd:
+    versions: "0.4.1-dev.12"
+```
+
+i `MISE_ENV=staging ./bin/mise run cluster:up` — do kroku 3 (app-of-apps)
+Application zakłada `dft` z drzewa roboczego, więc zmiana działa od razu,
+a PR z nią idzie zaraz potem. Powrót do śledzenia: `">=0.0.0-0"`.
+
+### Ręczna zmiana „nie trzyma się"
+
+Tak ma być: `selfHeal`. Zmiana idzie przez chart (PR) albo wartości
+środowiska w definicji. Bramka, która to sprawdza (replika więcej, usunięty
+PDB, bez przestoju): `MISE_ENV=staging ./bin/mise run cluster:selfheal`,
+raport `.cache/reports/selfheal-staging.json`.
+
+### `helm list -n docfind` jest pusty
+
+Stan oczekiwany. Pierwszy `cluster:up` z Argo CD na klastrze, gdzie
+aplikację instalował Helm, usuwa zapis wydania Helma
+(`sh.helm.release.v1.docfind.*`) po tym, jak Argo przejął zasoby — zasoby
+zostają. `helm upgrade --install docfind` na stagingu postawiłby wydanie
+obok Argo; `dft cluster up --image` na środowisku z Argo odmawia.
+

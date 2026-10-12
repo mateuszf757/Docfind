@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
+	"github.com/mateuszf757/Docfind/tools/internal/core/gitops"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 )
 
@@ -41,6 +42,7 @@ type Definition struct {
 	Cluster    Cluster    `json:"cluster"`
 	Artifact   Artifact   `json:"artifact"`
 	App        App        `json:"app"`
+	Delivery   Delivery   `json:"delivery,omitempty"`
 	Gateway    Gateway    `json:"gateway"`
 	Operations Operations `json:"operations"`
 }
@@ -106,6 +108,39 @@ type App struct {
 	Release   string `json:"release"`
 }
 
+// Delivery — kto wdraża aplikację na klaster środowiska.
+type Delivery struct {
+	// ArgoCD — Argo CD w klastrze wdraża chart aplikacji z rejestru OCI
+	// (decyzja 46). Bez tego aplikację instaluje dft z drzewa roboczego
+	// z obrazem z wybranego źródła.
+	ArgoCD *ArgoCD `json:"argocd,omitempty"`
+}
+
+// ArgoCD — dostawa przez Argo CD.
+type ArgoCD struct {
+	// Chart — repozytorium charta w rejestrze OCI, bez schematu:
+	// ghcr.io/<właściciel>/charts/docfind.
+	Chart string `json:"chart"`
+	// Versions — zakres wersji. Argo wdraża najwyższą wersję z rejestru,
+	// która go spełnia: >=0.0.0-0 — każdy commit z main, który przeszedł
+	// bramki CI (decyzja 45); >=0.0.0 — tylko wydania.
+	Versions string `json:"versions"`
+}
+
+// ArgoCDNamespace — przestrzeń nazw Argo CD i jego obiektów (projekt,
+// Application).
+const ArgoCDNamespace = "argocd"
+
+// Source — repozytorium (repoURL Application) i nazwa charta. Bez schematu
+// Argo traktuje repozytorium jako Helm OCI sam, bez Secreta repozytorium.
+func (a ArgoCD) Source() (repoURL, chart string) {
+	i := strings.LastIndex(a.Chart, "/")
+	return a.Chart[:i], a.Chart[i+1:]
+}
+
+// GitOps mówi, czy aplikację na środowisko wdraża Argo CD.
+func (e Definition) GitOps() bool { return e.Delivery.ArgoCD != nil }
+
 // Gateway — wejście do klastra.
 type Gateway struct {
 	Namespace string `json:"namespace"`
@@ -142,13 +177,16 @@ const (
 	OpTLSRenew Operation = "tls-renew"
 	// OpDNSToken — zapis tokenu Cloudflare do Secretu.
 	OpDNSToken Operation = "dns-token"
+	// OpSelfHeal — ręczne zmiany zasobów aplikacji, które Argo CD ma
+	// przywrócić (bramka samonaprawy, decyzja 46).
+	OpSelfHeal Operation = "self-heal"
 )
 
-var operations = []Operation{OpClusterCreate, OpClusterDelete, OpDeploy, OpDrain, OpTLSRenew, OpDNSToken}
+var operations = []Operation{OpClusterCreate, OpClusterDelete, OpDeploy, OpDrain, OpTLSRenew, OpDNSToken, OpSelfHeal}
 
 // destructive — operacje, po których klaster przez chwilę działa gorzej albo
 // znika. Na etapie wydania żadna nie biegnie automatycznie.
-var destructive = []Operation{OpClusterCreate, OpClusterDelete, OpDrain, OpTLSRenew}
+var destructive = []Operation{OpClusterCreate, OpClusterDelete, OpDrain, OpTLSRenew, OpSelfHeal}
 
 // Operations — co dft wolno zrobić na tym środowisku.
 type Operations struct {
@@ -157,8 +195,10 @@ type Operations struct {
 
 var (
 	namePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
-	issuers     = []string{"docfind-internal-ca", "letsencrypt-staging", "letsencrypt"}
-	stages      = []string{StageDevelopment, StageIntegration, StageAcceptance, StageRelease}
+	// chartRepo — host[:port]/ścieżka/nazwa, małymi literami jak w OCI.
+	chartRepo = regexp.MustCompile(`^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+/[a-z0-9][a-z0-9-]*$`)
+	issuers   = []string{"docfind-internal-ca", "letsencrypt-staging", "letsencrypt"}
+	stages    = []string{StageDevelopment, StageIntegration, StageAcceptance, StageRelease}
 )
 
 // Selected zwraca nazwę wybranego środowiska: DOCFIND_ENV albo dev.
@@ -330,6 +370,17 @@ func (e Definition) Validate() error {
 	check(!e.Artifact.ReleasesOnly || e.Artifact.Attested, "artifact.releasesOnly bez artifact.attested — wydanie bez sprawdzonej atestacji")
 
 	check(e.App.Namespace != "" && e.App.Release != "", "app.namespace i app.release wymagane")
+	if a := e.Delivery.ArgoCD; a != nil {
+		// Argo CD stawia dft razem z platformą — na razie tylko na klastrach,
+		// które sam tworzy.
+		check(c.Provider == ProviderK3d, "delivery.argocd — Argo CD instaluje dft z platformą, tylko na klastrach k3d")
+		check(chartRepo.MatchString(a.Chart), "delivery.argocd.chart=%q — repozytorium OCI bez schematu, np. ghcr.io/<właściciel>/charts/docfind", a.Chart)
+		if err := gitops.ValidateRange(a.Versions); err != nil {
+			problems = append(problems, "delivery.argocd.versions: "+err.Error())
+		}
+		// Obraz przychodzi w charcie z rejestru — innego źródła nie ma.
+		check(slices.Equal(e.Artifact.Sources, []string{SourceRegistry}), "delivery.argocd — obraz tylko z charta w rejestrze (artifact.sources: [registry])")
+	}
 	g := e.Gateway
 	check(g.Namespace != "" && g.Name != "" && g.Hostname != "", "gateway.namespace, name i hostname wymagane")
 	check(slices.Contains(issuers, g.Issuer), "gateway.issuer=%q — jeden z %v", g.Issuer, issuers)
@@ -348,6 +399,7 @@ func (e Definition) Validate() error {
 	if c.Provider == ProviderNone {
 		check(len(allowed) == 0, "operations.allowed: środowisko bez klastra nie ma operacji")
 	}
+	check(!slices.Contains(allowed, OpSelfHeal) || e.GitOps(), "operations.allowed: self-heal bez delivery.argocd — zmiany ręcznej nie ma kto przywrócić")
 	if e.Stage == StageRelease {
 		for _, op := range destructive {
 			check(!slices.Contains(allowed, op), "operations.allowed: %s na etapie wydania — produkcja nie jest polem do ćwiczeń", op)
@@ -451,6 +503,25 @@ func (e Definition) AppValues(caBundle string) []string {
 			"api.secrets.externalSecret.caBundle="+caBundle,
 			"api.config.metrics.token_secret="+MetricsTokenSecret,
 		)
+	}
+	return values
+}
+
+// DeliveryValues — wartości charta dostawy (deploy/charts/delivery):
+// projekt i Application Argo CD z chartem aplikacji z rejestru w zakresie
+// wersji i z wartościami środowiska z AppValues — tymi samymi, które dft
+// podaje Helmowi przy instalacji z drzewa. Tylko dla środowisk z GitOps.
+func (e Definition) DeliveryValues(caBundle string) []string {
+	repo, chart := e.Delivery.ArgoCD.Source()
+	values := []string{
+		"application.name=" + e.App.Release,
+		"application.namespace=" + e.App.Namespace,
+		"application.repoURL=" + repo,
+		"application.chart=" + chart,
+		"application.versions=" + e.Delivery.ArgoCD.Versions,
+	}
+	for _, v := range e.AppValues(caBundle) {
+		values = append(values, "application.values."+v)
 	}
 	return values
 }

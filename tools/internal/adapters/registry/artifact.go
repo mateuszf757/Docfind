@@ -75,3 +75,17 @@ func (c Client) Blob(ctx context.Context, repository, digest string) ([]byte, er
 	defer rc.Close()
 	return io.ReadAll(rc)
 }
+
+// Tags zwraca tagi repozytorium (repozytorium bez tagu i digestu) — do
+// rozwiązania zakresu wersji charta tak, jak robi to Argo CD.
+func (c Client) Tags(ctx context.Context, repository string) ([]string, error) {
+	repo, err := name.NewRepository(repository)
+	if err != nil {
+		return nil, fmt.Errorf("repozytorium %q: %w", repository, err)
+	}
+	tags, err := remote.List(repo, c.opts(ctx)...)
+	if err != nil {
+		return nil, fmt.Errorf("tagi %s: %w", repository, err)
+	}
+	return tags, nil
+}

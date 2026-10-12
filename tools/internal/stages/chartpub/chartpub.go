@@ -30,11 +30,16 @@ type Repo interface {
 	SourceDateEpoch(ctx context.Context) (int64, error)
 }
 
-// Registry — rejestr OCI (adapters/registry).
-type Registry interface {
-	PushManifest(ctx context.Context, ref string, manifest []byte, mediaType string, blobs ...artifact.Blob) (string, error)
+// Reader — odczyt artefaktów z rejestru OCI (adapters/registry).
+type Reader interface {
 	Manifest(ctx context.Context, ref string) ([]byte, string, error)
 	Blob(ctx context.Context, repository, digest string) ([]byte, error)
+}
+
+// Registry — rejestr OCI (adapters/registry).
+type Registry interface {
+	Reader
+	PushManifest(ctx context.Context, ref string, manifest []byte, mediaType string, blobs ...artifact.Blob) (string, error)
 }
 
 // Images — opublikowane obrazy (adapters/registry).
@@ -143,9 +148,24 @@ func (p Publisher) Publish(ctx context.Context, image string) (Published, error)
 // Verify pobiera chart ref (repozytorium@digest) z rejestru i sprawdza, że
 // to chart Helma z wersją i obrazem z want.
 func (p Publisher) Verify(ctx context.Context, ref string, want chart.Build) error {
-	raw, mediaType, err := p.Registry.Manifest(ctx, ref)
+	got, err := Read(ctx, p.Registry, p.Repository, ref)
 	if err != nil {
 		return err
+	}
+	if got != want {
+		return cli.Unmet("chart %s w rejestrze: %+v, oczekiwano %+v", ref, got, want)
+	}
+	cli.Step("chart w rejestrze: wersja %s, obraz %s@%s, wersja wdrożenia %s", got.Version, got.Tag, got.Digest, got.DeployVersion)
+	return nil
+}
+
+// Read pobiera chart ref (repozytorium:wersja albo repozytorium@digest)
+// z repozytorium repository i zwraca, co wdraża: wersję, obraz i wersję
+// wdrożenia z jego wartości. Manifest inny niż chart Helma — odmowa.
+func Read(ctx context.Context, reg Reader, repository, ref string) (chart.Build, error) {
+	raw, mediaType, err := reg.Manifest(ctx, ref)
+	if err != nil {
+		return chart.Build{}, err
 	}
 	var m struct {
 		Config struct {
@@ -157,22 +177,14 @@ func (p Publisher) Verify(ctx context.Context, ref string, want chart.Build) err
 		} `json:"layers"`
 	}
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return fmt.Errorf("manifest %s: %w", ref, err)
+		return chart.Build{}, fmt.Errorf("manifest %s: %w", ref, err)
 	}
 	if mediaType != chart.ManifestMediaType || m.Config.MediaType != chart.ConfigMediaType || len(m.Layers) != 1 || m.Layers[0].MediaType != chart.LayerMediaType {
-		return cli.Unmet("%s nie jest chartem Helma (manifest %s, konfiguracja %s, warstw %d)", ref, mediaType, m.Config.MediaType, len(m.Layers))
+		return chart.Build{}, cli.Unmet("%s nie jest chartem Helma (manifest %s, konfiguracja %s, warstw %d)", ref, mediaType, m.Config.MediaType, len(m.Layers))
 	}
-	archive, err := p.Registry.Blob(ctx, p.Repository, m.Layers[0].Digest)
+	archive, err := reg.Blob(ctx, repository, m.Layers[0].Digest)
 	if err != nil {
-		return err
+		return chart.Build{}, err
 	}
-	got, err := chart.Read(archive)
-	if err != nil {
-		return err
-	}
-	if got != want {
-		return cli.Unmet("chart %s w rejestrze: %+v, oczekiwano %+v", ref, got, want)
-	}
-	cli.Step("chart w rejestrze: wersja %s, obraz %s@%s, wersja wdrożenia %s", got.Version, got.Tag, got.Digest, got.DeployVersion)
-	return nil
+	return chart.Read(archive)
 }

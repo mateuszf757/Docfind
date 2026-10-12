@@ -8,3 +8,12 @@
 [env]
 DOCFIND_ENV = "staging"
 KUBECONFIG = "{{config_root}}/.cache/kubeconfig-staging"
+
+# CLI Argo CD w wersji z klastra (decyzja 46) — tylko tutaj, bo tylko
+# staging ma Argo CD, a binarka waży 250 MB, których CI nie potrzebuje.
+# `MISE_ENV=staging ./bin/mise exec -- argocd admin dashboard -n argocd --port 8090`:
+# UI na localhost z uprawnieniami z kubeconfigu, bez serwera API Argo
+# w klastrze. Wyjątek od cooldownu jak dla klastra: dashboard uruchamia
+# lokalnie kod serwera API, a 3.5.4 łata jego podatności.
+[tools]
+argocd = "3.5.4"

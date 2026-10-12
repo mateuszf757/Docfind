@@ -178,3 +178,30 @@ func (c *Cluster) EnsureNamespace(ctx context.Context, name string, nsLabels map
 	_, err = c.core.CoreV1().Namespaces().Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{})
 	return err
 }
+
+// ScaleDeployment ustawia liczbę replik Deploymentu — zmiana spec.replicas,
+// jak `kubectl scale`.
+func (c *Cluster) ScaleDeployment(ctx context.Context, namespace, name string, replicas int32) error {
+	patch, err := json.Marshal(map[string]any{"spec": map[string]any{"replicas": replicas}})
+	if err != nil {
+		return err
+	}
+	if _, err := c.core.AppsV1().Deployments(namespace).Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{}); err != nil {
+		return fmt.Errorf("skalowanie Deploymentu %s/%s: %w", namespace, name, err)
+	}
+	return nil
+}
+
+// PodDisruptionBudgetExists mówi, czy PDB o tej nazwie istnieje.
+func (c *Cluster) PodDisruptionBudgetExists(ctx context.Context, namespace, name string) (bool, error) {
+	_, err := c.core.PolicyV1().PodDisruptionBudgets(namespace).Get(ctx, name, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+// DeletePodDisruptionBudget usuwa PDB.
+func (c *Cluster) DeletePodDisruptionBudget(ctx context.Context, namespace, name string) error {
+	return c.core.PolicyV1().PodDisruptionBudgets(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+}

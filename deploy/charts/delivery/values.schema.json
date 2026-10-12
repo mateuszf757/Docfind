@@ -1,0 +1,87 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Wartości charta docfind-delivery",
+  "description": "Bez schematu Helm po cichu ignoruje nieznany klucz — literówka w zakresie wersji albo repozytorium dawałaby Application, która niczego nie wdraża, a błąd byłby widać dopiero w statusie Argo.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "application",
+    "project"
+  ],
+  "properties": {
+    "global": {
+      "type": "object",
+      "description": "Helm dokłada `global` do wartości każdego charta."
+    },
+    "application": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "namespace",
+        "repoURL",
+        "chart",
+        "versions",
+        "values"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+        },
+        "namespace": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+        },
+        "repoURL": {
+          "type": "string",
+          "pattern": "^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$",
+          "description": "Bez schematu: Argo traktuje repozytorium jako Helm OCI (IsHelmOciRepo). Z oci:// wybrałby źródło OCI z manifestami (Argo 3.1+), a nie chart."
+        },
+        "chart": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "versions": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Zakres SemVer; składnię sprawdza dft (ta sama biblioteka co w Argo CD) przy czytaniu definicji środowiska."
+        },
+        "values": {
+          "type": "object",
+          "description": "Wartości charta aplikacji — sprawdza je jego własny schemat przy renderze w Argo i w `dft test`."
+        }
+      }
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "namespaceResources"
+      ],
+      "properties": {
+        "namespaceResources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "group",
+              "kind"
+            ],
+            "properties": {
+              "group": {
+                "type": "string"
+              },
+              "kind": {
+                "type": "string",
+                "pattern": "^[A-Z][A-Za-z]+$"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -19,6 +19,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
 	"github.com/mateuszf757/Docfind/tools/internal/core/crdschema"
 	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
+	"github.com/mateuszf757/Docfind/tools/internal/core/gitops"
 	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
 	"github.com/mateuszf757/Docfind/tools/internal/core/policy"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
@@ -144,16 +145,18 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 	// Chart w postaci z rejestru (decyzja 45): spakowany jak w CI, z obrazem
 	// po digeście w wartościach, bez --set obrazu. Render musi mieć obraz
 	// z digestem, jak komponenty z zewnątrz — edycja values.yaml przy
-	// pakowaniu nie może go zgubić ani zepsuć schematu. Wartości stagingu,
-	// bo staging śledzi ten chart przez Argo CD.
+	// pakowaniu nie może go zgubić ani zepsuć schematu. Wartości środowisk,
+	// które śledzą ten chart przez Argo CD.
 	packaged, err := packagedApp(app, tmp)
 	if err != nil {
 		return err
 	}
+	var gitops []environment.Definition
 	for _, e := range envs {
-		if e.Name != "staging" {
+		if !e.GitOps() {
 			continue
 		}
+		gitops = append(gitops, e)
 		r := cluster.Release{Name: e.App.Release, Chart: packaged, Namespace: e.App.Namespace, Set: e.AppValues(sampleCABundle)}
 		if err := add("docfind-oci-"+e.Name, true, false, r); err != nil {
 			return err
@@ -167,6 +170,7 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 		{pins.EnvoyGateway, "envoy-gateway-system", "deploy/platform/envoy-gateway/values.yaml"},
 		{pins.OpenBao, "openbao", "deploy/platform/openbao/values.yaml"},
 		{pins.ExternalSecrets, "external-secrets", "deploy/platform/external-secrets/values.yaml"},
+		{pins.ArgoCD, environment.ArgoCDNamespace, "deploy/platform/argocd/values.yaml"},
 	} {
 		chart, err := c.Pins.Chart(pc.pin)
 		if err != nil {
@@ -202,12 +206,19 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 		}
 	}
 
+	// Projekt i Application Argo CD dla środowisk z GitOps (decyzja 46),
+	// z wartościami z definicji tą samą funkcją, którą wdrożenie przekazuje
+	// Helmowi.
+	if err := c.delivery(ctx, gitops, add); err != nil {
+		return err
+	}
+
 	// Schematy zasobów z CRD — Gateway API, Envoy Gateway, cert-manager,
-	// External Secrets — z tych samych CRD, które instalują przypięte charty
-	// (decyzja 28).
+	// External Secrets, Argo CD — z tych samych CRD, które instalują
+	// przypięte charty (decyzja 28).
 	schemaDir := filepath.Join(tmp, "crd-schemas")
 	var crds []map[string]any
-	for _, name := range []string{pins.EnvoyGateway, pins.CertManager, pins.ExternalSecrets} {
+	for _, name := range []string{pins.EnvoyGateway, pins.CertManager, pins.ExternalSecrets, pins.ArgoCD} {
 		docs, err := parseFile(filepath.Join(tmp, name+".yaml"))
 		if err != nil {
 			return err
@@ -240,6 +251,14 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 		}
 	}
 
+	// Projekt Argo CD musi dopuszczać każdy zasób z charta, który wdraża —
+	// inaczej Argo odmówi synchronizacji dopiero na klastrze.
+	for _, e := range gitops {
+		if err := c.projectCovers(e, tmp); err != nil {
+			return err
+		}
+	}
+
 	// Konfiguracja z values.yaml trafia do ConfigMapy i jest walidowana
 	// dopiero przy starcie poda. Sprawdzamy ją tym samym modelem już tutaj,
 	// w renderze każdego środowiska — zła konfiguracja ma zatrzymać pipeline,
@@ -253,6 +272,60 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 }
 
 func (c Checker) path(rel string) string { return filepath.Join(c.Root, rel) }
+
+// delivery sprawdza chart dostawy: lint i odrzucenie literówki z wartościami
+// pierwszego środowiska z GitOps, render każdego z nich.
+func (c Checker) delivery(ctx context.Context, envs []environment.Definition, add func(string, bool, bool, cluster.Release) error) error {
+	if len(envs) == 0 {
+		return nil
+	}
+	chart := c.path("deploy/charts/delivery")
+	cli.Step("helm lint delivery")
+	if err := c.Helm.Lint(ctx, chart, envs[0].DeliveryValues(sampleCABundle)...); err != nil {
+		return err
+	}
+	if err := c.mustReject(ctx, "chart dostawy przyjął nieznany klucz application.version — values.schema.json niczego nie pilnuje",
+		cluster.Release{Name: "delivery", Chart: chart, Set: append(envs[0].DeliveryValues(sampleCABundle), "application.version=1.0.0")}); err != nil {
+		return err
+	}
+	for _, e := range envs {
+		r := cluster.Release{Name: "delivery", Chart: chart, Namespace: environment.ArgoCDNamespace, Set: e.DeliveryValues(sampleCABundle)}
+		if err := add("delivery-"+e.Name, false, false, r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// projectCovers sprawdza, że projekt z renderu dostawy środowiska e dopuszcza
+// każdy zasób z renderu charta z rejestru z wartościami tego środowiska.
+func (c Checker) projectCovers(e environment.Definition, tmp string) error {
+	delivery, err := parseFile(filepath.Join(tmp, "delivery-"+e.Name+".yaml"))
+	if err != nil {
+		return err
+	}
+	app, err := parseFile(filepath.Join(tmp, "docfind-oci-"+e.Name+".yaml"))
+	if err != nil {
+		return err
+	}
+	var project map[string]any
+	for _, d := range delivery {
+		if manifest.String(d, "kind") == "AppProject" {
+			project = d
+		}
+	}
+	if project == nil {
+		return cli.Unmet("render dostawy %s bez AppProject", e.Name)
+	}
+	cli.Step("projekt Argo CD %s obejmuje chart aplikacji", e.Name)
+	if missing := gitops.Uncovered(project, app, e.App.Namespace); len(missing) > 0 {
+		for _, m := range missing {
+			fmt.Fprintf(cli.Err, "PROJEKT (%s): %s\n", e.Name, m)
+		}
+		return cli.Unmet("projekt Argo CD środowiska %s nie dopuszcza zasobów charta aplikacji — dopisz je w deploy/charts/delivery/values.yaml (project.namespaceResources)", e.Name)
+	}
+	return nil
+}
 
 // packagedApp pakuje chart aplikacji tak jak publikacja w CI, z przykładowym
 // obrazem po digeście, i zwraca ścieżkę archiwum.

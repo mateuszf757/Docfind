@@ -27,7 +27,8 @@ func TestSourceArgs(t *testing.T) {
 		args []string
 		want string
 	}{
-		{nil, environment.SourceLocal},
+		// Bez flag źródło wybiera definicja: build z drzewa albo Argo CD.
+		{nil, ""},
 		{[]string{"--image", "ghcr.io/x/api@" + digest}, environment.SourceRegistry},
 		{[]string{"--image-archive", "obraz.tar", "--config-digest", digest}, environment.SourceArchive},
 	}
