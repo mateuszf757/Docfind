@@ -69,6 +69,9 @@ func (Client) Get(ctx context.Context, r loopback.Request) (loopback.Response, e
 	if err != nil {
 		return loopback.Response{}, err
 	}
+	if !r.Bearer.Empty() {
+		req.Header.Set("Authorization", "Bearer "+r.Bearer.Reveal())
+	}
 	started := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {

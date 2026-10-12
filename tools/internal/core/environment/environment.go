@@ -423,15 +423,36 @@ func (e Definition) HTTPSRedirectPort() int {
 	return 443
 }
 
+// Sekrety aplikacji (decyzja 44): Secret montowany w /run/secrets
+// i sekret z tokenami dostępu do /metrics w nim.
+const (
+	AppSecret          = "docfind-api-secrets"
+	MetricsTokenSecret = "metrics-token"
+)
+
 // AppValues — wartości charta aplikacji wynikające z definicji, jako
 // klucz=wartość dla `helm --set`. Jedno miejsce dla wdrożenia i walidacji
 // chartów: render sprawdzany w CI to render, który trafia na klaster.
-func (e Definition) AppValues() []string {
-	return []string{
+//
+// Na klastrach k3d jest platforma z OpenBao i ESO, więc sekrety aplikacji
+// przychodzą z niej, a /metrics wymaga tokenu. caBundle — CA serwera OpenBao
+// (PEM w base64): wdrożenie bierze go z klastra, walidacja podaje
+// przykładowy. Klaster klienta dostarcza Secret sam (Etap 10).
+func (e Definition) AppValues(caBundle string) []string {
+	values := []string{
 		"route.hostname=" + e.Gateway.Hostname,
 		"route.gateway.name=" + e.Gateway.Name,
 		"route.gateway.namespace=" + e.Gateway.Namespace,
 	}
+	if e.Cluster.Provider == ProviderK3d {
+		values = append(values,
+			"api.secrets.secretName="+AppSecret,
+			"api.secrets.externalSecret.enabled=true",
+			"api.secrets.externalSecret.caBundle="+caBundle,
+			"api.config.metrics.token_secret="+MetricsTokenSecret,
+		)
+	}
+	return values
 }
 
 // PlatformValues — wartości charta platformy wynikające z definicji.

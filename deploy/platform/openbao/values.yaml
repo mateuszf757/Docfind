@@ -258,3 +258,11 @@ extraObjects:
       name: openbao-dns-writer
       namespace: openbao
     automountServiceAccountToken: false
+  # Konto dft dla sekretów aplikacji: rola app-secrets-writer zapisuje tylko
+  # pod app/ (decyzja 44).
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: openbao-app-writer
+      namespace: openbao
+    automountServiceAccountToken: false

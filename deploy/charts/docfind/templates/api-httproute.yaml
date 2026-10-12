@@ -20,9 +20,11 @@ spec:
     - {{ .Values.route.hostname | quote }}
   rules:
     - matches:
+        {{- range .Values.route.paths }}
         - path:
-            type: PathPrefix
-            value: /
+            type: {{ .type }}
+            value: {{ .value | quote }}
+        {{- end }}
       backendRefs:
         - name: {{ include "docfind.api.fullname" . }}
           port: 80

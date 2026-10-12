@@ -106,7 +106,9 @@ func (p Promoter) Promote(ctx context.Context, ref, tag string) (Promotion, erro
 	// jako tekst (--set-string), jak przy wdrożeniu przez dft.
 	var install strings.Builder
 	fmt.Fprintf(&install, "git checkout v%s\nhelm upgrade --install %s deploy/charts/docfind --namespace %s", release.Version, p.Env.App.Release, p.Env.App.Namespace)
-	for _, v := range p.Env.AppValues() {
+	// Bez CA OpenBao: klaster klienta nie ma naszej platformy, Secret
+	// aplikacji dostarcza sam.
+	for _, v := range p.Env.AppValues("") {
 		fmt.Fprintf(&install, " \\\n  --set %s", v)
 	}
 	for _, v := range []string{"api.image.tag=" + release.Tag, "api.image.digest=" + release.Digest, "api.version=" + release.Version} {

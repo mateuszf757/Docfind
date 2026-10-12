@@ -58,3 +58,22 @@ roles:
     audience: openbao
     policies: [dns-token-writer]
     ttl: 5m
+
+  # ESO w przestrzeni aplikacji (SecretStore openbao z charta docfind):
+  # odczyt sekretów aplikacji.
+  - name: docfind-api
+    auth: kubernetes
+    serviceAccount: docfind-secrets
+    namespace: docfind
+    audience: openbao
+    policies: [docfind-api]
+    ttl: 5m
+
+  # dft: generowanie brakujących sekretów aplikacji i bramka rotacji.
+  - name: app-secrets-writer
+    auth: kubernetes
+    serviceAccount: openbao-app-writer
+    namespace: openbao
+    audience: openbao
+    policies: [app-secrets-writer]
+    ttl: 5m

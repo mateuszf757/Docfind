@@ -302,7 +302,7 @@ func TestChartValues(t *testing.T) {
 			t.Errorf("prod: brak %s w %s", want, got)
 		}
 	}
-	if got := strings.Join(prod.AppValues(), " "); !strings.Contains(got, "route.hostname=prod.docfind.lol") {
+	if got := strings.Join(prod.AppValues(""), " "); !strings.Contains(got, "route.hostname=prod.docfind.lol") || strings.Contains(got, "externalSecret") {
 		t.Errorf("prod: %s", got)
 	}
 }

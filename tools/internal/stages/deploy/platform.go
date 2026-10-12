@@ -2,11 +2,14 @@ package deploy
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
+	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
 	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
 	"github.com/mateuszf757/Docfind/tools/internal/core/secretstore"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
@@ -164,6 +167,24 @@ func (d Deployer) namespace(ctx context.Context, c Cluster) error {
 // podzie, a liczba podów z liczbą replik.
 func (d Deployer) app(ctx context.Context, c Cluster, img image) error {
 	release := d.Env.App.Release
+	// Sekrety aplikacji z OpenBao przez ESO (decyzja 44): sekret musi być
+	// w OpenBao przed chartem — pody czekają na Secret przy montowaniu
+	// wolumenu — a SecretStore dostaje CA, którym ESO sprawdza OpenBao.
+	var caBundle string
+	if d.Env.Cluster.Provider == environment.ProviderK3d {
+		ss, err := d.SecretStores(d.target())
+		if err != nil {
+			return err
+		}
+		if err := ss.EnsureAppSecrets(ctx); err != nil {
+			return err
+		}
+		ca, err := c.SecretData(ctx, "cert-manager", "docfind-root-ca")
+		if err != nil {
+			return fmt.Errorf("CA platformy cert-manager/docfind-root-ca: %w", err)
+		}
+		caBundle = base64.StdEncoding.EncodeToString(ca["ca.crt"])
+	}
 	cli.Step("helm upgrade --install %s", release)
 	// Wersja wdrożenia trafia do aplikacji zmienną środowiskową
 	// (DOCFIND_VERSION) — różnica między wdrożeniami idzie przez wdrożenie,
@@ -174,7 +195,7 @@ func (d Deployer) app(ctx context.Context, c Cluster, img image) error {
 	}
 	if err := d.Releases.Install(ctx, d.target(), cluster.Release{
 		Name: release, Chart: d.path("deploy/charts/docfind"), Namespace: d.Env.App.Namespace,
-		Set: d.Env.AppValues(), SetString: image, Timeout: 3 * time.Minute,
+		Set: d.Env.AppValues(caBundle), SetString: image, Timeout: 3 * time.Minute,
 	}); err != nil {
 		return err
 	}

@@ -40,6 +40,13 @@ const (
 	AuthMount    = "kubernetes"
 	// KVMount — silnik KV v2 z sekretami DOCFIND.
 	KVMount = "docfind"
+	// Sekrety aplikacji (decyzja 44): tokeny dostępu do /metrics, po jednym
+	// na linię w polu AppMetricsField; zapisuje je rola AppWriterRole konta
+	// AppWriterAccount (generowanie przy wdrożeniu, bramka rotacji).
+	AppMetricsPath   = "app/metrics"
+	AppMetricsField  = "tokens"
+	AppWriterAccount = "openbao-app-writer"
+	AppWriterRole    = "app-secrets-writer"
 	// ActiveLabel — etykieta aktywnego poda (service_registration kubernetes),
 	// RevisionLabel — rewizja szablonu StatefulSetu na podzie.
 	ActiveLabel   = "openbao-active"

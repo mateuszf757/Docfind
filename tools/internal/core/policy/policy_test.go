@@ -55,3 +55,39 @@ func TestCheck(t *testing.T) {
 		}
 	}
 }
+
+// TestRotatableSecrets: Secret przez subPath, zmienna z secretKeyRef
+// i envFrom z Secreta to sekrety, do których rotacja nie dociera; wolumen
+// bez subPath przechodzi.
+func TestRotatableSecrets(t *testing.T) {
+	deployment := func(mount map[string]any, env []any) map[string]any {
+		c := map[string]any{
+			"name": "api", "image": "x@sha256:abc",
+			"resources":    map[string]any{"requests": map[string]any{"cpu": "10m", "memory": "64Mi"}, "limits": map[string]any{"memory": "128Mi"}},
+			"volumeMounts": []any{mount}, "env": env,
+		}
+		return map[string]any{"kind": "Deployment", "metadata": map[string]any{"name": "api"}, "spec": map[string]any{"template": map[string]any{"spec": map[string]any{
+			"containers": []any{c},
+			"volumes":    []any{map[string]any{"name": "secrets", "secret": map[string]any{"secretName": "s"}}, map[string]any{"name": "config", "configMap": map[string]any{"name": "c"}}},
+		}}}}
+	}
+	tests := []struct {
+		name  string
+		mount map[string]any
+		env   []any
+		want  string
+	}{
+		{"katalog bez subPath", map[string]any{"name": "secrets", "mountPath": "/run/secrets"}, nil, ""},
+		{"ConfigMap przez subPath", map[string]any{"name": "config", "mountPath": "/app/app.yml", "subPath": "app.yml"}, nil, ""},
+		{"Secret przez subPath", map[string]any{"name": "secrets", "mountPath": "/run/secrets/t", "subPath": "t"}, nil, "subPath"},
+		{"zmienna z Secreta", map[string]any{"name": "secrets", "mountPath": "/run/secrets"}, []any{map[string]any{"name": "TOKEN", "valueFrom": map[string]any{"secretKeyRef": map[string]any{"name": "s", "key": "t"}}}}, "zmienna TOKEN"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := strings.Join(Check([]map[string]any{deployment(tt.mount, tt.env)}, Options{RotatableSecrets: true}), "; ")
+			if (tt.want == "") != (got == "") || !strings.Contains(got, tt.want) {
+				t.Errorf("naruszenia %q, oczekiwano %q", got, tt.want)
+			}
+		})
+	}
+}
