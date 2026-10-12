@@ -9,7 +9,8 @@
     "certificate",
     "internalCA",
     "acme",
-    "proxy"
+    "proxy",
+    "secretStore"
   ],
   "properties": {
     "global": {
@@ -172,6 +173,61 @@
         "shutdownManagerMemoryLimit": {
           "type": "string",
           "pattern": "^[0-9]+(Mi|Gi)$"
+        }
+      }
+    },
+    "secretStore": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "OpenBao przez External Secrets Operator (decyzje 42 i 43).",
+      "required": [
+        "name",
+        "server",
+        "mount",
+        "authMount",
+        "audience",
+        "serviceAccount",
+        "dnsTokenRole",
+        "dnsTokenPath",
+        "refreshInterval"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+        },
+        "server": {
+          "type": "string",
+          "pattern": "^https://",
+          "description": "Tylko TLS: przez to połączenie idą tokeny i wartości."
+        },
+        "mount": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+        },
+        "authMount": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+        },
+        "audience": {
+          "type": "string",
+          "minLength": 1
+        },
+        "serviceAccount": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+        },
+        "dnsTokenRole": {
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+        },
+        "dnsTokenPath": {
+          "type": "string",
+          "pattern": "^[a-z0-9-]+(/[a-z0-9-]+)*$"
+        },
+        "refreshInterval": {
+          "type": "string",
+          "pattern": "^[0-9]+(s|m|h)$"
         }
       }
     }

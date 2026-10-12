@@ -125,6 +125,17 @@ type Certificate struct {
 	Ready    bool
 }
 
+// ExternalSecret — stan synchronizacji ExternalSecret (External Secrets
+// Operator).
+type ExternalSecret struct {
+	Ready bool
+	// Reason i Message — z warunku Ready (SecretSynced, SecretSyncedError
+	// i powód od dostawcy).
+	Reason, Message string
+	// RefreshTime — ostatnia udana synchronizacja.
+	RefreshTime time.Time
+}
+
 // LocalCluster — klaster k3d do utworzenia.
 type LocalCluster struct {
 	Name string

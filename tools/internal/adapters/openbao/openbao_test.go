@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -128,5 +129,36 @@ func TestTypesAndLists(t *testing.T) {
 	}
 	if out := fmt.Sprintf("%+v", init); strings.Contains(out, "s.root") || strings.Contains(out, "a2V5") {
 		t.Errorf("wynik inicjalizacji wypisuje sekrety: %s", out)
+	}
+}
+
+// TestKV: zapis w KV v2 idzie pod data/ z wartościami w treści żądania,
+// a wersja z metadata/ — 404 to brak sekretu, nie błąd.
+func TestKV(t *testing.T) {
+	var body string
+	s, ca := server(t, func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/docfind/data/platform/cloudflare":
+			raw, _ := io.ReadAll(r.Body)
+			body = string(raw)
+			fmt.Fprint(w, `{"data":{"version":3}}`)
+		case r.URL.Path == "/v1/docfind/metadata/platform/cloudflare":
+			fmt.Fprint(w, `{"data":{"current_version":3}}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			fmt.Fprint(w, `{"errors":[]}`)
+		}
+	})
+	c := client(t, s, ca)
+	ctx := context.Background()
+	v, err := c.KVPut(ctx, "docfind", "platform/cloudflare", map[string]sensitive.Value{"api-token": sensitive.New("cf-1")})
+	if err != nil || v != 3 || body != `{"data":{"api-token":"cf-1"}}` {
+		t.Errorf("zapis: wersja %d, treść %s, %v", v, body, err)
+	}
+	if v, ok, err := c.KVVersion(ctx, "docfind", "platform/cloudflare"); err != nil || !ok || v != 3 {
+		t.Errorf("wersja: %d, %v, %v", v, ok, err)
+	}
+	if _, ok, err := c.KVVersion(ctx, "docfind", "platform/brak"); err != nil || ok {
+		t.Errorf("brak sekretu: %v, %v", ok, err)
 	}
 }

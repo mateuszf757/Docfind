@@ -58,6 +58,8 @@ type Server interface {
 	Roles(ctx context.Context, mount string) ([]string, error)
 	DeleteRole(ctx context.Context, mount, role string) error
 	RaftServers(ctx context.Context) ([]store.RaftServer, error)
+	KVPut(ctx context.Context, mount, path string, data map[string]sensitive.Value) (int, error)
+	KVVersion(ctx context.Context, mount, path string) (int, bool, error)
 }
 
 // Dial łączy się z serwerem w podzie (port-forward, TLS z CA platformy),
@@ -221,7 +223,7 @@ func (s Store) session(ctx context.Context, token sensitive.Value, fresh bool, w
 		return err
 	}
 	if !fresh {
-		if token, err = s.login(ctx, active); err != nil {
+		if token, err = s.login(ctx, active, store.AdminAccount, store.AdminRole); err != nil {
 			return err
 		}
 	}
@@ -238,23 +240,65 @@ func (s Store) session(ctx context.Context, token sensitive.Value, fresh bool, w
 	})
 }
 
-// login wymienia token konta openbao-admin (TokenRequest, 10 minut, dla
-// odbiorcy openbao) na token roli platform-admin.
-func (s Store) login(ctx context.Context, pod string) (sensitive.Value, error) {
-	jwt, err := s.Cluster.ServiceAccountToken(ctx, store.Namespace, store.AdminAccount, store.Audience, adminTokenTTL)
+// login wymienia token konta account z przestrzeni openbao (TokenRequest,
+// 10 minut, dla odbiorcy openbao) na token roli role.
+func (s Store) login(ctx context.Context, pod, account, role string) (sensitive.Value, error) {
+	jwt, err := s.Cluster.ServiceAccountToken(ctx, store.Namespace, account, store.Audience, adminTokenTTL)
 	if err != nil {
 		return sensitive.Value{}, err
 	}
 	var token sensitive.Value
 	err = s.withServer(ctx, pod, sensitive.Value{}, func(srv Server) error {
-		t, err := srv.KubernetesLogin(ctx, store.AuthMount, store.AdminRole, jwt)
+		t, err := srv.KubernetesLogin(ctx, store.AuthMount, role, jwt)
 		if err != nil {
-			return cli.Unmet("logowanie rolą %s nie przeszło (%v) — dostęp awaryjny kluczem odzyskiwania: docs/RUNBOOK.md, OpenBao", store.AdminRole, err)
+			return cli.Unmet("logowanie rolą %s nie przeszło (%v) — dostęp awaryjny kluczem odzyskiwania: docs/RUNBOOK.md, OpenBao", role, err)
 		}
 		token = t
 		return nil
 	})
 	return token, err
+}
+
+// asRole wykonuje work tokenem wąskiej roli (nie administracyjnej) i odwołuje
+// go po pracy — także po błędzie.
+func (s Store) asRole(ctx context.Context, account, role string, work func(Server) error) error {
+	active, err := s.activePod(ctx)
+	if err != nil {
+		return err
+	}
+	token, err := s.login(ctx, active, account, role)
+	if err != nil {
+		return err
+	}
+	return s.withServer(ctx, active, token, func(srv Server) (err error) {
+		defer func() {
+			if revokeErr := srv.RevokeSelf(context.WithoutCancel(ctx)); revokeErr != nil {
+				err = errors.Join(err, fmt.Errorf("odwołanie tokenu OpenBao: %w", revokeErr))
+			}
+		}()
+		return work(srv)
+	})
+}
+
+// PutSecret zapisuje nową wersję sekretu path (KV v2) rolą role konta
+// account i zwraca jej numer.
+func (s Store) PutSecret(ctx context.Context, account, role, path string, data map[string]sensitive.Value) (int, error) {
+	var version int
+	err := s.asRole(ctx, account, role, func(srv Server) (err error) {
+		version, err = srv.KVPut(ctx, store.KVMount, path, data)
+		return err
+	})
+	return version, err
+}
+
+// SecretVersion zwraca bieżącą wersję sekretu path (z metadanych, bez
+// wartości) rolą role konta account.
+func (s Store) SecretVersion(ctx context.Context, account, role, path string) (version int, exists bool, err error) {
+	err = s.asRole(ctx, account, role, func(srv Server) (err error) {
+		version, exists, err = srv.KVVersion(ctx, store.KVMount, path)
+		return err
+	})
+	return version, exists, err
 }
 
 // roll wymienia pody na starszej rewizji szablonu (OnDelete): najpierw

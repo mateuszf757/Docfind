@@ -1,0 +1,136 @@
+# External Secrets Operator (decyzja 43): sekrety z OpenBao jako Secrety
+# Kubernetesa. W gicie leży ExternalSecret — wskaźnik, nigdy wartość
+# (decyzja 5). Wartości do charta przypiętego w ci/pins.env.
+#
+# Tylko SecretStore i ExternalSecret w przestrzeniach nazw: bez typów na
+# cały klaster. ClusterSecretStore pozwoliłby każdej przestrzeni nazw czytać
+# tym samym kontem OpenBao, a PushSecret — zapisywać z klastra do OpenBao.
+# Ich CRD nie są instalowane, więc takiego obiektu nie da się nawet utworzyć.
+
+installCRDs: true
+crds:
+  createClusterExternalSecret: false
+  createClusterSecretStore: false
+  createClusterGenerator: false
+  createClusterPushSecret: false
+  createPushSecret: false
+
+processClusterExternalSecret: false
+processClusterStore: false
+processClusterGenerator: false
+processClusterPushSecret: false
+processPushSecret: false
+
+# Tag i digest indeksu (decyzja 20). Podpis cosign (tag .sig) sprawdzony
+# przy przypięciu: certyfikat z łańcuchem do korzenia Fulcio
+# (sigstore/root-signing) w chwili podpisu, tożsamość workflowu
+# external-secrets release.yml@refs/heads/main, podpis nad ładunkiem
+# z tym digestem. Bez sprawdzenia dowodu włączenia w Rekor.
+image:
+  tag: "v2.12.0@sha256:7a3c4f7e038fa0f86a3172da19b9388f3f4d846e87e9994ee3474c5b72a9330d"
+
+# Jedna replika z wyborem lidera: przy aktualizacji stara i nowa nie
+# synchronizują naraz. Przerwa w synchronizacji przy drainie nie zatrzymuje
+# aplikacji — Secrety zostają w klastrze, czeka tylko odświeżenie.
+replicaCount: 1
+leaderElect: true
+
+# Decyzja 16: requesty i limit pamięci, bez limitu CPU. Zmierzone na dev
+# (kubectl top, jeden ExternalSecret): kontroler 31 MiB, webhook 26 MiB,
+# kontroler certyfikatów 40 MiB.
+resources:
+  requests:
+    cpu: 10m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+# NetworkPolicy charta deklaruje Ingress i Egress: bez reguł egress blokuje
+# każdy ruch wychodzący, także do API servera i DNS (tak wyszło przy pierwszym
+# wdrożeniu — kontroler nie wstał). Ruch przychodzący: domyślne reguły charta
+# (metryki, zdrowie). Wychodzący: DNS do CoreDNS, API server i OpenBao.
+# API server tylko po porcie: adres węzła serwera (endpoint usługi
+# kubernetes, :6443) zależy od klastra.
+networkPolicy:
+  enabled: true
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    - ports:
+        - {protocol: TCP, port: 6443}
+        - {protocol: TCP, port: 443}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openbao
+      ports:
+        - {protocol: TCP, port: 8200}
+
+webhook:
+  image:
+    tag: "v2.12.0@sha256:7a3c4f7e038fa0f86a3172da19b9388f3f4d846e87e9994ee3474c5b72a9330d"
+  # Webhook waliduje każdy zapis ExternalSecret i SecretStore: dwie repliki
+  # i PDB, żeby drain węzła nie odrzucał zapisów.
+  replicaCount: 2
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+  # Webhook: DNS i API server, bez OpenBao.
+  networkPolicy:
+    enabled: true
+    egress:
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: kube-system
+            podSelector:
+              matchLabels:
+                k8s-app: kube-dns
+        ports:
+          - {protocol: UDP, port: 53}
+          - {protocol: TCP, port: 53}
+      - ports:
+          - {protocol: TCP, port: 6443}
+          - {protocol: TCP, port: 443}
+
+certController:
+  image:
+    tag: "v2.12.0@sha256:7a3c4f7e038fa0f86a3172da19b9388f3f4d846e87e9994ee3474c5b72a9330d"
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 10m
+      memory: 48Mi
+    limits:
+      memory: 128Mi
+  # Kontroler certyfikatu webhooka: DNS i API server.
+  networkPolicy:
+    enabled: true
+    egress:
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: kube-system
+            podSelector:
+              matchLabels:
+                k8s-app: kube-dns
+        ports:
+          - {protocol: UDP, port: 53}
+          - {protocol: TCP, port: 53}
+      - ports:
+          - {protocol: TCP, port: 6443}
+          - {protocol: TCP, port: 443}

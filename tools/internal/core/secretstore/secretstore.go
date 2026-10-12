@@ -38,6 +38,8 @@ const (
 	AdminRole    = "platform-admin"
 	Audience     = "openbao"
 	AuthMount    = "kubernetes"
+	// KVMount — silnik KV v2 z sekretami DOCFIND.
+	KVMount = "docfind"
 	// ActiveLabel — etykieta aktywnego poda (service_registration kubernetes),
 	// RevisionLabel — rewizja szablonu StatefulSetu na podzie.
 	ActiveLabel   = "openbao-active"

@@ -178,11 +178,18 @@ DOCFIND_ACME_ZONE=<strefa> ./bin/mise run dns-token   # dev
 MISE_ENV=staging ./bin/mise run dns-token             # staging — strefa z definicji
 ```
 
-Każdy klaster ma własny Secret, więc token trzeba zapisać w każdym
+Każdy klaster ma własny OpenBao, więc token trzeba zapisać w każdym
 środowisku z Let's Encrypt. `dft` czyta go bez echa (albo ze standardowego
 wejścia, np. z menedżera haseł), sprawdza w API Cloudflare — także czy
-widzi strefę — i dopiero wtedy zapisuje Secret. Token nie trafia do gita,
-historii powłoki ani do argumentów procesów.
+widzi strefę — i dopiero wtedy zapisuje go w OpenBao rolą, która może go
+zapisać, ale nie odczytać. Secret dla wydawców robi z niego External Secrets
+Operator; `dns-token` czeka, aż Secret dostanie nową wersję (decyzja 43).
+Token nie trafia do gita, historii powłoki ani do argumentów procesów.
+
+Na nowym klastrze `cluster up` kończy się warunkiem niespełnionym z poleceniem
+`dns-token` — token sprawdzany jest po instalacji OpenBao, bo tam ma trafić.
+Po `dns-token` wystarczy ponowne `cluster up`. Secret zapisany przez
+`dns-token` sprzed Etapu 4 `cluster up` przenosi do OpenBao sam.
 
 **Ustawienia klastra** — host, adres e-mail konta ACME, strefa i wydawca —
 w `mise.local.toml` (poza gitem):

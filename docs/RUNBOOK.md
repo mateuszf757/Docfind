@@ -93,3 +93,49 @@ Secret (`openbao-seal-2`), w konfiguracji `current_key_id`/`current_key` na
 nowy, a dotychczasowy jako `previous_key_id`/`previous_key`; `cluster up`
 wymieni pody (nowa rewizja). Stary Secret usuń dopiero po wymianie
 wszystkich podów.
+
+## External Secrets Operator — sekrety z OpenBao w klastrze
+
+ESO w przestrzeni nazw `external-secrets`; w każdej przestrzeni, która
+czyta sekrety, własny SecretStore `openbao` z rolą tylko do swoich ścieżek
+(decyzja 43).
+
+### Stan
+
+```bash
+./bin/mise exec -- kubectl get secretstore,externalsecret -A
+./bin/mise exec -- kubectl -n cert-manager describe externalsecret cloudflare-api-token
+```
+
+Zdrowy stan: SecretStore `Ready=True` (`Valid`), ExternalSecret `Ready=True`
+(`SecretSynced`), Secret z `ownerReference` na swój ExternalSecret.
+
+### ExternalSecret się nie synchronizuje
+
+Najpierw powód z warunku `Ready` ExternalSecret i SecretStore:
+
+- bez żadnego stanu — kontroler nie dociera do obiektu:
+  `kubectl -n external-secrets logs deploy/external-secrets`; `connection
+  refused` na adresie API servera to NetworkPolicy ESO (reguły egress
+  w `deploy/platform/external-secrets/values.yaml`);
+- `permission denied` z OpenBao — rola nie ma ścieżki albo konto nie to:
+  polityka w `deploy/platform/openbao/policies/`, rola w `config.yaml`;
+  audyt OpenBao (`kubectl -n openbao logs <aktywny pod>`) pokaże, kto i co
+  próbował;
+- `secret not found` — w OpenBao nie ma sekretu (token DNS: `dns-token`).
+
+Wymuszenie synchronizacji po poprawce:
+`kubectl -n <ns> annotate externalsecret <nazwa> force-sync=$(date +%s) --overwrite`.
+
+### OpenBao niedostępny albo zapieczętowany
+
+Secrety od ESO zostają w klastrze, więc wszystko, co je czyta, działa dalej;
+nie dochodzą tylko nowe wartości. ESO zgłasza błąd synchronizacji i ponawia.
+Naprawa — sekcja OpenBao wyżej; po niej synchronizacja wraca sama.
+
+### Zmiana tokenu Cloudflare
+
+Nowy token w Cloudflare, potem `./bin/mise run dns-token` (każde środowisko
+z Let's Encrypt) — zapisuje nową wersję w OpenBao i czeka na Secret.
+Poprzednia wersja zostaje w KV v2 do wglądu; stary token unieważnij
+w Cloudflare dopiero po udanym `cluster:tls`.

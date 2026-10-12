@@ -289,6 +289,42 @@ func (c *Client) list(ctx context.Context, path string) ([]string, error) {
 	return r.Data.Keys, err
 }
 
+// KVPut zapisuje nową wersję sekretu w silniku KV v2 i zwraca jej numer.
+// Wartości odsłaniane dopiero przy kodowaniu żądania.
+func (c *Client) KVPut(ctx context.Context, mount, path string, data map[string]sensitive.Value) (int, error) {
+	plain := make(map[string]string, len(data))
+	for k, v := range data {
+		plain[k] = v.Reveal()
+	}
+	var r struct {
+		Data struct {
+			Version int `json:"version"`
+		} `json:"data"`
+	}
+	if err := c.do(ctx, http.MethodPost, mount+"/data/"+path, map[string]any{"data": plain}, &r); err != nil {
+		return 0, err
+	}
+	return r.Data.Version, nil
+}
+
+// KVVersion zwraca bieżącą wersję sekretu z metadanych KV v2 — bez
+// wartości; exists == false, gdy sekretu nie ma.
+func (c *Client) KVVersion(ctx context.Context, mount, path string) (version int, exists bool, err error) {
+	var r struct {
+		Data struct {
+			CurrentVersion int `json:"current_version"`
+		} `json:"data"`
+	}
+	err = c.do(ctx, http.MethodGet, mount+"/metadata/"+path, nil, &r)
+	if Status(err) == http.StatusNotFound {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return r.Data.CurrentVersion, r.Data.CurrentVersion > 0, nil
+}
+
 // RaftServers — członkowie klastra Raft.
 func (c *Client) RaftServers(ctx context.Context) ([]secretstore.RaftServer, error) {
 	var r struct {

@@ -1476,6 +1476,14 @@ z `ci/` i uruchamia gitleaks z `--ignore-gitleaks-allow` — ta sama przynęta
 daje wynik negatywny. Wyjątek to odcisk (commit, plik, reguła, linia)
 w `ci/gitleaks-ignore`, widoczny w recenzji jak wyjątek podatności.
 
+Jeden wzorzec jest wyjęty w konfiguracji, a nie odciskiem: publiczne sumy
+SHA-256 w `ci/pins.env`. Reguła `generic-api-key` wzięła
+`DF_EXTERNAL_SECRETS_CHART_SHA256` za klucz API („SECRETS" w nazwie, 64
+znaki hex), a odcisk zmieniałby się przy każdej aktualizacji charta.
+Wyjątek wymaga obu warunków — tego pliku i dopasowania dokładnie
+`DF_…_SHA256=<64 hex>`; przynęta z tokenem GitHuba w tym samym pliku, nawet
+pod kluczem `…_SHA256`, nadal jest zgłaszana.
+
 Znaleziony sekret ma kod wyjścia 7, a nie domyślne 1, które gitleaks zwraca
 też przy awarii (zły config, brak katalogu) — wynik negatywny nie może
 wyglądać jak awaria. Raport powstaje z `--redact`: na wyjściu i w pliku jest
@@ -1589,6 +1597,69 @@ dostawcę, reszta zostaje. Gdy OpenBao dostanie self-init bezpieczny przy
 Raft (inicjalizacja tylko bez skonfigurowanego `retry_join` albo tylko na
 wskazanym węźle) — wtedy token root i klucz odzyskiwania przestają istnieć
 poza serwerem.
+
+## 43. External Secrets Operator: magazyn na przestrzeń nazw, rola na sekret
+
+> Dopełnia decyzję 5 i 42. Pierwszy sekret przez ESO: token API Cloudflare
+> dla wydawców Let's Encrypt.
+
+**Wybieram ESO 2.12 z SecretStore w każdej przestrzeni nazw, bez typów na
+cały klaster.** CRD ClusterSecretStore, ClusterExternalSecret i PushSecret
+nie są instalowane, a ich kontrolery są wyłączone. ClusterSecretStore
+pozwoliłby ExternalSecretowi z dowolnej przestrzeni nazw czytać tym samym
+kontem OpenBao — granica między przestrzeniami nazw zależałaby wtedy od
+warunków w jednym obiekcie, a nie od RBAC. PushSecret zapisywałby z klastra
+do OpenBao, a tu kierunek jest jeden: OpenBao → klaster. Obraz po digeście;
+podpis cosign zweryfikowałem łańcuchem certyfikatu do korzenia Fulcio
+z repozytorium `sigstore/root-signing` w chwili podpisu i podpisem nad
+ładunkiem z tym digestem (workflow `release.yml` z `main`) — bez dowodu
+włączenia w Rekor, bo w projekcie nie ma cosign.
+
+**Jedna rola na jeden sekret i jeden kierunek.** ESO w przestrzeni
+cert-managera loguje się kontem `openbao-secrets` (token TokenRequest dla
+odbiorcy `openbao`) do roli `cert-manager-dns`, która czyta tylko
+`docfind/platform/cloudflare`. `dft dns-token` zapisuje token rolą
+`dns-token-writer`: zapis i metadane (numer wersji), bez odczytu wartości.
+Audyt OpenBao po migracji na dev pokazuje dokładnie to: jeden zapis, dwa
+odczyty metadanych, odczyt wartości tylko przez `cert-manager-dns`, każdy
+token ESO odwołany po synchronizacji.
+
+**Kolejność na nowym klastrze.** Token sprawdzany był przed chartem
+platformy, a OpenBao — który teraz go trzyma — instaluje się po nim (jego
+certyfikat wystawia CA z tego charta). Sprawdzenie przeszło za OpenBao:
+`cluster up` kończy się wtedy warunkiem niespełnionym z poleceniem
+`dns-token`, które ma już gdzie zapisać token. ESO instaluje się przed
+chartem platformy, bo chart tworzy SecretStore i ExternalSecret.
+
+**Migracja bez ręcznego kroku.** Gdy OpenBao nie ma tokenu, a Secret
+zapisany przez dawne `dns-token` jest, `cluster up` przenosi wartość
+z Secreta do OpenBao (w pamięci, jako wartość poufna), a ESO przejmuje
+Secret — bez `ownerReference` traktuje go jako osierocony i dopisuje
+własność. Ta sama droga odtworzy token w OpenBao, gdyby jego dane
+przepadły, a Secret został.
+
+**Szczegóły z pierwszego wdrożenia:**
+- NetworkPolicy charta ESO deklaruje Egress bez reguł, więc odcina
+  kontroler od API servera i DNS (`connection refused` na 10.43.0.1); reguły
+  egress są wpisane wprost: DNS do CoreDNS, API server po porcie (adres
+  węzła zależy od klastra), OpenBao tylko z kontrolera;
+- CRD SecretStore ma pole o nazwie `properties`, a przekształcenie schematu
+  dla kubeconform (decyzja 28) brało mapę pól za schemat: „pole" ze
+  schematem `false` kubeconform zgłaszał jako brak schematu. Przekształcenie
+  zna teraz strukturę schematu, a literówka w polu SecretStore nadal jest
+  odrzucana.
+
+**Co tracę:** trzy wdrożenia więcej na klaster (kontroler, dwie repliki
+webhooka, kontroler certyfikatów). Sekret istnieje dwa razy: w OpenBao
+i jako Secret — ESO nie usuwa tego drugiego, więc administrator klastra
+i tak go czyta (decyzja 42). Zmiana tokenu dociera do wydawców po
+synchronizacji: `dns-token` wymusza ją od razu, zmiana wprost w OpenBao —
+najpóźniej po godzinie.
+
+**Kiedy zmieniam zdanie:** gdy w klastrze pojawi się sterownik CSI dla
+sekretów z OpenBao — sekret nie musiałby istnieć jako obiekt Kubernetesa,
+tylko jako plik w podzie. Dla cert-managera to nie przejdzie (czyta
+Secret), dla aplikacji — tak.
 
 ## Czego bym dziś nie powtórzył
 

@@ -22,6 +22,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
 	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/sensitive"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/deploy"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/dnstoken"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/drain"
@@ -119,6 +120,9 @@ func (w *workspace) deployer(def environment.Definition) (deploy.Deployer, error
 		},
 		Builder: w.builder(), Admission: w.admission(), Versions: w.git(),
 		SecretStores: w.secretStores(def),
+		DNSTokens: func(t cluster.Target) (deploy.DNSToken, error) {
+			return w.dnsTokens(def, t)
+		},
 	}, nil
 }
 
@@ -350,15 +354,25 @@ func runDNSToken(ctx context.Context, w *workspace, args []string) error {
 	if err := dnstoken.Verify(ctx, cloudflare.API{}, token, def.Gateway.ACMEZone); err != nil {
 		return err
 	}
-	c, err := w.connect(def)
+	sync, err := w.dnsTokens(def, def.Target(w.root))
 	if err != nil {
 		return err
 	}
-	if err := dnstoken.Store(ctx, c, token); err != nil {
-		return err
+	return sync.Store(ctx, sensitive.New(token))
+}
+
+// dnsTokens składa token Cloudflare w OpenBao i jego Secret od ESO
+// (stages/dnstoken) na klastrze t.
+func (w *workspace) dnsTokens(def environment.Definition, t cluster.Target) (dnstoken.Sync, error) {
+	c, err := kube.Connect(t, w.runner)
+	if err != nil {
+		return dnstoken.Sync{}, err
 	}
-	cli.Step("Secret %s/%s zapisany", dnstoken.SecretNamespace, dnstoken.SecretName)
-	return nil
+	s, err := w.secretStore(def, t)
+	if err != nil {
+		return dnstoken.Sync{}, err
+	}
+	return dnstoken.Sync{Vault: s, Cluster: c}, nil
 }
 
 // readSecret czyta sekret z terminala bez echa albo z potoku (menedżer

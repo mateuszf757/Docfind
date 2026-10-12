@@ -29,7 +29,8 @@ type platformChart struct {
 // wszystkim (bez niego żaden pod nie rozwiąże nazwy), Envoy Gateway przed
 // cert-managerem (jego chart instaluje CRD Gateway API, a cert-manager
 // z obsługą Gateway API bez nich nie czeka, tylko wpada w CrashLoopBackOff),
-// potem chart platformy, który tworzy zasoby obu, i na końcu OpenBao — jego
+// External Secrets Operator (jego CRD są w charcie platformy), potem chart
+// platformy, który tworzy zasoby wszystkich, i na końcu OpenBao — jego
 // certyfikat wystawia wewnętrzne CA z charta platformy.
 func (d Deployer) platform(ctx context.Context, c Cluster) error {
 	for _, pc := range []platformChart{
@@ -38,6 +39,9 @@ func (d Deployer) platform(ctx context.Context, c Cluster) error {
 		// startupapicheck w charcie sprawia, że --wait kończy się dopiero
 		// wtedy, gdy webhook cert-managera naprawdę przyjmuje zapisy.
 		{pins.CertManager, "cert-manager", "cert-manager", true, "deploy/platform/cert-manager/values.yaml", 5 * time.Minute},
+		// Przed chartem platformy, który tworzy SecretStore i ExternalSecret —
+		// bez CRD ESO Helm odrzuciłby cały chart. --wait czeka na webhook.
+		{pins.ExternalSecrets, "External Secrets Operator", "external-secrets", true, "deploy/platform/external-secrets/values.yaml", 5 * time.Minute},
 	} {
 		chart, err := d.Pins.Chart(pc.pin)
 		if err != nil {
@@ -57,18 +61,6 @@ func (d Deployer) platform(ctx context.Context, c Cluster) error {
 	}
 
 	gw := d.Env.Gateway
-	// Let's Encrypt wymaga tokenu Cloudflare w klastrze. Bez niego wydawca by
-	// powstał, a wyzwanie DNS-01 wisiałoby bez końca z błędem tylko w
-	// statusie Challenge.
-	if strings.HasPrefix(gw.Issuer, "letsencrypt") {
-		exists, err := c.SecretExists(ctx, "cert-manager", "cloudflare-api-token")
-		if err != nil {
-			return err
-		}
-		if !exists {
-			return cli.Unmet("wydawca %s wymaga tokenu Cloudflare w klastrze — %s", gw.Issuer, d.Env.Task("dns-token"))
-		}
-	}
 	cli.Step("platforma: Gateway dla %s, wydawca %s", gw.Hostname, gw.Issuer)
 	// Wartości z definicji tą samą funkcją, którą `dft test` renderuje
 	// i sprawdza chart dla każdego środowiska.
@@ -91,7 +83,21 @@ func (d Deployer) platform(ctx context.Context, c Cluster) error {
 		return err
 	}
 	cli.Step("Gateway zaprogramowany")
-	return d.secretStore(ctx)
+	if err := d.secretStore(ctx); err != nil {
+		return err
+	}
+	// Let's Encrypt wymaga tokenu Cloudflare. Bez niego wydawca powstaje,
+	// a wyzwanie DNS-01 wisi bez końca z błędem tylko w statusie Challenge.
+	// Sprawdzane dopiero po OpenBao: token żyje w OpenBao, a na nowym
+	// klastrze `dns-token` ma gdzie go zapisać dopiero teraz.
+	if !strings.HasPrefix(gw.Issuer, "letsencrypt") {
+		return nil
+	}
+	tokens, err := d.DNSTokens(d.target())
+	if err != nil {
+		return err
+	}
+	return tokens.Ensure(ctx, d.Env.Task("dns-token"))
 }
 
 // secretStore instaluje OpenBao (decyzja 42): klucz odpieczętowania
