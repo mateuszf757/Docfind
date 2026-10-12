@@ -1,0 +1,9 @@
+# Konfiguracja gitleaks dla `dft check secrets` (warunek Etapu 4: zero
+# jawnych sekretów w gicie). dft podaje ten plik wprost (--config): plik
+# .gitleaks.toml w korzeniu repozytorium nie ma znaczenia, bo inaczej PR
+# mógłby dopisać konfigurację, która wyłącza skan dla niego samego.
+#
+# Reguły domyślne gitleaks w wersji z mise.lock, bez wyjątków ścieżek —
+# wyjątek dla konkretnego ustalenia to odcisk w ci/gitleaks-ignore.
+[extend]
+useDefault = true

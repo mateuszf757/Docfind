@@ -1,6 +1,7 @@
 // Package reposync doprowadza ustawienia repozytorium na GitHubie do tych
-// zapisanych jako kod (core/reposettings): rulesety, auto-merge, wymóg
-// przypinania akcji pełnym SHA i środowiska GitHuba (`dft repo-settings`,
+// zapisanych jako kod (core/reposettings): rulesety, auto-merge, skanowanie
+// sekretów z push protection, wymóg przypinania akcji pełnym SHA
+// i środowiska GitHuba (`dft repo-settings`,
 // dawniej ci/apply-repo-settings.sh).
 //
 // Reguła gałęzi main jest warunkiem bezpieczeństwa auto-merge łatek od
@@ -23,6 +24,7 @@ import (
 type GitHub interface {
 	Repo(ctx context.Context) (string, error)
 	EnableAutoMerge(ctx context.Context, repo string) error
+	EnableSecretScanning(ctx context.Context, repo string) error
 	ActionsPermissions(ctx context.Context, repo string) (enabled bool, allowed string, err error)
 	RequireSHAPinning(ctx context.Context, repo string, enabled bool, allowed string) error
 	Rulesets(ctx context.Context, repo string) (map[string]int64, error)
@@ -74,6 +76,12 @@ func (s Settings) Apply(ctx context.Context) error {
 	cli.Step("repozytorium: %s", repo)
 
 	if err := s.write("auto-merge włączony", func() error { return s.GitHub.EnableAutoMerge(ctx, repo) }); err != nil {
+		return err
+	}
+	// Pierwsza linia przed sekretem w gicie: GitHub odrzuca push z tokenem
+	// znanego dostawcy, zanim trafi do historii. Druga — gitleaks na całej
+	// historii w zadaniu test (decyzja 41) — nie zależy od tych ustawień.
+	if err := s.write("secret scanning i push protection włączone", func() error { return s.GitHub.EnableSecretScanning(ctx, repo) }); err != nil {
 		return err
 	}
 	// Przypinanie akcji pełnym SHA wymuszane przez GitHuba, a nie tylko przez

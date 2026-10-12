@@ -1,7 +1,7 @@
 // Package lint to adapter linterów repozytorium: skrypty powłoki
 // shellcheckiem, workflowy actionlintem (poprawność) i zizmorem (czy
-// poprawny workflow nie jest groźny). Narzędzia w wersjach z mise.lock —
-// różne wersje zgłaszają różne uwagi.
+// poprawny workflow nie jest groźny), historia gita gitleaksem (sekrety).
+// Narzędzia w wersjach z mise.lock — różne wersje zgłaszają różne uwagi.
 package lint
 
 import (

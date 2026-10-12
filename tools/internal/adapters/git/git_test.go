@@ -438,3 +438,22 @@ func TestExport(t *testing.T) {
 		t.Errorf("dowiązanie symboliczne wypakowane: %v", err)
 	}
 }
+
+// TestShallow: płytki klon (checkout z fetch-depth) rozpoznany — skan
+// historii widziałby w nim tylko jej część.
+func TestShallow(t *testing.T) {
+	r := newTestRepo(t)
+	r.commit("pierwszy")
+	r.commit("drugi")
+	ctx := context.Background()
+	if shallow, err := r.repo().Shallow(ctx); err != nil || shallow {
+		t.Fatalf("pełne repozytorium: płytkie=%v, %v", shallow, err)
+	}
+	clone := filepath.Join(t.TempDir(), "klon")
+	if out, err := exec.Command("git", "clone", "--quiet", "--depth", "1", "file://"+r.dir, clone).CombinedOutput(); err != nil {
+		t.Fatalf("git clone --depth 1: %v\n%s", err, out)
+	}
+	if shallow, err := (Repo{Dir: clone, Runner: proc.Exec{}}).Shallow(ctx); err != nil || !shallow {
+		t.Errorf("płytki klon: płytkie=%v, %v", shallow, err)
+	}
+}

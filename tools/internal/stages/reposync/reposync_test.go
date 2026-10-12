@@ -30,6 +30,9 @@ func (g *github) change(format string, args ...any) error {
 
 func (g *github) Repo(context.Context) (string, error)          { return "o/r", nil }
 func (g *github) EnableAutoMerge(context.Context, string) error { return g.change("auto-merge") }
+func (g *github) EnableSecretScanning(context.Context, string) error {
+	return g.change("secret scanning")
+}
 func (g *github) ActionsPermissions(context.Context, string) (bool, string, error) {
 	return true, "all", nil
 }
@@ -99,7 +102,7 @@ func TestApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"auto-merge", "sha true all",
+		"auto-merge", "secret scanning", "sha true all",
 		"update 7 main.json", "create tags.json",
 		"environment production [4242]",
 		"add production tag v*", "delete production 3",

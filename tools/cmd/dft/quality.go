@@ -28,7 +28,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/stages/vulns"
 )
 
-const checkUsage = "dft check <versions|reproducible-tools|workflows|python|charts> | <runtime|base|reproducible|negatives> [usługa] | <drain|tls|identity|cluster-negatives> | published <obraz@digest> <digest konfiguracji> | attestation <obraz@digest> | go [--vulns-baseline <commit>] [--vulns-report-only] | vulns [źródło obrazu]"
+const checkUsage = "dft check <versions|reproducible-tools|workflows|secrets|python|charts> | <runtime|base|reproducible|negatives> [usługa] | <drain|tls|identity|cluster-negatives> | published <obraz@digest> <digest konfiguracji> | attestation <obraz@digest> | go [--vulns-baseline <commit>] [--vulns-report-only] | vulns [źródło obrazu]"
 
 // checks — bramki `dft check <nazwa>`.
 var checks = map[string]func(ctx context.Context, w *workspace, args []string) error{
@@ -36,6 +36,7 @@ var checks = map[string]func(ctx context.Context, w *workspace, args []string) e
 	"go":                 runCheckGo,
 	"reproducible-tools": runCheckReproducibleTools,
 	"workflows":          runCheckWorkflows,
+	"secrets":            runCheckSecrets,
 	"python":             runCheckPython,
 	"charts":             runCheckCharts,
 	"runtime":            runCheckRuntime,
@@ -62,8 +63,8 @@ func runCheck(ctx context.Context, w *workspace, args []string) error {
 	return check(ctx, w, args[1:])
 }
 
-// runTest to zadanie test z CI: wersje, workflowy i skrypty, Python
-// aplikacji, charty, kod narzędzi. Kończy się na pierwszej grupie, która nie
+// runTest to zadanie test z CI: wersje, workflowy i skrypty, sekrety
+// w historii gita, Python aplikacji, charty, kod narzędzi. Kończy się na pierwszej grupie, która nie
 // przeszła — każda zakłada, że poprzednie przeszły (dawniej ci/run-tests.sh).
 // Flagi govulncheck — goVulnFlags.
 func runTest(ctx context.Context, w *workspace, args []string) error {
@@ -73,7 +74,7 @@ func runTest(ctx context.Context, w *workspace, args []string) error {
 	}
 	// Wymagania na starcie i zgłaszane razem: brak narzędzia w połowie biegu
 	// wyglądałby jak błąd w kodzie, a nie w środowisku.
-	if err := requireTools("uv", "shellcheck", "actionlint", "zizmor", "helm", "kubeconform", "kubectl", "go"); err != nil {
+	if err := requireTools("uv", "shellcheck", "actionlint", "zizmor", "gitleaks", "helm", "kubeconform", "kubectl", "go"); err != nil {
 		return err
 	}
 	for _, step := range []struct {
@@ -82,6 +83,7 @@ func runTest(ctx context.Context, w *workspace, args []string) error {
 	}{
 		{"spójność wersji", func() error { return checkVersions(ctx, w) }},
 		{"workflowy i skrypty", func() error { return w.workflows().Check(ctx) }},
+		{"sekrety w historii gita", func() error { return checkSecrets(ctx, w) }},
 		{"Python aplikacji", func() error { return checkPython(ctx, w) }},
 		{"charty", func() error { return checkCharts(ctx, w) }},
 		{"kod Go", func() error { return checkGo(ctx, w, mode) }},
@@ -97,6 +99,27 @@ func runTest(ctx context.Context, w *workspace, args []string) error {
 
 func (w *workspace) workflows() lint.Workflows {
 	return lint.Workflows{Runner: w.runner, Root: w.root, Out: os.Stdout, Err: os.Stderr}
+}
+
+// checkSecrets — gitleaks na całej historii (warunek Etapu 4). W raporcie
+// i na wyjściu nie ma wartości sekretów: miejsce, reguła i odcisk do
+// ewentualnego wyjątku.
+func checkSecrets(ctx context.Context, w *workspace) error {
+	shallow, err := w.git().Shallow(ctx)
+	if err != nil {
+		return err
+	}
+	if shallow {
+		return errors.New("płytki klon — skan objąłby tylko część historii: `git fetch --unshallow` (w CI actions/checkout z fetch-depth: 0)")
+	}
+	leaks, err := lint.Secrets{
+		Runner: w.runner, Root: w.root, Report: filepath.Join(w.reportDir(), "gitleaks.json"),
+		Out: os.Stdout, Err: os.Stderr,
+	}.Check(ctx)
+	for _, l := range leaks {
+		fmt.Fprintf(cli.Err, "SEKRET: %s w %s:%d (commit %.12s) — odcisk: %s\n", l.RuleID, l.File, l.StartLine, l.Commit, l.Fingerprint)
+	}
+	return err
 }
 
 func checkVersions(ctx context.Context, w *workspace) error {
@@ -215,6 +238,16 @@ func runCheckWorkflows(ctx context.Context, w *workspace, args []string) error {
 		return err
 	}
 	return w.workflows().Check(ctx)
+}
+
+func runCheckSecrets(ctx context.Context, w *workspace, args []string) error {
+	if err := expectArgs(args, 0, 0, "dft check secrets"); err != nil {
+		return err
+	}
+	if err := requireTools("gitleaks"); err != nil {
+		return err
+	}
+	return checkSecrets(ctx, w)
 }
 
 func runCheckPython(ctx context.Context, w *workspace, args []string) error {

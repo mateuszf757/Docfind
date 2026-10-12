@@ -1,0 +1,11 @@
+# Wyjątki gitleaks: jeden odcisk na linię (commit:plik:reguła:linia,
+# z raportu .cache/reports/gitleaks.json albo z wyjścia `dft check secrets`).
+#
+# Tylko dla wartości, które sekretem nie są (przykład w dokumentacji, dane
+# testowe) — z komentarzem nad wpisem, dlaczego. Prawdziwy sekret, który
+# trafił do gita, unieważnia się u wystawcy: wyjątek go nie odbiera, a każdy
+# klon repozytorium już go ma.
+#
+# Komentarz `gitleaks:allow` w kodzie niczego nie zwalnia (dft uruchamia
+# gitleaks z --ignore-gitleaks-allow) — wyjątek ma być widoczny tutaj,
+# w recenzji, a nie rozproszony po plikach.
