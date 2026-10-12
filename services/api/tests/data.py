@@ -117,3 +117,16 @@ UNSAFE_REQUEST_IDS: Final = (
 """Wartości spoza dozwolonego formatu — nie mogą trafić do odpowiedzi ani do logu.
 Spacja, za długi, znaki spoza zbioru, znaki spoza ASCII.
 """
+
+# Tokeny dostępu do /metrics (docfind_api.tokens). Wartości bez znaczenia
+# poza testem; dwa, bo rotacja to chwila, w której ważne są oba.
+METRICS_TOKEN_SECRET: Final = "metrics-token"
+METRICS_TOKEN_OLD: Final = "stary-token-metryk"
+METRICS_TOKEN_NEW: Final = "nowy-token-metryk"
+# Nagłówki HTTP to latin-1 — token spoza ASCII nie dojdzie nawet do serwera.
+METRICS_TOKEN_WRONG: Final = "zly-token-metryk"
+
+CONFIG_WITH_METRICS_TOKEN: Final[dict[str, Any]] = {
+    "elasticsearch": {"url": "http://elasticsearch:9200", "alias": "docfind"},
+    "metrics": {"token_secret": METRICS_TOKEN_SECRET},
+}

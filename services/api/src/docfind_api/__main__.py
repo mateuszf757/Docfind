@@ -14,6 +14,8 @@ import uvicorn
 
 from docfind_api.config import ConfigError, load_config
 from docfind_api.main import create_app
+from docfind_api.secrets import SecretNotFound
+from docfind_api.tokens import accepted_tokens
 
 
 def main() -> int:
@@ -22,6 +24,14 @@ def main() -> int:
     except ConfigError as exc:
         print(f"BŁĄD KONFIGURACJI\n{exc}", file=sys.stderr)
         return 1
+    # Sekret wskazany w konfiguracji musi być przy starcie — inaczej pod
+    # przeszedłby sondy, a /metrics zwracałby 503 każdemu.
+    if config.metrics.token_secret is not None:
+        try:
+            accepted_tokens(config.metrics.token_secret)
+        except SecretNotFound as exc:
+            print(f"BŁĄD SEKRETÓW\n{exc}", file=sys.stderr)
+            return 1
 
     uvicorn.run(
         create_app(config),

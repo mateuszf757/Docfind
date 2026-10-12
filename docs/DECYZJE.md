@@ -1661,6 +1661,57 @@ sekretów z OpenBao — sekret nie musiałby istnieć jako obiekt Kubernetesa,
 tylko jako plik w podzie. Dla cert-managera to nie przejdzie (czyta
 Secret), dla aplikacji — tak.
 
+## 44. Sekrety aplikacji jako pliki czytane przy użyciu, rotacja w dwóch fazach
+
+> Warunek zakończenia Etapu 4: rotacja sekretu dociera do podów.
+
+**Pierwszy sekret aplikacji to token dostępu do `/metrics`.** Szukając
+sekretu, który aplikacja naprawdę ma, znalazłem błąd: trasa HTTPRoute
+miała `PathPrefix: /`, więc `/metrics` (i `/openapi.json`) były dostępne
+dla każdego, kto dotrze do Gateway — a komentarz w kodzie twierdził, że
+ingress tu nie kieruje. Założenie z Etapu 1 przestało być prawdą
+w Etapie 3 i nikt tego nie zauważył. Teraz trasa ma tylko publiczne API
+(`/search`, `/version`), a `/metrics` w klastrze wymaga tokenu, który
+Prometheus (Etap 8) dostanie z OpenBao tą samą drogą.
+
+**Plik czytany przy każdym użyciu, wolumen bez `subPath`.** Zmienna
+środowiskowa z Secreta to migawka ze startu kontenera, a montowanie przez
+`subPath` nie aktualizuje się nigdy — z jednym i drugim rotacja wymaga
+restartu poda. Chart montuje cały katalog Secreta w `/run/secrets`,
+a `get_secret()` czyta plik przy każdym wywołaniu (tmpfs, kilkadziesiąt
+bajtów). Polityka w `dft test` odrzuca w charcie aplikacji Secret przez
+`subPath`, zmienną z `secretKeyRef` i `envFrom` z Secreta.
+
+**Kilka tokenów naraz, rotacja w dwóch fazach.** Plik ma tokeny po jednym na
+linię, porównywane w stałym czasie. Rotacja bez chwili, w której ważny
+token przestaje działać: najpierw nowy obok starego, potem tylko nowy —
+tak samo, jak robi się ją dla klientów API.
+
+**Bramka mierzy naturalną drogę.** `cluster:rotation` zapisuje token
+w OpenBao rolą, która może zapisać sekrety aplikacji, ale nie odczytać,
+i czeka na każdy pod osobno (port-forward, nie Service) bez wymuszania
+synchronizacji: refreshInterval ExternalSecret (1 min) i podmiana plików
+przez kubelet. Na koniec te same pody, z tym samym UID i liczbą restartów.
+Na dev: faza 1 — 42 i 56 s, faza 2 — 68 i 72 s, próg 240 s. Gdy `/metrics`
+jest otwarte, bramka zatrzymuje się na punkcie wyjścia — inaczej każdy pod
+„przyjąłby" nowy token od razu.
+
+Brakujący token wdrożenie generuje (32 losowe bajty), istniejącego nie
+zmienia: zmiana to rotacja, a nie skutek uboczny `cluster up`. Klaster
+klienta nie ma naszej platformy — chart przyjmuje tam nazwę Secreta
+dostarczonego dowolnym mechanizmem, a ESO jest wyłączony.
+
+**Co tracę:** zmiana sekretu dociera po minucie lub dwóch, a nie od razu —
+dla tokenu, który wygasa po tygodniach, to bez znaczenia; dla klucza, który
+trzeba unieważnić natychmiast po wycieku, potrzebne jest wymuszenie
+synchronizacji (runbook). Odczyt pliku przy każdym żądaniu do `/metrics` to
+koszt rzędu mikrosekund. Klient ES (Etap 6) będzie potrzebował więcej niż
+odczytu pliku: połączenie trzyma hasło z chwili logowania, więc przy 401
+musi utworzyć klienta od nowa.
+
+**Kiedy zmieniam zdanie:** gdy sekretów będzie dużo, a rotacja częsta —
+wtedy obserwowanie katalogu (`..data`) zamiast odczytu przy każdym użyciu.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

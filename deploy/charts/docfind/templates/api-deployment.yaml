@@ -33,6 +33,9 @@ spec:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
+        # Pliki sekretów należą do tej grupy (tryb 0440 niżej) — proces je
+        # czyta, nikt inny w kontenerze nie.
+        fsGroup: 10001
         seccompProfile:
           type: RuntimeDefault
       topologySpreadConstraints:
@@ -95,6 +98,14 @@ spec:
               readOnly: true
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.api.secrets.secretName }}
+            # Cały katalog, bez subPath: kubelet podmienia pliki Secreta przez
+            # dowiązanie ..data, a montowanie przez subPath nie aktualizuje się
+            # nigdy — rotacja nie dotarłaby do poda (decyzja 44).
+            - name: secrets
+              mountPath: /run/secrets
+              readOnly: true
+            {{- end }}
       volumes:
         - name: config
           configMap:
@@ -104,3 +115,9 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: 16Mi
+        {{- if .Values.api.secrets.secretName }}
+        - name: secrets
+          secret:
+            secretName: {{ .Values.api.secrets.secretName }}
+            defaultMode: 0440
+        {{- end }}

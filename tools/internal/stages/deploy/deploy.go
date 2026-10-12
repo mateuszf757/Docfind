@@ -68,6 +68,7 @@ type Cluster interface {
 	identity.Cluster
 	Nodes(ctx context.Context) ([]cluster.Node, error)
 	Certificate(ctx context.Context, namespace, name string) (cluster.Certificate, error)
+	SecretData(ctx context.Context, namespace, name string) (map[string][]byte, error)
 	Gateway(ctx context.Context, namespace, name string) (cluster.Gateway, error)
 	EnsureNamespace(ctx context.Context, name string, labels map[string]string) error
 }
@@ -98,6 +99,9 @@ type Versions interface {
 type SecretStore interface {
 	Prepare(ctx context.Context) error
 	Bootstrap(ctx context.Context) (secrets.Status, error)
+	// EnsureAppSecrets — sekrety aplikacji w OpenBao, wygenerowane, jeśli ich
+	// nie ma (token metryk).
+	EnsureAppSecrets(ctx context.Context) error
 }
 
 // DNSToken — token Cloudflare dla wydawców ACME w OpenBao i jego Secret od

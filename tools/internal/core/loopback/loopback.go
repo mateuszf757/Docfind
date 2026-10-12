@@ -7,6 +7,8 @@ package loopback
 import (
 	"fmt"
 	"time"
+
+	"github.com/mateuszf757/Docfind/tools/internal/kit/sensitive"
 )
 
 // Request — jedno żądanie GET. Każde idzie nowym połączeniem (dla HTTPS —
@@ -20,6 +22,8 @@ type Request struct {
 	// TLS — HTTPS z tym zaufaniem; nil — zwykłe HTTP.
 	TLS     *Trust
 	Timeout time.Duration
+	// Bearer — token w nagłówku Authorization; pusty — bez nagłówka.
+	Bearer sensitive.Value
 }
 
 // URL — adres żądania, do komunikatów i nagłówka Location.

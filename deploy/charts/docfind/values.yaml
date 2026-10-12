@@ -61,6 +61,32 @@ api:
       max_fragments: 8
 
 # Trasa z Gateway platformy do API (Gateway API, decyzja 11).
+  # Sekrety aplikacji jako pliki w /run/secrets, czytane przy każdym użyciu
+  # (decyzja 44): Secret o tej nazwie, montowany bez subPath — nowa wartość
+  # dociera do działającego poda bez restartu. Pusta — bez sekretów.
+  secrets:
+    secretName: ""
+    # External Secrets Operator: SecretStore i ExternalSecret z OpenBao
+    # w przestrzeni wydania (decyzje 42 i 43). U klienta zwykle wyłączone —
+    # Secret o nazwie secretName dostarcza jego mechanizm.
+    externalSecret:
+      enabled: false
+      server: https://openbao-active.openbao.svc:8200
+      mount: docfind
+      authMount: kubernetes
+      role: docfind-api
+      audience: openbao
+      serviceAccount: docfind-secrets
+      # CA serwera OpenBao (PEM w base64); podaje wdrożenie z klastra.
+      caBundle: ""
+      # Do minuty od zapisu w OpenBao do Secreta; dalej kubelet podmienia
+      # pliki w wolumenie (decyzja 44 — zmierzone w bramce rotacji).
+      refreshInterval: 1m
+      data:
+        - secretKey: metrics-token
+          key: app/metrics
+          property: tokens
+
 route:
   enabled: true
   # Musi należeć do nazwy hosta listenera HTTPS Gateway — inaczej trasa się nie
@@ -72,6 +98,14 @@ route:
     sectionName: https
   # Limit czasu całego żądania na proxy. Strumieniowanie odpowiedzi modelu
   # (Etap 7) może wymagać więcej — do przeglądu razem z drainTimeout proxy.
+  # Tylko publiczne ścieżki API. Diagnostyka (/metrics, /healthz, /readyz,
+  # /openapi.json) zostaje w klastrze — do Etapu 4 trasa miała PathPrefix "/"
+  # i /metrics był dostępny dla każdego.
+  paths:
+    - type: PathPrefix
+      value: /search
+    - type: Exact
+      value: /version
   requestTimeoutSeconds: 60
   # Polityki specyficzne dla Envoy Gateway (BackendTrafficPolicy). Klient z inną
   # implementacją Gateway API (Etap 10) ustawia false — chart nie może wymagać

@@ -219,6 +219,10 @@ run = "ci/dft check tls"
 description = "Warunek Etapu 2: drain każdego węzła z repliką bez utraty żądania (DRAIN_NODE — jeden węzeł)"
 run = "ci/dft check drain"
 
+[tasks."cluster:rotation"]
+description = "Warunek Etapu 4: rotacja tokenu metryk przez OpenBao i ESO dociera do każdego poda API bez restartu"
+run = "ci/dft check rotation"
+
 [tasks."cluster:identity"]
 description = "Na każdym podzie obraz z Deploymentu, commit z obrazu (rejestr albo drzewo) i wersja z DOCFIND_VERSION"
 run = "ci/dft check identity"

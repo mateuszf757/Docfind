@@ -139,3 +139,36 @@ Nowy token w Cloudflare, potem `./bin/mise run dns-token` (każde środowisko
 z Let's Encrypt) — zapisuje nową wersję w OpenBao i czeka na Secret.
 Poprzednia wersja zostaje w KV v2 do wglądu; stary token unieważnij
 w Cloudflare dopiero po udanym `cluster:tls`.
+
+## Sekrety aplikacji — token dostępu do /metrics
+
+Tokeny w OpenBao (`docfind/app/metrics`, pole `tokens`, po jednym na
+linię), w podzie jako plik `/run/secrets/metrics-token` czytany przy każdym
+żądaniu (decyzja 44).
+
+### Rotacja
+
+```bash
+./bin/mise run cluster:rotation
+```
+
+To pełna rotacja, nie symulacja: nowy token obok dotychczasowych, potem
+tylko nowy, z pomiarem na każdym podzie i sprawdzeniem, że żaden się nie
+zrestartował. Raport bez wartości tokenów:
+`.cache/reports/rotation-<środowisko>.json`. Zmiana dociera po ok. minucie
+na fazę.
+
+### Pilnie — token wyciekł
+
+Rotacja jak wyżej, a po zapisie w OpenBao wymuszenie synchronizacji zamiast
+czekania na refreshInterval:
+`kubectl -n docfind annotate externalsecret docfind-api-secrets force-sync=$(date +%s) --overwrite`.
+Kubelet podmienia pliki w wolumenie w ciągu okresu synchronizacji poda
+(do minuty); restart podów nie jest potrzebny.
+
+### /metrics zwraca 503
+
+Pod nie może odczytać `/run/secrets/metrics-token` — Secret zniknął albo
+jest pusty. `kubectl -n docfind get externalsecret docfind-api-secrets`
+i sekcja External Secrets Operator wyżej. Metryki są wtedy zamknięte,
+a nie otwarte.

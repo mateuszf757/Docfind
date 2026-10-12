@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
@@ -132,7 +133,7 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 	}
 	var appRenders []string
 	for _, e := range envs {
-		r := cluster.Release{Name: e.App.Release, Chart: app, Namespace: e.App.Namespace, Set: append([]string{"api.image.tag=lint"}, e.AppValues()...)}
+		r := cluster.Release{Name: e.App.Release, Chart: app, Namespace: e.App.Namespace, Set: append([]string{"api.image.tag=lint"}, e.AppValues(sampleCABundle)...)}
 		if err := add("docfind-"+e.Name, false, false, r); err != nil {
 			return err
 		}
@@ -208,7 +209,9 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 		if err != nil {
 			return err
 		}
-		if violations := policy.Check(docs, policy.Options{RequireDigest: r.requireDigest}); len(violations) > 0 {
+		// Nasz chart: sekrety tylko tak, żeby rotacja docierała (decyzja 44).
+		opts := policy.Options{RequireDigest: r.requireDigest, RotatableSecrets: slices.Contains(appRenders, r.name)}
+		if violations := policy.Check(docs, opts); len(violations) > 0 {
 			for _, v := range violations {
 				fmt.Fprintf(cli.Err, "POLITYKA (%s): %s\n", r.name, v)
 			}
@@ -229,6 +232,10 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 }
 
 func (c Checker) path(rel string) string { return filepath.Join(c.Root, rel) }
+
+// sampleCABundle — przykładowy CA OpenBao w renderze (base64 nagłówka PEM):
+// prawdziwy jest z klastra, a render ma przejść tę samą ścieżkę szablonu.
+const sampleCABundle = "LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0t"
 
 // apiContainer zwraca obraz i DOCFIND_VERSION kontenera api z renderu
 // charta aplikacji.

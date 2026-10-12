@@ -20,6 +20,11 @@ type Options struct {
 	// RequireDigest — obrazy przypięte digestem (decyzja 20). Wymagane od
 	// komponentów z zewnątrz; nasz obraz w renderze testowym ma tag „lint".
 	RequireDigest bool
+	// RotatableSecrets — sekrety tylko jako wolumen bez subPath (decyzja 44).
+	// subPath nie aktualizuje się nigdy, a zmienna środowiskowa z Secreta to
+	// migawka ze startu kontenera: rotacja nie dotarłaby do poda. Wymagane
+	// od naszego charta; charty z zewnątrz robią po swojemu.
+	RotatableSecrets bool
 }
 
 var workloadKinds = map[string]bool{"Deployment": true, "StatefulSet": true, "DaemonSet": true, "Job": true, "CronJob": true}
@@ -85,6 +90,44 @@ func violations(m map[string]any, opts Options) []string {
 		// nie sprawdził.
 		if image := manifest.String(c, "image"); opts.RequireDigest && !strings.Contains(image, "@sha256:") {
 			found = append(found, fmt.Sprintf("%s: obraz %s bez digestu — decyzja 20", where, image))
+		}
+		if opts.RotatableSecrets {
+			found = append(found, unrotatable(where, c, secretVolumes(spec))...)
+		}
+	}
+	return found
+}
+
+// secretVolumes — nazwy wolumenów poda z Secreta.
+func secretVolumes(spec map[string]any) map[string]bool {
+	names := map[string]bool{}
+	for _, raw := range manifest.List(spec, "volumes") {
+		if v, ok := raw.(map[string]any); ok && manifest.Map(v, "secret") != nil {
+			names[manifest.String(v, "name")] = true
+		}
+	}
+	return names
+}
+
+// unrotatable — sposoby podania sekretu, do których rotacja nie dociera.
+func unrotatable(where string, c map[string]any, secrets map[string]bool) []string {
+	var found []string
+	for _, raw := range manifest.List(c, "volumeMounts") {
+		m, ok := raw.(map[string]any)
+		if ok && secrets[manifest.String(m, "name")] && manifest.String(m, "subPath") != "" {
+			found = append(found, fmt.Sprintf("%s: Secret %s montowany przez subPath — nie aktualizuje się nigdy (decyzja 44)", where, manifest.String(m, "name")))
+		}
+	}
+	for _, raw := range manifest.List(c, "env") {
+		e, ok := raw.(map[string]any)
+		if ok && manifest.Map(manifest.Map(e, "valueFrom"), "secretKeyRef") != nil {
+			found = append(found, fmt.Sprintf("%s: zmienna %s z Secreta — migawka ze startu kontenera (decyzja 44)", where, manifest.String(e, "name")))
+		}
+	}
+	for _, raw := range manifest.List(c, "envFrom") {
+		e, ok := raw.(map[string]any)
+		if ok && manifest.Map(e, "secretRef") != nil {
+			found = append(found, fmt.Sprintf("%s: envFrom z Secreta — migawka ze startu kontenera (decyzja 44)", where))
 		}
 	}
 	return found

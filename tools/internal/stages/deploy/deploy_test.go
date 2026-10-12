@@ -253,6 +253,9 @@ type fakeCluster struct {
 func (f fakeCluster) Nodes(context.Context) ([]cluster.Node, error) {
 	return []cluster.Node{{Name: "s", Ready: true}, {Name: "a", Ready: true}}, f.call("nodes")
 }
+func (f fakeCluster) SecretData(_ context.Context, ns, name string) (map[string][]byte, error) {
+	return map[string][]byte{"ca.crt": []byte("CA")}, f.call("secret %s/%s", ns, name)
+}
 func (f fakeCluster) Certificate(context.Context, string, string) (cluster.Certificate, error) {
 	return cluster.Certificate{Ready: true}, nil
 }
@@ -285,6 +288,9 @@ func (f fakeAdmission) Admit(_ context.Context, ref string, p admission.Policy) 
 type fakeSecretStore struct{ *recorder }
 
 func (f fakeSecretStore) Prepare(context.Context) error { return f.call("openbao prepare") }
+func (f fakeSecretStore) EnsureAppSecrets(context.Context) error {
+	return f.call("openbao app secrets")
+}
 func (f fakeSecretStore) Bootstrap(context.Context) (secrets.Status, error) {
 	return secrets.Status{}, f.call("openbao bootstrap")
 }
@@ -369,7 +375,12 @@ func TestUpFromRegistry(t *testing.T) {
 	if i, j, k := slices.Index(rec.calls, "openbao prepare"), slices.Index(rec.calls, "install openbao hooksOnly"), slices.Index(rec.calls, "openbao bootstrap"); i < 0 || !(i < j && j < k) || j < slices.IndexFunc(rec.calls, func(c string) bool { return strings.HasPrefix(c, "install platform") }) {
 		t.Errorf("kolejność OpenBao:\n%s", joined)
 	}
-	for _, wantCall := range []string{"install platform gateway.name=", "namespace docfind v1.36", "install docfind route.hostname=", "api.image.tag=cccccccccccc", "api.version=0.3.1-dev.4+ccccccc", "api.image.digest=" + digest, "identity"} {
+	// Sekrety aplikacji przed chartem aplikacji (pody czekają na Secret), CA
+	// OpenBao z klastra w wartościach SecretStore.
+	if i, j := slices.Index(rec.calls, "openbao app secrets"), slices.IndexFunc(rec.calls, func(c string) bool { return strings.HasPrefix(c, "install docfind") }); i < 0 || j < i {
+		t.Errorf("sekrety aplikacji po chartcie albo wcale:\n%s", joined)
+	}
+	for _, wantCall := range []string{"api.secrets.externalSecret.caBundle=Q0E=", "api.config.metrics.token_secret=metrics-token", "install platform gateway.name=", "namespace docfind v1.36", "install docfind route.hostname=", "api.image.tag=cccccccccccc", "api.version=0.3.1-dev.4+ccccccc", "api.image.digest=" + digest, "identity"} {
 		if !strings.Contains(joined, wantCall) {
 			t.Errorf("brak %q w:\n%s", wantCall, joined)
 		}

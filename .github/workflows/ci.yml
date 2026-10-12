@@ -664,6 +664,13 @@ jobs:
       - name: OpenBao po drainach
         run: ./bin/mise run check:openbao
 
+      # Warunek Etapu 4 (decyzja 44): nowy token metryk z OpenBao przez ESO
+      # dociera do każdego poda API bez restartu — najpierw obok starego,
+      # potem sam. Naturalna droga, bez wymuszania synchronizacji: ok. 1 min
+      # na fazę.
+      - name: rotacja sekretu do podów
+        run: ./bin/mise run cluster:rotation
+
       - name: odnowienie certyfikatu pod ruchem
         run: ./bin/mise run cluster:tls
 

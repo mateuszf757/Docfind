@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/loopback"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/sensitive"
 )
 
 func port(t *testing.T, s *httptest.Server) int {
@@ -79,5 +80,23 @@ func TestGetHTTP(t *testing.T) {
 	}
 	if _, err := (Client{}).Certificate(context.Background(), loopback.Request{Port: port(t, srv)}); err == nil {
 		t.Error("certyfikat bez TLS")
+	}
+}
+
+// TestBearer: token idzie w nagłówku Authorization tylko wtedy, gdy jest.
+func TestBearer(t *testing.T) {
+	var got []string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("Authorization"))
+	}))
+	t.Cleanup(s.Close)
+	port := s.Listener.Addr().(*net.TCPAddr).Port
+	for _, token := range []sensitive.Value{sensitive.New("t-1"), {}} {
+		if _, err := (Client{}).Get(context.Background(), loopback.Request{Port: port, Path: "/metrics", Timeout: time.Second, Bearer: token}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(got) != 2 || got[0] != "Bearer t-1" || got[1] != "" {
+		t.Errorf("nagłówki: %q", got)
 	}
 }

@@ -108,6 +108,27 @@
       "title": "LogLevel",
       "type": "string"
     },
+    "MetricsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "token_secret": {
+          "anyOf": [
+            {
+              "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Nazwa sekretu z tokenami dostępu do /metrics (Authorization: Bearer), po jednym na linię — dwa naraz na czas rotacji. Sekret czytany przy każdym żądaniu, więc nowa wartość działa bez restartu. Pusta — /metrics bez uwierzytelnienia (uruchomienie poza klastrem).",
+          "title": "Token Secret"
+        }
+      },
+      "title": "MetricsConfig",
+      "type": "object"
+    },
     "ServiceConfig": {
       "additionalProperties": false,
       "properties": {
@@ -163,6 +184,9 @@
     },
     "llm": {
       "$ref": "#/$defs/LlmConfig"
+    },
+    "metrics": {
+      "$ref": "#/$defs/MetricsConfig"
     }
   },
   "required": [

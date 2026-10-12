@@ -9,7 +9,28 @@ razem z ich kosztami, siedzą w [docs/DECYZJE.md](docs/DECYZJE.md).
 
 ## Stan
 
-Etap 3 z 11 (`v0.3.0`) — wejście przez Gateway API z TLS. Wymuszone odnowienie
+Etap 4 z 11 — sekrety z OpenBao przez External Secrets Operator. Warunek
+zakończenia spełniony na dev: rotacja tokenu metryk dociera do każdego poda
+API bez restartu — nowy token obok starego po 42–56 s, stary odrzucony po
+68–72 s, bez wymuszania synchronizacji. Wydanie `v0.4.0` po akceptacji na
+stagingu.
+
+- OpenBao zamiast Vaulta (MPL zamiast BSL, to samo API): trzy repliki
+  z Raftem, odpieczętowanie kluczem z Secreta, konfiguracja jako kod
+  z usuwaniem dryfu; token root odwołany po pierwszej konfiguracji
+  (decyzja 42)
+- External Secrets Operator bez typów na cały klaster: SecretStore
+  w każdej przestrzeni nazw, rola OpenBao na jeden sekret i jeden kierunek;
+  token Cloudflare przeniesiony do OpenBao sam (decyzja 43)
+- sekrety aplikacji jako pliki czytane przy każdym użyciu, wolumen bez
+  `subPath` — chart odmawia montowania, do którego rotacja nie dotrze
+  (decyzja 44)
+- `/metrics` był wystawiony publicznie przez Gateway (trasa `PathPrefix: /`);
+  teraz trasa ma tylko publiczne API, a `/metrics` wymaga tokenu
+- gitleaks na całej historii gita, z konfiguracją spoza skanowanego drzewa
+  (decyzja 41)
+
+Etap 3 (`v0.3.0`) — wejście przez Gateway API z TLS. Wymuszone odnowienie
 certyfikatu pod ruchem: własne CA 59 żądań, Let's Encrypt staging 126 żądań —
 zero nieudanych, proxy podaje nowy certyfikat bez restartu.
 
@@ -208,12 +229,15 @@ i bez sudo.
 ./bin/mise run check:vulns        # podatności obrazu: naprawialne HIGH/CRITICAL bez wyjątku blokują
 ./bin/mise run check:attestation -- ghcr.io/mateuszf757/docfind-api@sha256:…   # atestacje przed promocją
 ./bin/mise run check:tools        # to samo dla narzędzi Go → identyczna binarka
+./bin/mise run check:secrets      # gitleaks na całej historii gita
 ./bin/mise exec -- ci/dft --help  # polecenia dft (wersja, tożsamość, bramki)
 
 ./bin/mise run cluster:up         # klaster k3d + build + helm upgrade --install
 ./bin/mise run cluster:up -- --image ghcr.io/mateuszf757/docfind-api@sha256:…   # obraz z rejestru po digeście
 ./bin/mise run cluster:drain      # warunek zakończenia Etapu 2
 ./bin/mise run cluster:tls        # warunek zakończenia Etapu 3: odnowienie certyfikatu pod ruchem
+./bin/mise run cluster:rotation   # warunek zakończenia Etapu 4: rotacja sekretu do podów bez restartu
+./bin/mise run check:openbao      # OpenBao: repliki, Raft, restart standby bez człowieka
 ./bin/mise run cluster:identity   # na każdym podzie obraz, commit z obrazu i wersja wdrożenia
 ./bin/mise run test:cluster       # to, co API server ma odrzucić (sonda bez securityContext)
 ./bin/mise run cluster:evidence   # dowody z klastra do .cache/reports (jak artefakt w CI)
@@ -274,7 +298,7 @@ curl -s localhost:8000/metrics
 | 1 ✅ | API w kontenerze, walidacja konfiguracji, `/metrics` | obraz 120 MB < 200 MB; zły config = czytelna odmowa startu; zamykanie 0,37 s ponad narzut Dockera |
 | 2 ✅ | k3d, Deployment, probe'y, 2 repliki, PDB | drain każdego węzła: 1358 żądań, 0 błędów |
 | 3 ✅ | Envoy Gateway (Gateway API), cert-manager: własne CA i Let's Encrypt DNS-01 | odnowienie pod ruchem: 59 i 126 żądań, 0 błędów |
-| 4 | Vault i External Secrets Operator | rotacja sekretu dociera do podów; zero jawnych sekretów w gicie |
+| 4 ✅ | OpenBao i External Secrets Operator | rotacja dociera do podów bez restartu: 42–72 s; gitleaks: 0 sekretów w historii |
 | 5 | ArgoCD, app-of-apps, sync waves | ręczne `kubectl delete deploy` → ArgoCD odtwarza stan |
 | 6 | ECK, Elasticsearch, ingest | reindeks z podmianą aliasu bez przestoju |
 | 7 | LLM: `ollama \| vllm \| stub`, model z PVC | streaming przez HTTPS; przekroczenie kontekstu = czytelny błąd |

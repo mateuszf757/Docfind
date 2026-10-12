@@ -13,6 +13,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"maps"
@@ -543,6 +544,37 @@ func (s Store) verify(ctx context.Context, srv Server) (Status, error) {
 	}
 	cli.Step("OpenBao %s: %d replik odpieczętowanych (pieczęć %s), Raft %d/%d głosujących", st.Version, len(st.Pods), st.SealType, voters, sts.Wanted)
 	return st, nil
+}
+
+// EnsureAppSecrets zakłada sekrety aplikacji, których jeszcze nie ma
+// w OpenBao — dziś token dostępu do /metrics. Istniejącego nie zmienia:
+// zmiana to rotacja (`dft check rotation`), nie skutek uboczny wdrożenia.
+func (s Store) EnsureAppSecrets(ctx context.Context) error {
+	_, exists, err := s.SecretVersion(ctx, store.AppWriterAccount, store.AppWriterRole, store.AppMetricsPath)
+	if err != nil || exists {
+		return err
+	}
+	token, err := NewToken()
+	if err != nil {
+		return err
+	}
+	version, err := s.PutSecret(ctx, store.AppWriterAccount, store.AppWriterRole, store.AppMetricsPath, map[string]sensitive.Value{store.AppMetricsField: token})
+	if err != nil {
+		return err
+	}
+	cli.Step("OpenBao: token metryk wygenerowany (%s, wersja %d)", store.AppMetricsPath, version)
+	return nil
+}
+
+// NewToken — 32 losowe bajty w base64url bez dopełnienia: bez znaków, które
+// trzeba cytować w nagłówku HTTP albo w pliku po jednym tokenie na linię.
+func NewToken() (sensitive.Value, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return sensitive.Value{}, err
+	}
+	defer clear(raw)
+	return sensitive.New(base64.RawURLEncoding.EncodeToString(raw)), nil
 }
 
 // Report — wynik `dft check openbao`.

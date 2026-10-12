@@ -284,7 +284,7 @@ func (k *kluster) DeletePod(_ context.Context, _, name string) error {
 
 // accountRoles — konto w przestrzeni openbao → rola, dla której fałszywy
 // serwer przyjmie jego token.
-var accountRoles = map[string]string{store.AdminAccount: store.AdminRole, "openbao-dns-writer": "dns-token-writer"}
+var accountRoles = map[string]string{store.AdminAccount: store.AdminRole, "openbao-dns-writer": "dns-token-writer", store.AppWriterAccount: store.AppWriterRole}
 
 func (k *kluster) ServiceAccountToken(_ context.Context, ns, name, audience string, ttl time.Duration) (sensitive.Value, error) {
 	role, ok := accountRoles[name]
@@ -544,5 +544,25 @@ func TestPutSecret(t *testing.T) {
 	}
 	if !slices.Equal(w.loggedIn, []string{"dns-token-writer", "dns-token-writer"}) || len(w.revoked) != 2 || len(w.tokens) != 0 {
 		t.Errorf("role %v, odwołane %v, ważne %v", w.loggedIn, w.revoked, w.tokens)
+	}
+}
+
+// TestEnsureAppSecrets: token metryk generowany raz — kolejne wdrożenie go
+// nie zmienia (zmiana to rotacja, nie skutek uboczny wdrożenia).
+func TestEnsureAppSecrets(t *testing.T) {
+	quiet(t)
+	w, k := newWorld(), newKluster()
+	s, _ := newStore(t, w, k)
+	if _, err := s.Bootstrap(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := s.EnsureAppSecrets(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	versions := w.kv[store.KVMount+"/"+store.AppMetricsPath]
+	if len(versions) != 1 || len(versions[0][store.AppMetricsField].Reveal()) != 43 {
+		t.Errorf("wersje tokenu metryk: %d", len(versions))
 	}
 }

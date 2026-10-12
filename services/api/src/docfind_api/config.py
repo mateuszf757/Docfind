@@ -130,10 +130,24 @@ class LlmConfig(StrictModel):
         return self
 
 
+class MetricsConfig(StrictModel):
+    token_secret: str | None = Field(
+        default=None,
+        pattern=r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+        description=(
+            "Nazwa sekretu z tokenami dostępu do /metrics (Authorization: Bearer), po jednym "
+            "na linię — dwa naraz na czas rotacji. Sekret czytany przy każdym żądaniu, więc "
+            "nowa wartość działa bez restartu. Pusta — /metrics bez uwierzytelnienia "
+            "(uruchomienie poza klastrem)."
+        ),
+    )
+
+
 class AppConfig(StrictModel):
     service: ServiceConfig = Field(default_factory=ServiceConfig)
     elasticsearch: ElasticsearchConfig
     llm: LlmConfig = Field(default_factory=LlmConfig)
+    metrics: MetricsConfig = Field(default_factory=MetricsConfig)
 
 
 def config_path() -> Path:

@@ -5,19 +5,24 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
+	"github.com/mateuszf757/Docfind/tools/internal/adapters/httpclient"
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/kube"
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/openbao"
 	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
 	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
+	"github.com/mateuszf757/Docfind/tools/internal/core/loopback"
 	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
 	store "github.com/mateuszf757/Docfind/tools/internal/core/secretstore"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/sensitive"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/deploy"
+	"github.com/mateuszf757/Docfind/tools/internal/stages/rotation"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/secrets"
 )
 
@@ -158,4 +163,62 @@ func runCheckOpenBao(ctx context.Context, w *workspace, args []string) error {
 	}
 	rep, err := s.Check(ctx)
 	return w.withReport("openbao", rep, err)
+}
+
+// runCheckRotation — warunek zakończenia Etapu 4: rotacja tokenu metryk
+// dociera do każdego poda API bez restartu (stages/rotation). Raport
+// w .cache/reports/rotation-<środowisko>.json, bez wartości tokenów.
+func runCheckRotation(ctx context.Context, w *workspace, args []string) error {
+	if err := expectArgs(args, 0, 0, "dft check rotation"); err != nil {
+		return err
+	}
+	def, err := w.environmentOf()
+	if err != nil {
+		return err
+	}
+	if err := def.RequireCluster(); err != nil {
+		return err
+	}
+	if def.Cluster.Provider != environment.ProviderK3d {
+		return cli.Unmet("środowisko %s nie ma platformy z OpenBao i ESO — rotację sprawdza się na klastrach k3d", def.Name)
+	}
+	t := def.Target(w.root)
+	c, err := kube.Connect(t, w.runner)
+	if err != nil {
+		return err
+	}
+	s, err := w.secretStore(def, t)
+	if err != nil {
+		return err
+	}
+	gate := rotation.Gate{
+		Cluster: c, Vault: s, HTTP: podProber{},
+		Namespace: def.App.Namespace,
+		Selector:  fmt.Sprintf("app.kubernetes.io/name=docfind,app.kubernetes.io/instance=%s,app.kubernetes.io/component=api", def.App.Release),
+		Secret:    environment.AppSecret, Key: environment.MetricsTokenSecret,
+		// Port API w podzie (api.config.service.port w charcie).
+		Port: 8000,
+		// refreshInterval ExternalSecret (1 min) + podmiana plików przez
+		// kubelet (okres synchronizacji poda, 1 min) z zapasem.
+		Budget: 4 * time.Minute, Interval: 2 * time.Second,
+		NewToken: secrets.NewToken,
+	}
+	rep, err := gate.Run(ctx)
+	return w.withReport("rotation-"+def.Name, rep, err)
+}
+
+// podProber — kod odpowiedzi poda przez port-forward na 127.0.0.1.
+type podProber struct{}
+
+func (podProber) Status(ctx context.Context, addr, path string, token sensitive.Value) (int, error) {
+	_, portText, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 0, err
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := httpclient.Client{}.Get(ctx, loopback.Request{Port: port, Path: path, Timeout: 3 * time.Second, Bearer: token})
+	return resp.Status, err
 }

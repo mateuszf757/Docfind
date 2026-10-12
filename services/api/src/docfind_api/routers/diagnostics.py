@@ -1,8 +1,9 @@
 """Endpointy diagnostyczne.
 
 Wydzielone od funkcji produktu, bo rządzą się innymi regułami: nie wymagają
-uwierzytelnienia, będą wyłączone z logu dostępowego w ingressie (Etap 3)
-i nie wchodzą do metryk biznesowych (Etap 8).
+uwierzytelnienia (poza /metrics, gdy konfiguracja wskazuje sekret z
+tokenami), będą wyłączone z logu dostępowego w ingressie (Etap 3) i nie
+wchodzą do metryk biznesowych (Etap 8).
 
 Wszystkie są `async def` i nie mogą blokować. Handler `def` Starlette
 wykonuje w puli wątków anyio, wspólnej dla całego procesu i ograniczonej do
@@ -17,8 +18,10 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
+from docfind_api import tokens
+from docfind_api.config import AppConfig
 from docfind_api.metrics import METRICS_PATH, HttpMetrics
 from docfind_api.models import (
     BuildInfo,
@@ -26,6 +29,7 @@ from docfind_api.models import (
     ReadinessCheck,
     ReadinessResponse,
 )
+from docfind_api.secrets import SecretNotFound
 from docfind_api.version import build_info
 
 router = APIRouter(tags=["diagnostyka"])
@@ -72,6 +76,36 @@ async def readyz(response: Response) -> ReadinessResponse:
     return ReadinessResponse(ready=ready, checks=checks)
 
 
+async def require_metrics_token(request: Request) -> None:
+    """Token z nagłówka Authorization musi być w sekrecie z metrics.token_secret.
+
+    Bez tokenu albo ze złym — 401 z wyzwaniem Bearer. Sekret nieczytelny —
+    503: metryki są wtedy niedostępne, a nie otwarte.
+
+    `async def` jak reszta modułu, mimo synchronicznego odczytu pliku: wolumen
+    Secreta to tmpfs, a plik ma kilkadziesiąt bajtów — to odczyt z pamięci,
+    nie czekanie na dysk. Zależność `def` trafiłaby do puli wątków.
+    """
+    config: AppConfig = request.app.state.config
+    secret_name = config.metrics.token_secret
+    if secret_name is None:
+        return
+    presented = tokens.bearer(request.headers.get("authorization"))
+    try:
+        accepted = tokens.accepted_tokens(secret_name)
+    except SecretNotFound as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="tokeny dostępu do metryk niedostępne",
+        ) from exc
+    if presented is None or not tokens.authorized(presented, accepted):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="wymagany token dostępu do metryk",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
 @router.get("/version", response_model=BuildInfo)
 async def version() -> BuildInfo:
     """Tożsamość działającego builda — fundament diagnostyki całego systemu."""
@@ -83,11 +117,16 @@ async def version() -> BuildInfo:
     response_class=Response,
     responses={200: {"content": {"text/plain": {}}}},
 )
-async def metrics(metrics: Annotated[HttpMetrics, Depends(http_metrics)]) -> Response:
+async def metrics(
+    metrics: Annotated[HttpMetrics, Depends(http_metrics)],
+    _: Annotated[None, Depends(require_metrics_token)],
+) -> Response:
     """Metryki dla Prometheusa.
 
-    Wystawione bez uwierzytelnienia, bo w klastrze ruch do tej trasy nie
-    wychodzi poza sieć podów — ingress nie kieruje tu żądań (Etap 3).
+    Trasa nie jest wystawiona przez Gateway (route.paths w charcie), a w
+    klastrze wymaga tokenu, gdy konfiguracja go wskazuje. Do Etapu 4 była
+    wystawiona publicznie — założenie „ingress tu nie kieruje" przestało być
+    prawdą, gdy HTTPRoute dostał PathPrefix "/".
     """
     payload, content_type = metrics.render()
     return Response(content=payload, media_type=content_type)
