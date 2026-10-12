@@ -1455,6 +1455,17 @@ gitleaks widział tu 48 commitów, ze scaleniami — 78. Całość trwa poniżej
 sekundy. W płytkim klonie `dft` odmawia — wynik z części historii
 wyglądałby na pełny.
 
+**Korekta (2026-10-12): historia sprawdzanego commita, nie wszystkie
+refy.** Skan `--all` oceniał cudze gałęzie konfiguracją bieżącego commita:
+gałąź z ESO dodaje publiczną sumę i w tym samym commicie wyjątek dla niej,
+a gałąź pod nią, bez wyjątku, padała na cudzym commicie — lokalnie od razu,
+w CI po wypchnięciu gałęzi wyżej (checkout z `fetch-depth: 0` pobiera
+wszystkie). Wynik PR-a nie może zależeć od innych gałęzi klonu. Skan
+obejmuje teraz całą historię `HEAD` — na PR-ze to scalenie z `main`, więc
+historia `main` też — z tym samym diffem scaleń. Gałęzie, które nie są
+w `HEAD`, sprawdzają ich PR-y, a push z sekretem zatrzymuje wcześniej push
+protection.
+
 **Konfiguracja nie pochodzi ze skanowanego drzewa.** Domyślnie gitleaks
 bierze `.gitleaks.toml` i `.gitleaksignore` z katalogu, który skanuje,
 i honoruje komentarz `gitleaks:allow` w kodzie. Sprawdziłem na
@@ -1474,9 +1485,8 @@ miejsce, reguła i odcisk, nigdy wartość.
 bez podpisu i atestacji — mise.lock trzyma sumy sprawdzone z nim przy
 przypięciu. Reguły domyślne łapią sekrety o znanym kształcie (tokeny
 dostawców, klucze prywatne); hasło bez rozpoznawalnego wzoru przejdzie.
-Lokalnie `--all` obejmuje też stash i gałęzie, których nie ma na zdalnym —
-skan potrafi zgłosić coś, czego nie ma w repozytorium na GitHubie (i dobrze,
-zanim tam trafi).
+Skan nie widzi gałęzi, których nie ma w `HEAD`, ani stasha — sekret na
+porzuconej gałęzi wypchniętej bez PR-a zatrzymuje tylko push protection.
 
 **Dwie linie, nie jedna.** Repozytorium jest publiczne, więc GitHub secret
 scanning i push protection są włączone domyślnie: push z tokenem znanego

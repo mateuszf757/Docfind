@@ -45,9 +45,16 @@ type Secrets struct {
 	Out, Err io.Writer
 }
 
-// Check skanuje całą historię — wszystkie refy i diff każdego scalenia
-// względem pierwszego rodzica, więc także treść dopisaną przy
-// rozwiązywaniu konfliktu, której zwykły `git log -p` nie pokazuje.
+// Check skanuje całą historię sprawdzanego commita (HEAD) — z diffem
+// każdego scalenia względem pierwszego rodzica, więc także treść dopisaną
+// przy rozwiązywaniu konfliktu, której zwykły `git log -p` nie pokazuje.
+//
+// HEAD, a nie wszystkie refy: wynik ma zależeć od tego, co sprawdzamy, a nie
+// od innych gałęzi w klonie. Z --all PR oceniał cudze gałęzie swoją
+// konfiguracją — gałąź, która w sobie dodaje wyjątek, wywracała PR, który go
+// jeszcze nie ma. W CI na PR-ze HEAD to scalenie z main, więc historia main
+// jest w skanie; inne gałęzie sprawdzają ich własne PR-y, a push z sekretem
+// zatrzymuje push protection GitHuba (decyzja 41).
 //
 // Konfiguracja i lista wyjątków tylko z ci/, podane wprost: domyślnie
 // gitleaks bierze .gitleaks.toml i .gitleaksignore ze skanowanego
@@ -67,7 +74,7 @@ func (s Secrets) Check(ctx context.Context) ([]Leak, error) {
 			"--config", filepath.Join(s.Root, GitleaksConfig),
 			"--gitleaks-ignore-path", filepath.Join(s.Root, GitleaksIgnore),
 			"--ignore-gitleaks-allow",
-			"--log-opts=--all --diff-merges=first-parent",
+			"--log-opts=--diff-merges=first-parent HEAD",
 			"--report-format", "json", "--report-path", s.Report,
 			s.Root,
 		},

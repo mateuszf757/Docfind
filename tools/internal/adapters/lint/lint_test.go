@@ -85,10 +85,14 @@ func TestSecrets(t *testing.T) {
 				t.Errorf("ustalenia: %+v", leaks)
 			}
 			joined := strings.Join(args, " ")
-			for _, want := range []string{"--config /repo/ci/gitleaks.toml", "--gitleaks-ignore-path /repo/ci/gitleaks-ignore", "--ignore-gitleaks-allow", "--redact", "--diff-merges=first-parent"} {
+			for _, want := range []string{"--config /repo/ci/gitleaks.toml", "--gitleaks-ignore-path /repo/ci/gitleaks-ignore", "--ignore-gitleaks-allow", "--redact", "--diff-merges=first-parent HEAD"} {
 				if !strings.Contains(joined, want) {
 					t.Errorf("gitleaks bez %q: %s", want, joined)
 				}
+			}
+			// Historia sprawdzanego commita, nie wszystkie refy klonu.
+			if strings.Contains(joined, "--all") {
+				t.Errorf("skan wszystkich refów: %s", joined)
 			}
 		})
 	}
