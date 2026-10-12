@@ -32,6 +32,17 @@ func (c CLI) EnableAutoMerge(ctx context.Context, repo string) error {
 	return err
 }
 
+// EnableSecretScanning włącza skanowanie sekretów i blokadę pushu z sekretem
+// o znanym kształcie (push protection). W publicznym repozytorium oba są
+// domyślne, ale wyłącza je jedno kliknięcie w ustawieniach — stąd kod.
+func (c CLI) EnableSecretScanning(ctx context.Context, repo string) error {
+	_, err := c.gh(ctx, "api", "--method", "PATCH", "repos/"+repo,
+		"-f", "security_and_analysis[secret_scanning][status]=enabled",
+		"-f", "security_and_analysis[secret_scanning_push_protection][status]=enabled",
+		"--silent")
+	return err
+}
+
 // ActionsPermissions zwraca politykę akcji repozytorium.
 func (c CLI) ActionsPermissions(ctx context.Context, repo string) (enabled bool, allowed string, err error) {
 	var p struct {

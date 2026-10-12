@@ -69,6 +69,11 @@ cmctl = "2.6.1"
 # instalacji. Grype odpadł na tym: rejestr aqua opisuje jego podpis
 # w formacie, którego mise nie weryfikuje, więc zostałaby sama suma.
 osv-scanner = "2.6.0"
+# Skaner sekretów (warunek Etapu 4: zero jawnych sekretów w gicie) — na całej
+# historii, nie tylko na diffie: sekret usunięty w kolejnym commicie dalej
+# jest w repozytorium i w każdym jego klonie. Wydanie ma tylko plik sum,
+# bez podpisu i atestacji — sumy w mise.lock sprawdzone z nim przy przypięciu.
+gitleaks = "8.30.1"
 # Toolchain narzędzi i bramek z tools/ (decyzja 23). Ta sama wersja stoi
 # w dyrektywie `go` w tools/go.mod — pilnuje tego `dft check versions`.
 # Aktualizacja: wersja tutaj, `./bin/mise lock`, w tools/
@@ -97,8 +102,12 @@ GOPROXY = "https://proxy.golang.org"
 CGO_ENABLED = "0"
 
 [tasks.test]
-description = "Wersje, workflowy, Python, charty z politykami, kod Go — to samo co zadanie test w CI; --vulns-baseline <commit>, --vulns-report-only (govulncheck, decyzja 37)"
+description = "Wersje, workflowy, sekrety w historii gita, Python, charty z politykami, kod Go — to samo co zadanie test w CI; --vulns-baseline <commit>, --vulns-report-only (govulncheck, decyzja 37)"
 run = "ci/dft test"
+
+[tasks."check:secrets"]
+description = "Sekrety w całej historii gita (gitleaks, konfiguracja i wyjątki tylko z ci/) — część zadania test"
+run = "ci/dft check secrets"
 
 [tasks."check:tools"]
 description = "Narzędzia z tools/ zbudowane z pamięcią podręczną i od zera dają te same bajty"

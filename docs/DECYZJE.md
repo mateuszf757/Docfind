@@ -1443,6 +1443,54 @@ synchronizacji, a nie na maszynę autora. W Etapie 10, gdy chart stanie się
 artefaktem OCI — wersja charta i `api.version` wyjdą razem w jednym
 wydaniu.
 
+## 41. Skan sekretów na całej historii gita, z konfiguracją spoza skanowanego drzewa
+
+**Wybieram gitleaks na całej historii w wymaganym zadaniu `test`.** Warunek
+Etapu 4 — zero jawnych sekretów w gicie — dotyczy repozytorium, a nie
+ostatniego diffu: sekret usunięty w kolejnym commicie dalej jest w każdym
+klonie. Skan obejmuje wszystkie refy i diff każdego scalenia względem
+pierwszego rodzica (`--diff-merges=first-parent`), bo treść dopisana przy
+rozwiązywaniu konfliktu nie pojawia się w zwykłym `git log -p`: domyślnie
+gitleaks widział tu 48 commitów, ze scaleniami — 78. Całość trwa poniżej
+sekundy. W płytkim klonie `dft` odmawia — wynik z części historii
+wyglądałby na pełny.
+
+**Konfiguracja nie pochodzi ze skanowanego drzewa.** Domyślnie gitleaks
+bierze `.gitleaks.toml` i `.gitleaksignore` z katalogu, który skanuje,
+i honoruje komentarz `gitleaks:allow` w kodzie. Sprawdziłem na
+repozytorium-przynęcie z fałszywym tokenem GitHuba: z dopisanym
+`.gitleaks.toml` (allowlista `.*`) i komentarzem `gitleaks:allow` domyślny
+bieg kończy się kodem 0. `dft` podaje konfigurację i listę wyjątków wprost
+z `ci/` i uruchamia gitleaks z `--ignore-gitleaks-allow` — ta sama przynęta
+daje wynik negatywny. Wyjątek to odcisk (commit, plik, reguła, linia)
+w `ci/gitleaks-ignore`, widoczny w recenzji jak wyjątek podatności.
+
+Znaleziony sekret ma kod wyjścia 7, a nie domyślne 1, które gitleaks zwraca
+też przy awarii (zły config, brak katalogu) — wynik negatywny nie może
+wyglądać jak awaria. Raport powstaje z `--redact`: na wyjściu i w pliku jest
+miejsce, reguła i odcisk, nigdy wartość.
+
+**Co tracę:** gitleaks ma tylko plik sum z tego samego serwera co binarka,
+bez podpisu i atestacji — mise.lock trzyma sumy sprawdzone z nim przy
+przypięciu. Reguły domyślne łapią sekrety o znanym kształcie (tokeny
+dostawców, klucze prywatne); hasło bez rozpoznawalnego wzoru przejdzie.
+Lokalnie `--all` obejmuje też stash i gałęzie, których nie ma na zdalnym —
+skan potrafi zgłosić coś, czego nie ma w repozytorium na GitHubie (i dobrze,
+zanim tam trafi).
+
+**Dwie linie, nie jedna.** Repozytorium jest publiczne, więc GitHub secret
+scanning i push protection są włączone domyślnie: push z tokenem znanego
+dostawcy jest odrzucany, zanim trafi do historii. Wyłącza je jednak jedno
+kliknięcie w ustawieniach, więc `dft repo-settings` włącza je jak resztę
+ustawień zapisanych jako kod. gitleaks zostaje drugą linią: nie zależy od
+ustawień repozytorium, biegnie też lokalnie, przed pushem, i obejmuje wzorce
+spoza listy dostawców GitHuba.
+
+**Kiedy zmieniam zdanie:** gdy repozytorium stanie się prywatne bez GitHub
+Advanced Security — push protection zniknie i gitleaks zostanie jedyną
+linią; wtedy także jako hook przed commitem (`gitleaks git --staged`),
+żeby sekret nie trafiał nawet do lokalnej historii.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

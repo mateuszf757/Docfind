@@ -251,6 +251,17 @@ func (r Repo) SourceDateEpoch(ctx context.Context) (int64, error) {
 	return epoch, nil
 }
 
+// Shallow mówi, czy repozytorium jest płytkim klonem (checkout
+// z fetch-depth). Skan historii w płytkim klonie widzi tylko jej część,
+// a wynik wyglądałby na pełny.
+func (r Repo) Shallow(ctx context.Context) (bool, error) {
+	out, err := r.git(ctx, "rev-parse", "--is-shallow-repository")
+	if err != nil {
+		return false, fmt.Errorf("git rev-parse --is-shallow-repository: %w", err)
+	}
+	return out == "true", nil
+}
+
 // ErrDirtyTree — drzewo robocze ma niezacommitowane zmiany.
 var ErrDirtyTree = errors.New("drzewo robocze jest brudne")
 

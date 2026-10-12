@@ -132,7 +132,9 @@ jobs:
           enable-cache: false
 
       # Jedno zadanie mise: spójność wersji, shellcheck, actionlint, zizmor,
-      # charty, polityki, ruff, mypy, pytest, schemat i bramki kodu Go
+      # gitleaks na całej historii (stąd fetch-depth: 0 — w płytkim klonie
+      # dft odmawia, bo skan widziałby jej część), charty, polityki, ruff,
+      # mypy, pytest, schemat i bramki kodu Go
       # (gofmt, vet, staticcheck, testy z -race, govulncheck). Osobny krok
       # w CI, którego nie ma w zadaniu, to krok, który lokalnie nie biegnie.
       #
