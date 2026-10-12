@@ -443,17 +443,31 @@ func (s Store) verify(ctx context.Context, srv Server) (Status, error) {
 	if err != nil {
 		return st, err
 	}
-	if st.Raft, err = srv.RaftServers(ctx); err != nil {
-		return st, err
-	}
+	// Autopilot dołącza nową replikę jako niegłosującą i awansuje ją po
+	// czasie stabilizacji (server_stabilization_time, domyślnie 10 s). Tuż
+	// po inicjalizacji albo po odtworzeniu poda z pustym wolumenem nie
+	// wszystkie głosują — to stan przejściowy, więc czekamy na stan
+	// docelowy, a nie oceniamy jednej chwili (w CI sprawdzenie przyszło
+	// sekundy po inicjalizacji: 1 głosujący z 3).
 	voters, leaders := 0, 0
-	for _, r := range st.Raft {
-		if r.Voter {
-			voters++
+	raftErr := poll.Until(ctx, s.timeout(), 2*time.Second, func(ctx context.Context) (bool, error) {
+		servers, err := srv.RaftServers(ctx)
+		if err != nil {
+			return false, err
 		}
-		if r.Leader {
-			leaders++
+		st.Raft, voters, leaders = servers, 0, 0
+		for _, r := range servers {
+			if r.Voter {
+				voters++
+			}
+			if r.Leader {
+				leaders++
+			}
 		}
+		return voters == int(sts.Wanted) && leaders == 1, nil
+	})
+	if raftErr != nil && !errors.Is(raftErr, poll.ErrTimeout) {
+		return st, raftErr
 	}
 	pods, err := s.Cluster.Pods(ctx, store.Namespace, selector)
 	if err != nil {
@@ -478,7 +492,7 @@ func (s Store) verify(ctx context.Context, srv Server) (Status, error) {
 		}
 	}
 	if voters != int(sts.Wanted) || leaders != 1 {
-		v.Fail("Raft: %d głosujących z %d, liderów %d", voters, sts.Wanted, leaders)
+		v.Fail("Raft: po %v %d głosujących z %d, liderów %d", s.timeout(), voters, sts.Wanted, leaders)
 	}
 	if err := v.Err("OpenBao"); err != nil {
 		return st, err

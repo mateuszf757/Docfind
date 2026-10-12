@@ -37,6 +37,9 @@ type world struct {
 	policies    map[string]string
 	roles       map[string]bool
 	voters      int
+	// promoteAfter i raftReads — awans nowych replik na głosujące po tylu
+	// odczytach konfiguracji Raft (autopilot, czas stabilizacji).
+	promoteAfter, raftReads int
 }
 
 func newWorld() *world {
@@ -149,10 +152,19 @@ func (s *server) DeleteRole(_ context.Context, _, role string) error {
 	delete(s.w.roles, role)
 	return s.authorized()
 }
+
+// RaftServers — trzy repliki; po inicjalizacji głosuje tylko pierwsza,
+// a pozostałe autopilot awansuje dopiero po promoteAfter odczytach (czas
+// stabilizacji). voters — ile głosuje docelowo.
 func (s *server) RaftServers(context.Context) ([]store.RaftServer, error) {
+	s.w.raftReads++
+	voting := s.w.voters
+	if s.w.raftReads <= s.w.promoteAfter {
+		voting = 1
+	}
 	var out []store.RaftServer
-	for i := range s.w.voters {
-		out = append(out, store.RaftServer{NodeID: fmt.Sprintf("openbao-%d", i), Voter: true, Leader: i == 0})
+	for i := range 3 {
+		out = append(out, store.RaftServer{NodeID: fmt.Sprintf("openbao-%d", i), Voter: i < voting, Leader: i == 0})
 	}
 	return out, s.authorized()
 }
@@ -365,8 +377,32 @@ func TestRollOrder(t *testing.T) {
 	}
 }
 
-// TestVerify: zapieczętowany pod albo replika poza Raft — warunek
-// niespełniony.
+// TestBootstrapWaitsForPromotion: tuż po inicjalizacji głosuje jedna replika,
+// pozostałe autopilot awansuje po czasie stabilizacji — Bootstrap na to
+// czeka zamiast zgłaszać brak kworum (tak padło CI na świeżym klastrze).
+func TestBootstrapWaitsForPromotion(t *testing.T) {
+	quiet(t)
+	w, k := newWorld(), newKluster()
+	w.promoteAfter = 1
+	s, _ := newStore(t, w, k)
+	s.Timeout = 10 * time.Second
+	st, err := s.Bootstrap(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	voters := 0
+	for _, r := range st.Raft {
+		if r.Voter {
+			voters++
+		}
+	}
+	if voters != 3 || w.raftReads <= w.promoteAfter {
+		t.Errorf("głosujących %d po %d odczytach", voters, w.raftReads)
+	}
+}
+
+// TestVerify: zapieczętowany pod albo replika, która nie zostaje
+// głosującą — warunek niespełniony.
 func TestVerify(t *testing.T) {
 	quiet(t)
 	for name, mutate := range map[string]func(*world){
