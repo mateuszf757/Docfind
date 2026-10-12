@@ -25,6 +25,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/admission"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/build"
+	"github.com/mateuszf757/Docfind/tools/internal/stages/secrets"
 )
 
 const (
@@ -237,7 +238,11 @@ func (f fakeCharts) Install(_ context.Context, _ cluster.Target, r cluster.Relea
 			f.version = version
 		}
 	}
-	return f.call("install %s %s", r.Name, strings.Join(append(r.Set, r.SetString...), " "))
+	values := append(r.Set, r.SetString...)
+	if r.HooksOnly {
+		values = append(values, "hooksOnly")
+	}
+	return f.call("install %s %s", r.Name, strings.Join(values, " "))
 }
 
 type fakeCluster struct {
@@ -279,6 +284,14 @@ func (f fakeAdmission) Admit(_ context.Context, ref string, p admission.Policy) 
 	}}}, f.call("admit %s attested=%v", p.Environment, p.Attested)
 }
 
+// fakeSecretStore — magazyn sekretów; zapisuje kolejność kroków.
+type fakeSecretStore struct{ *recorder }
+
+func (f fakeSecretStore) Prepare(context.Context) error { return f.call("openbao prepare") }
+func (f fakeSecretStore) Bootstrap(context.Context) (secrets.Status, error) {
+	return secrets.Status{}, f.call("openbao bootstrap")
+}
+
 // versions — wersja commita z historii repozytorium.
 type versions struct{}
 
@@ -311,6 +324,7 @@ func deployer(t *testing.T, env string, rec *recorder, exists bool, podImage str
 		Clusters: fakeClusters{rec, exists}, Engine: fakeEngine{rec}, Host: fakeHost{}, Charts: fakeCharts{rec}, Releases: fakeCharts{rec},
 		Connect: func(cluster.Target) (Cluster, error) { return fakeCluster{rec, podImage}, rec.call("connect") },
 		Builder: fakeBuilder{rec}, Admission: fakeAdmission{rec}, Versions: versions{},
+		SecretStores: func(cluster.Target) (SecretStore, error) { return fakeSecretStore{rec}, nil },
 	}
 }
 
@@ -346,6 +360,12 @@ func TestUpFromRegistry(t *testing.T) {
 	joined := strings.Join(rec.calls, "\n")
 	// Obraz commita: tag z commita, digest, a wersja wdrożenia z historii
 	// repozytorium (DOCFIND_VERSION), nie z obrazu.
+	// OpenBao po charcie platformy (certyfikat z wewnętrznego CA): klucz
+	// odpieczętowania przed chartem, inicjalizacja po nim, bez czekania
+	// Helma na gotowość.
+	if i, j, k := slices.Index(rec.calls, "openbao prepare"), slices.Index(rec.calls, "install openbao hooksOnly"), slices.Index(rec.calls, "openbao bootstrap"); i < 0 || !(i < j && j < k) || j < slices.IndexFunc(rec.calls, func(c string) bool { return strings.HasPrefix(c, "install platform") }) {
+		t.Errorf("kolejność OpenBao:\n%s", joined)
+	}
 	for _, wantCall := range []string{"install platform gateway.name=", "namespace docfind v1.36", "install docfind route.hostname=", "api.image.tag=cccccccccccc", "api.version=0.3.1-dev.4+ccccccc", "api.image.digest=" + digest, "identity"} {
 		if !strings.Contains(joined, wantCall) {
 			t.Errorf("brak %q w:\n%s", wantCall, joined)

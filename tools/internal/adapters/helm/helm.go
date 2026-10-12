@@ -49,10 +49,15 @@ func valueArgs(r cluster.Release) []string {
 
 // Install instaluje albo aktualizuje release na klastrze t (`helm upgrade
 // --install --wait`): kończy się, gdy zasoby są gotowe, a nie gdy API je
-// przyjęło.
+// przyjęło. Z HooksOnly — gdy przeszły hooki; gotowości pilnuje wtedy
+// wywołujący.
 func (h Helm) Install(ctx context.Context, t cluster.Target, r cluster.Release) error {
+	wait := "--wait=watcher"
+	if r.HooksOnly {
+		wait = "--wait=hookOnly"
+	}
 	args := append([]string{"upgrade", "--install", r.Name, r.Chart}, valueArgs(r)...)
-	args = append(args, "--wait", "--timeout", r.Timeout.String(), "--kubeconfig", t.Kubeconfig, "--kube-context", t.Context)
+	args = append(args, wait, "--timeout", r.Timeout.String(), "--kubeconfig", t.Kubeconfig, "--kube-context", t.Context)
 	if _, err := h.Runner.Run(ctx, proc.Cmd{Name: "helm", Args: args, Stdout: h.Out, Stderr: h.Err}); err != nil {
 		return fmt.Errorf("helm upgrade --install %s: %w", r.Name, err)
 	}

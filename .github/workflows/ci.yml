@@ -658,6 +658,12 @@ jobs:
       - name: drain każdego węzła z repliką
         run: ./bin/mise run cluster:drain
 
+      # Po drainach: OpenBao przeżył wyjazd replik z każdego węzła (PDB,
+      # kworum Raft z dwóch), każda replika odpieczętowana i głosująca,
+      # a usunięty pod standby wraca sam — bez człowieka (decyzja 42).
+      - name: OpenBao po drainach
+        run: ./bin/mise run check:openbao
+
       - name: odnowienie certyfikatu pod ruchem
         run: ./bin/mise run cluster:tls
 

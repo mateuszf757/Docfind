@@ -143,6 +143,7 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 		{pins.CoreDNS, "kube-system", "deploy/platform/coredns/values.yaml"},
 		{pins.CertManager, "cert-manager", "deploy/platform/cert-manager/values.yaml"},
 		{pins.EnvoyGateway, "envoy-gateway-system", "deploy/platform/envoy-gateway/values.yaml"},
+		{pins.OpenBao, "openbao", "deploy/platform/openbao/values.yaml"},
 	} {
 		chart, err := c.Pins.Chart(pc.pin)
 		if err != nil {

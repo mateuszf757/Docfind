@@ -54,6 +54,9 @@ const (
 	EnvoyGatewayChartRef     = "DF_ENVOY_GATEWAY_CHART_REF"
 	EnvoyGatewayChartVersion = "DF_ENVOY_GATEWAY_CHART_VERSION"
 	EnvoyGatewayChartSHA256  = "DF_ENVOY_GATEWAY_CHART_SHA256"
+	OpenBaoChartVersion      = "DF_OPENBAO_CHART_VERSION"
+	OpenBaoChartURL          = "DF_OPENBAO_CHART_URL"
+	OpenBaoChartSHA256       = "DF_OPENBAO_CHART_SHA256"
 	BuildKitImage            = "DF_BUILDKIT_IMAGE"
 	SBOMGeneratorImage       = "DF_SBOM_GENERATOR_IMAGE"
 	RegistryImage            = "DF_REGISTRY_IMAGE"
@@ -75,6 +78,9 @@ var rules = map[string]rule{
 	EnvoyGatewayChartRef:     {regexp.MustCompile(`^oci://`), "referencja oci://"},
 	EnvoyGatewayChartVersion: {regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+$`), "wersja vX.Y.Z"},
 	EnvoyGatewayChartSHA256:  {sha256Hex, "suma SHA-256"},
+	OpenBaoChartVersion:      {semver, "wersja X.Y.Z"},
+	OpenBaoChartURL:          {regexp.MustCompile(`^https://`), "adres https"},
+	OpenBaoChartSHA256:       {sha256Hex, "suma SHA-256"},
 	BuildKitImage:            {pinnedImage, "obraz z digestem"},
 	SBOMGeneratorImage:       {pinnedImage, "obraz z digestem"},
 	RegistryImage:            {pinnedImage, "obraz z digestem"},
@@ -88,6 +94,7 @@ var rules = map[string]rule{
 var chartURLs = map[string]string{
 	CoreDNSChartURL:     CoreDNSChartVersion,
 	CertManagerChartURL: CertManagerChartVersion,
+	OpenBaoChartURL:     OpenBaoChartVersion,
 }
 
 // Load czyta i sprawdza ci/pins.env w repozytorium o korzeniu root.
@@ -177,6 +184,7 @@ const (
 	CoreDNS      = "coredns"
 	CertManager  = "cert-manager"
 	EnvoyGateway = "envoy-gateway"
+	OpenBao      = "openbao"
 )
 
 // Chart — przypięty chart platformy.
@@ -195,7 +203,7 @@ type Chart struct {
 func (c Chart) OCI() bool { return strings.HasPrefix(c.Source, "oci://") }
 
 // Chart zwraca przypięty chart platformy (CoreDNS, CertManager,
-// EnvoyGateway).
+// EnvoyGateway, OpenBao).
 func (p Pins) Chart(name string) (Chart, error) {
 	switch name {
 	case CoreDNS:
@@ -204,6 +212,8 @@ func (p Pins) Chart(name string) (Chart, error) {
 		return Chart{Name: name, Version: p[CertManagerChartVersion], Source: p[CertManagerChartURL], SHA256: p[CertManagerChartSHA256]}, nil
 	case EnvoyGateway:
 		return Chart{Name: name, Version: p[EnvoyGatewayChartVersion], Source: p[EnvoyGatewayChartRef], SHA256: p[EnvoyGatewayChartSHA256]}, nil
+	case OpenBao:
+		return Chart{Name: name, Version: p[OpenBaoChartVersion], Source: p[OpenBaoChartURL], SHA256: p[OpenBaoChartSHA256]}, nil
 	}
 	return Chart{}, fmt.Errorf("nieznany chart platformy %q", name)
 }

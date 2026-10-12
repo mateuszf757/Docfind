@@ -155,6 +155,10 @@ description = "Build z pamięcią podręczną i od zera muszą dać identyczny o
 usage = 'arg "[service]" default="api" help="Usługa z services/"'
 run = 'ci/dft check reproducible "${usage_service}"'
 
+[tasks."check:openbao"]
+description = "OpenBao środowiska (MISE_ENV): każda replika odpieczętowana i w Raft, restart standby wraca sam (decyzja 42)"
+run = "ci/dft check openbao"
+
 [tasks."check:vulns"]
 description = "Podatności obrazu (OSV-Scanner): naprawialne HIGH/CRITICAL bez wyjątku blokują; --image, --image-archive, --baseline-commit, --report-only"
 run = "ci/dft check vulns"

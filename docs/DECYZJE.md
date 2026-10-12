@@ -1491,6 +1491,95 @@ Advanced Security — push protection zniknie i gitleaks zostanie jedyną
 linią; wtedy także jako hook przed commitem (`gitleaks git --staged`),
 żeby sekret nie trafiał nawet do lokalnej historii.
 
+## 42. OpenBao zamiast Vaulta, trzy repliki z Raftem i automatycznym odpieczętowaniem
+
+> Uszczegóławia decyzję 5: menedżer sekretów to OpenBao, nie Vault.
+> External Secrets Operator dochodzi w następnym kroku Etapu 4.
+
+**Wybieram OpenBao 2.7.** API zgodne z Vaultem, więc ESO łączy się z nim
+dostawcą Vaulta (testowane przez autorów ESO), a licencja MPL-2.0 zamiast
+BSL 1.1, pod którą Vault jest od 2023. Dla wewnętrznej platformy BSL nie
+przeszkadza, ale u klienta (Etap 10) pytanie „pod jaką licencją jest
+komponent, który mu instalujemy" ma prostą odpowiedź tylko przy MPL.
+Obraz przypięty digestem (ten sam w quay.io, Docker Hub i GHCR); podpis
+cosign w referrerach obrazu sprawdziłem `gh attestation verify --bundle` —
+wystawił go workflow `release-images.yml` z tagu `v2.7.1`.
+
+**Trzy repliki z Raftem, po jednej na węzeł.** Przy jednej replice drain
+węzła z OpenBao zabiera magazyn do czasu uncordon. Przy trzech PDB
+pozwala zabrać jedną, a Raft ma kworum z dwóch.
+
+**Odpieczętowanie kluczem statycznym z Secreta, nie ręczne.** Ręczne
+(Shamir) przegrało z drainem: zrestartowany pod wraca zapieczętowany, więc
+jest poza gotowością, a PDB nie pozwala wtedy drenować następnego węzła —
+bramka z Etapu 2 stanęłaby na operatorze. Do tego każdy restart WSL
+zostawiałby magazyn zapieczętowany. Pieczęć `static` to lokalny odpowiednik
+KMS: ten sam blok `seal` w konfiguracji, ten sam brak człowieka po
+restarcie, inny dostawca. Klucz (32 losowe bajty) generuje `dft` raz,
+w niezmiennym Secrecie, i nigdy go nie wypisuje.
+
+Co ten klucz chroni, a czego nie: dane na dyskach i w snapshotach Raft są
+bez niego nie do odczytania. Przed administratorem klastra nie chroni — ale
+ten i tak czyta Secrety, które ESO zrobi z sekretów OpenBao. Na produkcji
+klienta: KMS albo HSM w tym samym bloku `seal`.
+
+**Inicjalizacja przez API, nie self-init.** OpenBao 2.7 umie zainicjalizować
+się sam z konfiguracji, bez tokenu root w czyichkolwiek rękach. Przy Raft
+z kilkoma replikami to pułapka: w `server.go` (v2.7.1) każdy serwer z blokiem
+`initialize` i pustym magazynem inicjalizuje się sam, bez sprawdzenia, czy
+ma dołączyć przez `retry_join`. Trzy repliki startujące naraz dałyby trzy
+osobne klastry, a pod odtworzony z pustym wolumenem — czwarty. `dft`
+inicjalizuje więc przez API pierwszy pod, a pozostałe dołączają do niego.
+Klucz odzyskiwania (jeden — dzielenie klucza między jedną osobę niczego nie
+chroni) idzie do pliku 0600 w `~/.local/state/docfind/<klaster>/`, poza
+repozytorium, a token root jest odwoływany po pierwszej konfiguracji —
+także po błędzie. Obie wartości żyją w pamięci jako typ, którego fmt, log
+ani JSON nie wypisują.
+
+**Konfiguracja jako kod, z kontrolą dryfu.** `deploy/platform/openbao`:
+polityki w plikach HCL, role, montowania i metody uwierzytelniania.
+`cluster up` loguje się rolą `platform-admin` tokenem konta
+`openbao-admin` (TokenRequest na 10 minut, odbiorca `openbao`), doprowadza
+serwer do stanu z gita i odwołuje własny token. Polityki i role spoza gita
+usuwa; montowań nie — wyłączenie kasuje dane, więc tylko zgłasza. Ta rola
+może zmieniać polityki, czyli jest w praktyce równoważna root — stąd token
+na 15 minut i tylko dla tego jednego konta.
+
+**Szczegóły, które wyszły przy pierwszym wdrożeniu, a nie w testach:**
+- domyślne `podManagementPolicy: OrderedReady` w charcie to zakleszczenie:
+  `openbao-1` powstaje, gdy `openbao-0` jest gotowy, a ten jest gotowy po
+  inicjalizacji — a po pełnym restarcie klastra dopiero z kworum Raft,
+  którego sam nie ma; stąd `Parallel`;
+- OpenBao 2.7 nie włącza audytu przez API — tylko deklaratywnie w
+  konfiguracji serwera; `dft` sprawdza, że urządzenie działa;
+- bez sumy konfiguracji w szablonie poda (`configAnnotation`) zmieniona
+  konfiguracja nie daje nowej rewizji StatefulSetu i pody zostają na starej.
+  Pody wymienia `dft` (`OnDelete`): najpierw standby, aktywny na końcu.
+
+TLS na listenerze od wewnętrznego CA, z `tls_auto_reload` — certyfikat
+odnowiony przez cert-managera OpenBao bierze bez restartu. `dft` łączy się
+przez port-forward na 127.0.0.1 i sprawdza certyfikat tym CA, a nie przez
+proxy API servera, które certyfikatu poda nie sprawdza. NetworkPolicy
+wpuszcza tylko ESO i ruch między replikami. Audyt każdego żądania na stdout,
+z tokenami i wartościami jako HMAC.
+
+`dft check openbao`: każda replika odpieczętowana, Raft 3/3 głosujących,
+a usunięty pod standby wraca sam — na dev po 14,9 s.
+
+**Co tracę:** trzy pody i trzy wolumeny na każdym klastrze (~70 MiB
+pamięci na replikę) i czas `cluster up` przy pierwszym wdrożeniu. Klucz
+odpieczętowania leży w tym samym klastrze, który chroni — z tą samą
+granicą zaufania co Secrety od ESO. Przy utracie klucza odpieczętowania
+dane są nie do odzyskania; kopia klucza razem ze snapshotem Raft to Etap
+11. Dostęp awaryjny przez klucz odzyskiwania (`generate-root`) opisuje
+`docs/RUNBOOK.md` — procedura jest, ale nie automat.
+
+**Kiedy zmieniam zdanie:** na klastrze z KMS albo HSM — pieczęć zmienia
+dostawcę, reszta zostaje. Gdy OpenBao dostanie self-init bezpieczny przy
+Raft (inicjalizacja tylko bez skonfigurowanego `retry_join` albo tylko na
+wskazanym węźle) — wtedy token root i klucz odzyskiwania przestają istnieć
+poza serwerem.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

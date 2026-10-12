@@ -22,7 +22,7 @@ func TestRepositoryPins(t *testing.T) {
 		t.Errorf("DF_BUILDKIT_IMAGE = %q", got)
 	}
 	// Każdy chart platformy ma wersję, źródło i sumę; Envoy Gateway — z OCI.
-	for _, name := range []string{CoreDNS, CertManager, EnvoyGateway} {
+	for _, name := range []string{CoreDNS, CertManager, EnvoyGateway, OpenBao} {
 		c, err := p.Chart(name)
 		if err != nil || c.Version == "" || c.Source == "" || len(c.SHA256) != 64 || c.OCI() != (name == EnvoyGateway) {
 			t.Errorf("chart %s: %+v, %v", name, c, err)
@@ -38,13 +38,14 @@ func TestRepositoryPins(t *testing.T) {
 func TestKeysHaveRules(t *testing.T) {
 	for _, key := range []string{KubernetesVersion, K3sImage, CoreDNSChartVersion, CoreDNSChartURL, CoreDNSChartSHA256,
 		CertManagerChartVersion, CertManagerChartURL, CertManagerChartSHA256, EnvoyGatewayChartRef, EnvoyGatewayChartVersion,
-		EnvoyGatewayChartSHA256, BuildKitImage, SBOMGeneratorImage, RegistryImage, KubeconformSchemaCommit, BaseAlpine} {
+		EnvoyGatewayChartSHA256, OpenBaoChartVersion, OpenBaoChartURL, OpenBaoChartSHA256, BuildKitImage, SBOMGeneratorImage,
+		RegistryImage, KubeconformSchemaCommit, BaseAlpine} {
 		if _, ok := rules[key]; !ok {
 			t.Errorf("%s bez reguły", key)
 		}
 	}
-	if len(rules) != 16 {
-		t.Errorf("reguł %d, stałych 16 — dopisz stałą dla nowego przypięcia", len(rules))
+	if len(rules) != 19 {
+		t.Errorf("reguł %d, stałych 19 — dopisz stałą dla nowego przypięcia", len(rules))
 	}
 }
 
