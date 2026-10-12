@@ -60,10 +60,31 @@ on:
 permissions:
   contents: read
 
+# Osobna grupa na każdy commit main, każdy tag i na noc; na PR-ach jedna na
+# gałąź, z anulowaniem — nowy push unieważnia poprzedni bieg.
+#
+# Wcześniej jedna grupa na ref (ci-<ref>), także dla main. GitHub trzyma w grupie
+# najwyżej jeden oczekujący bieg (queue: single) i nowy oczekujący anuluje
+# poprzedni — niezależnie od cancel-in-progress, które dotyczy tylko biegów
+# w toku. Trzy szybkie scalenia: drugi bieg czekał, trzeci go anulował, a środkowy
+# commit zostawał bez obrazu w rejestrze, bez atestacji i bez punktu odniesienia
+# skanu dla PR-ów z nim jako bazą. Noc dzieliła tę grupę z pushem na main, więc
+# mogła wypchnąć oczekującą publikację, i odwrotnie.
+#
+# Grupa na commit zamiast queue: max w jednej grupie dla main: publikacje różnych
+# commitów nie dzielą stanu — każda pisze tylko swój tag <sha12>, który nigdy nie
+# przeskakuje na inny obraz, i atestacje swojego digestu — więc mogą biec
+# równolegle. queue: max nie da się też połączyć z cancel-in-progress: true,
+# którego potrzebują PR-y, a dokumentacja nie mówi, czy walidator rozpoznaje
+# ten konflikt, gdy cancel-in-progress jest wyrażeniem.
 concurrency:
-  group: ci-${{ github.ref }}
-  # Na PR-ach nowy push unieważnia poprzedni bieg. Na main i tagach nie:
-  # anulowanie w trakcie publikacji zostawiłoby commit bez obrazu w rejestrze.
+  group: >-
+    ${{
+      (github.event_name == 'pull_request' && format('ci-pr-{0}', github.ref))
+      || (github.event_name == 'schedule' && 'ci-nightly')
+      || (github.ref_type == 'tag' && format('ci-tag-{0}', github.ref))
+      || format('ci-main-{0}', github.sha)
+    }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
