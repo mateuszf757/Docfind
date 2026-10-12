@@ -83,6 +83,17 @@ exceptions:
       serwer HTTP/2: awaria przez wyścig w koderze HPACK (net/http). Poprawka w Go 1.27.2, wydanym 2026-10-08; cooldown projektu
       to 7 dni (mise.toml), więc toolchain idzie do 1.27.2 od 2026-10-15
       razem z dyrektywą go w tools/go.mod. Dotyczy narzędzi z tools/, nie obrazu.
+  - id: GO-2026-6604
+    package: stdlib
+    scope: go
+    expires: 2026-10-16
+    reason: >-
+      os.Root.Mkdir(All) może pójść za junction poza katalog główny — tylko
+      na Windowsie; narzędzia z tools/ biegną na Linuksie (runner ubuntu,
+      WSL). Osiągalna od rozpakowania kodu commita bazowego (adapters/git,
+      Export), które używa os.Root właśnie po to, żeby żadna ścieżka nie
+      wyszła poza katalog. Poprawka w Go 1.27.2, razem z pozostałymi
+      wyjątkami stdlib od 2026-10-15. Dotyczy narzędzi z tools/, nie obrazu.
   - id: GO-2026-6603
     package: golang.org/x/net
     scope: go

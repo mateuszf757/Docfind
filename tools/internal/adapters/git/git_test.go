@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -372,5 +373,68 @@ func TestCreateTag(t *testing.T) {
 	}
 	if err := repo.CreateTag(ctx, "v0.4.0", target, message); err == nil {
 		t.Error("drugi tag o tej samej nazwie przyjęty")
+	}
+}
+
+// TestExport: kod katalogu z commita, a nie z drzewa roboczego, tylko ten
+// katalog i ze ścieżkami względem niego; rev, który wygląda jak opcja,
+// nie trafia do git archive; dowiązanie symboliczne zatrzymuje wypakowanie.
+func TestExport(t *testing.T) {
+	r := newTestRepo(t)
+	put := func(name, content string) {
+		t.Helper()
+		path := filepath.Join(r.dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("README.md", "poza modułem")
+	put("tools/go.mod", "module example.com/tools\n")
+	put("tools/cmd/dft/main.go", "package main // v1\n")
+	r.git("add", ".")
+	r.commit("baza")
+	base := r.git("rev-parse", "HEAD")
+	put("tools/cmd/dft/main.go", "package main // v2\n")
+	put("tools/nowy.go", "package tools\n")
+	r.git("add", ".")
+	r.commit("zmiana")
+	put("tools/go.mod", "module example.com/brudne\n")
+
+	tools := Repo{Dir: filepath.Join(r.dir, "tools"), Runner: proc.Exec{}}
+	ctx := context.Background()
+	dir := t.TempDir()
+	if err := tools.Export(ctx, base, dir); err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"go.mod": "module example.com/tools\n", "cmd/dft/main.go": "package main // v1\n"} {
+		if got, err := os.ReadFile(filepath.Join(dir, name)); err != nil || string(got) != want {
+			t.Errorf("%s: %q, %v; oczekiwano %q", name, got, err, want)
+		}
+	}
+	for _, absent := range []string{"nowy.go", "README.md", "tools"} {
+		if _, err := os.Stat(filepath.Join(dir, absent)); err == nil {
+			t.Errorf("%s w kodzie z commita bazowego", absent)
+		}
+	}
+
+	for _, rev := range []string{strings.Repeat("0", 40), "--output=" + filepath.Join(dir, "x.tar")} {
+		if err := tools.Export(ctx, rev, t.TempDir()); !errors.Is(err, artifact.ErrUnknownCommit) {
+			t.Errorf("rev %q: %v, oczekiwano ErrUnknownCommit", rev, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "x.tar")); err == nil {
+		t.Error("rev w postaci opcji trafił do git archive")
+	}
+
+	if err := os.Symlink("../README.md", filepath.Join(r.dir, "tools", "link")); err != nil {
+		t.Fatal(err)
+	}
+	r.git("add", "tools/link")
+	r.commit("dowiązanie")
+	if err := tools.Export(ctx, "HEAD", t.TempDir()); err == nil || !strings.Contains(err.Error(), "tylko pliki i katalogi") {
+		t.Errorf("dowiązanie symboliczne wypakowane: %v", err)
 	}
 }

@@ -103,25 +103,35 @@ func (i *issues) CloseIssue(_ context.Context, n int, comment string) error {
 
 func TestSyncIssue(t *testing.T) {
 	quiet(t)
-	blocking := vuln.Report{Target: "obraz.tar", Blocking: 1, ScannedAt: time.Date(2026, 10, 8, 3, 30, 0, 0, time.UTC),
+	scanned := time.Date(2026, 10, 8, 3, 30, 0, 0, time.UTC)
+	blocking := vuln.Report{Subject: "obrazu api", Target: "obraz.tar", Blocking: 1, ScannedAt: scanned,
 		Findings: []vuln.Finding{{ID: "CVE-1", Package: "zlib", Severity: vuln.SeverityHigh, Fixed: []string{"1.3.2-r1"}, Blocking: true}}}
-	clean := vuln.Report{Target: "obraz.tar", ScannedAt: blocking.ScannedAt}
+	clean := vuln.Report{Subject: "obrazu api", Target: "obraz.tar", ScannedAt: scanned}
+	cleanGo := vuln.Report{Subject: "kodu narzędzi Go", Target: "tools/", ScannedAt: scanned}
 	tests := []struct {
 		name     string
-		rep      vuln.Report
+		reports  []vuln.Report
+		missing  []string
 		open     int
 		wantCall string
+		wantCode int
 	}{
-		{"blokujące, brak issue — otwiera", blocking, 0, "create ### Podatności"},
-		{"blokujące, issue otwarte — aktualizuje", blocking, 7, "edit 7 ### Podatności"},
-		{"czysto, issue otwarte — zamyka", clean, 7, "close 7 Skan z 2026-10-08: brak blokujących podatności."},
-		{"czysto, brak issue — nic", clean, 0, ""},
+		{"blokujące, brak issue — otwiera", []vuln.Report{blocking, cleanGo}, nil, 0, "create ### Podatności obrazu api", cli.ExitOK},
+		{"blokujące, issue otwarte — aktualizuje", []vuln.Report{blocking, cleanGo}, nil, 7, "edit 7 ### Podatności obrazu api", cli.ExitOK},
+		{"czysto, issue otwarte — zamyka", []vuln.Report{clean, cleanGo}, nil, 7, "close 7 Skan z 2026-10-08: brak blokujących podatności.", cli.ExitOK},
+		{"czysto, brak issue — nic", []vuln.Report{clean, cleanGo}, nil, 0, "", cli.ExitOK},
+		// Brak raportu to brak wiedzy: issue nie jest zamykane, a bieg nie
+		// wygląda na kompletny.
+		{"czysto, ale bez raportu Go — nie zamyka", []vuln.Report{clean}, []string{"vulns-go.json"}, 7, "", cli.ExitUnmet},
+		{"blokujące, bez raportu Go — aktualizuje z adnotacją", []vuln.Report{blocking}, []string{"vulns-go.json"}, 7, "edit 7 ### Podatności obrazu api", cli.ExitUnmet},
+		{"żadnego raportu — nic", nil, []string{"vulns-api.json", "vulns-go.json"}, 7, "", cli.ExitUnmet},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			i := &issues{open: tt.open}
-			if err := SyncIssue(context.Background(), i, tt.rep); err != nil {
-				t.Fatal(err)
+			err := SyncIssue(context.Background(), i, tt.reports, tt.missing)
+			if code := cli.ExitCode(err); code != tt.wantCode {
+				t.Fatalf("kod %d, oczekiwano %d (%v)", code, tt.wantCode, err)
 			}
 			if tt.wantCall == "" {
 				if len(i.calls) != 0 {
@@ -130,10 +140,18 @@ func TestSyncIssue(t *testing.T) {
 				return
 			}
 			if len(i.calls) != 1 || !strings.HasPrefix(i.calls[0], tt.wantCall) {
-				t.Errorf("wywołania: %v, oczekiwano %q", i.calls, tt.wantCall)
+				t.Fatalf("wywołania: %v, oczekiwano %q", i.calls, tt.wantCall)
 			}
-			if tt.rep.Blocking > 0 && !strings.Contains(i.calls[0], "| HIGH | CVE-1 | zlib") {
+			if strings.HasPrefix(tt.wantCall, "close") {
+				return
+			}
+			if !strings.Contains(i.calls[0], "| HIGH | CVE-1 | zlib") {
 				t.Errorf("treść bez tabeli podatności: %s", i.calls[0])
+			}
+			for _, m := range tt.missing {
+				if !strings.Contains(i.calls[0], m) {
+					t.Errorf("treść bez skanu bez raportu %s: %s", m, i.calls[0])
+				}
 			}
 		})
 	}

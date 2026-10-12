@@ -67,6 +67,11 @@ func ParseRef(ref string) (repository, digest string, err error) {
 // (np. obrazu bazowego do porównania) od awarii rejestru.
 var ErrNotFound = errors.New("obrazu nie ma w rejestrze")
 
+// ErrUnknownCommit — w repozytorium nie ma tego commita (płytki klon,
+// gałąź spoza pobranych). Adapter gita owija nim odpowiedź rev-parse,
+// a etapy rozróżniają nim brak kodu do porównania od awarii gita.
+var ErrUnknownCommit = errors.New("commitu nie ma w repozytorium")
+
 // Expected — tożsamość, której oczekuje się na każdym podzie: obraz
 // w specyfikacji i commit z /version, a do tego wersja wdrożenia, którą
 // /version podaje ze zmiennej DOCFIND_VERSION. Pusta wersja — wdrożenie jej

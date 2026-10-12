@@ -120,11 +120,14 @@ func (p Policy) Evaluate(findings []Finding) ([]Finding, []string) {
 	return out, unused
 }
 
-// Database — jedna baza ekosystemu pobrana przez OSV-Scanner.
+// Database — baza podatności, z której jest wynik: baza ekosystemu z
+// OSV-Scannera albo baza Go z govulncheck.
 type Database struct {
 	Ecosystem string `json:"ecosystem"`
-	SHA256    string `json:"sha256"`
-	Entries   int    `json:"entries"`
+	// SHA256 i Entries — z plików bazy (OSV); baza Go (vuln.go.dev) jest
+	// pytana na żywo i ich nie podaje, więc raport ich nie zmyśla.
+	SHA256  string `json:"sha256,omitempty"`
+	Entries int    `json:"entries,omitempty"`
 	// Newest — najnowsza zmiana wpisu w bazie: migawka, z której jest wynik.
 	Newest string `json:"newest_modified"`
 }

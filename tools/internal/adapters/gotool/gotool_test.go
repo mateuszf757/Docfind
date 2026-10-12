@@ -15,7 +15,7 @@ import (
 // govulncheckJSON — strumień `govulncheck -format json` (v1.8.0): ustalenia
 // na poziomie modułu, pakietu i symbolu dla jednej podatności i ustalenie
 // symbolu bez poprawki dla drugiej.
-const govulncheckJSON = `{"config":{"protocol_version":"v1.0.0","scanner_name":"govulncheck","scanner_version":"v1.8.0"}}
+const govulncheckJSON = `{"config":{"protocol_version":"v1.0.0","scanner_name":"govulncheck","scanner_version":"v1.8.0","db":"https://vuln.go.dev","db_last_modified":"2026-10-08T22:31:09Z"}}
 {"osv":{"id":"GO-2026-0001","aliases":["CVE-2026-22222"]}}
 {"osv":{"id":"GO-2026-0002","aliases":[]}}
 {"finding":{"osv":"GO-2026-0001","fixed_version":"v0.36.6","trace":[{"module":"k8s.io/client-go","version":"v0.36.5"}]}}
@@ -27,9 +27,12 @@ const govulncheckJSON = `{"config":{"protocol_version":"v1.0.0","scanner_name":"
 `
 
 func TestParseGovulncheck(t *testing.T) {
-	findings, err := ParseGovulncheck(strings.NewReader(govulncheckJSON))
+	findings, db, err := ParseGovulncheck(strings.NewReader(govulncheckJSON))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if db.Ecosystem != "Go (https://vuln.go.dev)" || db.Newest != "2026-10-08T22:31:09Z" {
+		t.Errorf("migawka bazy: %+v", db)
 	}
 	if len(findings) != 2 {
 		t.Fatalf("ustalenia osiągalne: %+v — tylko poziom symbolu, bez powtórzeń", findings)
@@ -47,15 +50,39 @@ func TestParseGovulncheck(t *testing.T) {
 	}
 }
 
-// reachable — ustalenie govulncheck na poziomie symbolu, z poprawką.
-const reachable = `{"finding":{"osv":"GO-2026-0001","fixed_version":"v0.36.6","trace":[{"module":"k8s.io/client-go","version":"v0.36.5","function":"Do"}]}}`
+// TestParseGovulncheckWithoutDatabase: bez daty bazy wyniku nie da się
+// porównać z punktem odniesienia — to awaria, a nie pusty wynik.
+func TestParseGovulncheckWithoutDatabase(t *testing.T) {
+	if _, _, err := ParseGovulncheck(strings.NewReader(`{"config":{"scanner_name":"govulncheck"}}`)); err == nil {
+		t.Error("wynik bez config.db_last_modified przyjęty")
+	}
+}
+
+// reachable — strumień z ustaleniem na poziomie symbolu, z poprawką.
+const reachable = `{"config":{"db":"https://vuln.go.dev","db_last_modified":"2026-10-08T22:31:09Z"}}
+{"finding":{"osv":"GO-2026-0001","fixed_version":"v0.36.6","trace":[{"module":"k8s.io/client-go","version":"v0.36.5","function":"Do"}]}}`
+
+// TestVulncheckBaselineDir: kod z innego commita skanuje govulncheck
+// z bieżącego modułu (go tool w ModuleDir), a moduł dostaje przez -C.
+func TestVulncheckBaselineDir(t *testing.T) {
+	f := &proc.Fake{Responses: map[string]proc.FakeResponse{
+		"go tool govulncheck -C /tmp/baza -format json ./...": {Stdout: reachable},
+	}}
+	findings, _, err := Go{ModuleDir: "/m", Runner: f}.Vulncheck(context.Background(), "/tmp/baza")
+	if err != nil || len(findings) != 1 {
+		t.Fatalf("ustalenia %+v, %v", findings, err)
+	}
+	if f.Calls[0].Dir != "/m" {
+		t.Errorf("govulncheck z katalogu %q, oczekiwano bieżącego modułu", f.Calls[0].Dir)
+	}
+}
 
 // TestExitCodes: niezerowy kod narzędzia jakości to warunek niespełniony,
 // a niemożność uruchomienia — awaria; dla govulncheck (-format json)
 // niezerowy kod to zawsze awaria, a wynik niesie strumień.
 func TestExitCodes(t *testing.T) {
 	vet := func(g Go, ctx context.Context) error { return g.Vet(ctx) }
-	vulncheck := func(g Go, ctx context.Context) error { _, err := g.Vulncheck(ctx); return err }
+	vulncheck := func(g Go, ctx context.Context) error { _, _, err := g.Vulncheck(ctx, ""); return err }
 	tests := []struct {
 		name     string
 		resp     proc.FakeResponse

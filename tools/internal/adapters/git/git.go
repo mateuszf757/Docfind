@@ -1,6 +1,7 @@
 // Package git zbiera z repozytorium gita fakty o commicie — status, HEAD,
 // tagi wydań, odległość od tagu, czas commita — z których core/artifact
-// wylicza tożsamość artefaktu (decyzje 21, 30 i 40), i zakłada tagi wydań.
+// wylicza tożsamość artefaktu (decyzje 21, 30 i 40), zakłada tagi wydań
+// i wypakowuje kod innego commita do porównania (Export).
 //
 // To jedyne miejsce, które pyta gita „co to za wersja i z jakiego commita".
 // /version, etykiety OCI i tagi w rejestrze biorą odpowiedź stąd — gdyby
@@ -9,9 +10,14 @@
 package git
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -266,4 +272,80 @@ func (r Repo) RequireClean(ctx context.Context) error {
 		return cli.Unmet("%v:\n%s", ErrDirtyTree, status)
 	}
 	return nil
+}
+
+// Export zapisuje w dir drzewo katalogu Dir z commita rev — kod do
+// porównania z innym commitem (punkt odniesienia govulncheck na PR-ze).
+//
+// Przez `git archive`, a nie `git worktree add`: bez drugiego drzewa
+// roboczego w .git/worktrees i bez hooków autora (worktree uruchamia
+// post-checkout). Uruchomiony w Dir, git archive pakuje tylko ten katalog,
+// ze ścieżkami względem niego. rev najpierw zamieniany na pełny SHA:
+// do git archive nie trafia nic, co mogłoby być opcją.
+//
+// Brak commita w repozytorium — artifact.ErrUnknownCommit.
+func (r Repo) Export(ctx context.Context, rev, dir string) error {
+	commit, err := r.git(ctx, "rev-parse", "--verify", "--quiet", "--end-of-options", rev+"^{commit}")
+	switch {
+	case proc.ExitCode(err) > 0:
+		return fmt.Errorf("%s: %w", rev, artifact.ErrUnknownCommit)
+	case err != nil:
+		return fmt.Errorf("git rev-parse %s: %w", rev, err)
+	}
+	var archive bytes.Buffer
+	if _, err := r.Runner.Run(ctx, proc.Cmd{Name: "git", Args: []string{"-C", r.Dir, "archive", "--format=tar", commit}, Stdout: &archive}); err != nil {
+		return fmt.Errorf("git archive %s: %w", commit, err)
+	}
+	return untar(&archive, dir)
+}
+
+// untar wypakowuje archiwum z git archive do dir. Przez os.Root: żadna
+// ścieżka z archiwum nie wyjdzie poza dir, także przez ../ i dowiązania.
+// Tylko pliki i katalogi — dowiązań symbolicznych w kodzie nie ma, a te
+// z archiwum są pierwszym narzędziem wyjścia poza katalog.
+func untar(r io.Reader, dir string) (err error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	tr := tar.NewReader(r)
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("archiwum gita: %w", err)
+		}
+		switch h.Typeflag {
+		case tar.TypeXGlobalHeader:
+			// Nagłówek pax z identyfikatorem commita — nie plik.
+			continue
+		case tar.TypeDir:
+			err = root.MkdirAll(h.Name, 0o755)
+		case tar.TypeReg:
+			err = extractFile(root, h, tr)
+		default:
+			return fmt.Errorf("archiwum gita: %s — wpis typu %q, a obsługiwane są tylko pliki i katalogi", h.Name, h.Typeflag)
+		}
+		if err != nil {
+			return fmt.Errorf("archiwum gita: %w", err)
+		}
+	}
+}
+
+func extractFile(root *os.Root, h *tar.Header, r io.Reader) (err error) {
+	if parent := path.Dir(h.Name); parent != "." {
+		if err := root.MkdirAll(parent, 0o755); err != nil {
+			return err
+		}
+	}
+	f, err := root.OpenFile(h.Name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, h.FileInfo().Mode().Perm())
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, f.Close()) }()
+	_, err = io.Copy(f, r)
+	return err
 }
