@@ -136,6 +136,12 @@ type ExternalSecret struct {
 	RefreshTime time.Time
 }
 
+// SecretStore — stan magazynu ESO (walidacja połączenia z dostawcą).
+type SecretStore struct {
+	Ready           bool
+	Reason, Message string
+}
+
 // LocalCluster — klaster k3d do utworzenia.
 type LocalCluster struct {
 	Name string

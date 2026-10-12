@@ -192,7 +192,26 @@ func (s Store) Bootstrap(ctx context.Context) (Status, error) {
 // do niego przez retry_join. Zwraca token root tylko wtedy, gdy właśnie
 // zainicjalizował (fresh).
 func (s Store) initialize(ctx context.Context) (token sensitive.Value, fresh bool, err error) {
-	err = s.withServer(ctx, store.StatefulSet+"-0", sensitive.Value{}, func(srv Server) error {
+	first := store.StatefulSet + "-0"
+	// Running to uruchomiony kontener, a nie serwer, który już otworzył port
+	// — przez port-forward wychodziło wtedy EOF (staging). Na gotowość poda
+	// czekać się tu nie da: przed inicjalizacją pod nigdy nie jest gotowy.
+	// Pytamy więc, aż serwer odpowie.
+	var lastErr error
+	err = poll.Until(ctx, s.timeout(), 2*time.Second, func(ctx context.Context) (bool, error) {
+		lastErr = s.withServer(ctx, first, sensitive.Value{}, func(srv Server) error {
+			_, err := srv.SealStatus(ctx)
+			return err
+		})
+		return lastErr == nil, nil
+	})
+	if errors.Is(err, poll.ErrTimeout) {
+		return token, false, cli.Unmet("serwer OpenBao w %s nie odpowiada po %v: %v — kubectl -n %s logs %s", first, s.timeout(), lastErr, store.Namespace, first)
+	}
+	if err != nil {
+		return token, false, err
+	}
+	err = s.withServer(ctx, first, sensitive.Value{}, func(srv Server) error {
 		st, err := srv.SealStatus(ctx)
 		if err != nil {
 			return err

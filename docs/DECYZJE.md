@@ -1631,6 +1631,23 @@ certyfikat wystawia CA z tego charta). Sprawdzenie przeszło za OpenBao:
 `dns-token`, które ma już gdzie zapisać token. ESO instaluje się przed
 chartem platformy, bo chart tworzy SecretStore i ExternalSecret.
 
+**Korekta (2026-10-12): pierwszy klaster z Let's Encrypt i świeżym
+OpenBao.** Staging pokazał trzy rzeczy, których dev (OpenBao już był) ani
+CI (wewnętrzne CA, bez ExternalSecret) nie mogły pokazać:
+- `helm --wait` w Helmie 4 czeka też na zasoby niestandardowe, a chart
+  platformy ma takie, które gotowe są dopiero po OpenBao — SecretStore,
+  ExternalSecret i certyfikat Let's Encrypt, który potrzebuje tokenu.
+  OpenBao instaluje się po chartcie, więc Helm czekał do upływu czasu.
+  Chart platformy instaluje się bez czekania Helma, a `dft` czeka jawnie,
+  w kolejności zależności: CA, OpenBao, token, Gateway, certyfikat Gateway;
+- `Running` to uruchomiony kontener, a nie serwer, który już słucha —
+  inicjalizacja pyta OpenBao, aż odpowie;
+- SecretStore utworzony przed OpenBao nie przechodzi walidacji, a ESO
+  ponawia ją z narastającą przerwą (do kilkunastu minut). Kontroler
+  obserwuje SecretStore bez filtrów, więc zmiana adnotacji wyzwala walidację
+  od razu: `dft` dotyka niegotowy magazyn i ponawia force-sync, dopóki
+  ExternalSecret się nie zsynchronizuje.
+
 **Migracja bez ręcznego kroku.** Gdy OpenBao nie ma tokenu, a Secret
 zapisany przez dawne `dns-token` jest, `cluster up` przenosi wartość
 z Secreta do OpenBao (w pamięci, jako wartość poufna), a ESO przejmuje

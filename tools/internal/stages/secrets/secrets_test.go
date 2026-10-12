@@ -205,8 +205,9 @@ type kluster struct {
 	uid      int
 	// volumes — wolumeny danych OpenBao (PVC).
 	volumes []string
-	// readyAt — od tej chwili niegotowy pod staje się gotowy.
-	readyAt time.Time
+	// readyAt — od tej chwili niegotowy pod staje się gotowy; listenAt — od
+	// tej chwili serwery przyjmują połączenia (wcześniej proces startuje).
+	readyAt, listenAt time.Time
 }
 
 func newKluster(revisions ...string) *kluster {
@@ -313,6 +314,9 @@ func newStore(t *testing.T, w *world, k *kluster) (Store, *keys) {
 		// Jak prawdziwy port-forward: do poda, który jeszcze nie nasłuchuje,
 		// połączenie się zrywa.
 		Dial: func(_ context.Context, pod string, token sensitive.Value) (Server, func(), error) {
+			if time.Now().Before(k.listenAt) {
+				return nil, nil, errors.New("port-forward: EOF")
+			}
 			for _, p := range k.pods {
 				if p.Name == pod && !p.Ready {
 					return nil, nil, errors.New("port-forward: EOF")
@@ -344,6 +348,22 @@ func TestBootstrapFresh(t *testing.T) {
 	}
 	if len(st.Pods) != 3 || len(st.Raft) != 3 || st.SealType != "static" {
 		t.Errorf("stan: %+v", st)
+	}
+}
+
+// TestBootstrapWaitsForServer: pody są Running, ale serwer jeszcze nie
+// słucha — inicjalizacja czeka, aż odpowie (na stagingu: EOF).
+func TestBootstrapWaitsForServer(t *testing.T) {
+	quiet(t)
+	w, k := newWorld(), newKluster()
+	k.listenAt = time.Now().Add(time.Second)
+	s, _ := newStore(t, w, k)
+	s.Timeout = 10 * time.Second
+	if _, err := s.Bootstrap(context.Background()); err != nil {
+		t.Fatalf("inicjalizacja przy startującym serwerze: %v", err)
+	}
+	if !w.initialized {
+		t.Error("OpenBao niezainicjalizowany")
 	}
 }
 

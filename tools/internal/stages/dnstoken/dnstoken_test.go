@@ -94,6 +94,19 @@ type kluster struct {
 	synced  func() bool
 	forced  []time.Time
 	refresh time.Time
+	// staleStore — SecretStore zwalidowany przed OpenBao: niegotowy, dopóki
+	// ktoś nie wymusi walidacji; do tego czasu force-sync nic nie daje.
+	staleStore  bool
+	revalidated int
+}
+
+func (k *kluster) SecretStore(context.Context, string, string) (cluster.SecretStore, error) {
+	return cluster.SecretStore{Ready: !k.staleStore}, nil
+}
+func (k *kluster) RevalidateStore(context.Context, string, string, time.Time) error {
+	k.revalidated++
+	k.staleStore = false
+	return nil
 }
 
 func (k *kluster) SecretData(context.Context, string, string) (map[string][]byte, error) {
@@ -104,13 +117,13 @@ func (k *kluster) SecretData(context.Context, string, string) (map[string][]byte
 }
 func (k *kluster) ForceSync(_ context.Context, _, _ string, at time.Time) error {
 	k.forced = append(k.forced, at)
-	if k.synced() {
+	if k.synced() && !k.staleStore {
 		k.refresh = at
 	}
 	return nil
 }
 func (k *kluster) ExternalSecret(context.Context, string, string) (cluster.ExternalSecret, error) {
-	if !k.synced() {
+	if !k.synced() || k.refresh.IsZero() {
 		return cluster.ExternalSecret{Reason: "SecretSyncedError", Message: "secret not found"}, nil
 	}
 	return cluster.ExternalSecret{Ready: true, RefreshTime: k.refresh}, nil
@@ -171,4 +184,23 @@ func quiet(t *testing.T) {
 	oldOut, oldErr := cli.Out, cli.Err
 	cli.Out, cli.Err = io.Discard, io.Discard
 	t.Cleanup(func() { cli.Out, cli.Err = oldOut, oldErr })
+}
+
+// TestEnsureRevalidatesStaleStore: SecretStore z charta platformy powstał
+// przed OpenBao i jest „niegotowy" do następnej próby ESO (narastająca
+// przerwa) — Ensure wymusza jego walidację i ponawia synchronizację, zamiast
+// czekać, aż ESO sam wróci (staging: przekroczony czas).
+func TestEnsureRevalidatesStaleStore(t *testing.T) {
+	quiet(t)
+	v := &vault{}
+	k := &kluster{legacy: "token-sprzed-openbao", staleStore: true}
+	k.synced = func() bool { return len(v.versions) > 0 }
+	sy := sync(v, k)
+	sy.Timeout = 5 * time.Second
+	if err := sy.Ensure(context.Background(), "dns-token"); err != nil {
+		t.Fatal(err)
+	}
+	if k.revalidated != 1 {
+		t.Errorf("wymuszeń walidacji magazynu: %d", k.revalidated)
+	}
 }

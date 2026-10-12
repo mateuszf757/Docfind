@@ -65,11 +65,19 @@ func (d Deployer) platform(ctx context.Context, c Cluster) error {
 
 	gw := d.Env.Gateway
 	cli.Step("platforma: Gateway dla %s, wydawca %s", gw.Hostname, gw.Issuer)
+	// Bez czekania Helma na gotowość. Helm 4 czeka też na zasoby
+	// niestandardowe, a w tym charcie są takie, które gotowe będą dopiero po
+	// OpenBao: SecretStore i ExternalSecret tokenu DNS oraz certyfikat Gateway
+	// od Let's Encrypt, który tego tokenu potrzebuje. OpenBao instaluje się po
+	// chartcie (jego certyfikat wystawia CA z tego charta), więc czekanie
+	// Helma kończyło się po 3 minutach na stagingu — pierwszym klastrze
+	// z Let's Encrypt i świeżym OpenBao. Gotowości pilnuje dft niżej,
+	// w kolejności zależności.
 	// Wartości z definicji tą samą funkcją, którą `dft test` renderuje
 	// i sprawdza chart dla każdego środowiska.
 	if err := d.Releases.Install(ctx, d.target(), cluster.Release{
 		Name: "platform", Chart: d.path("deploy/charts/platform"), Namespace: gw.Namespace, CreateNamespace: true,
-		Set: d.Env.PlatformValues(gw.ACMEEmail), Timeout: 3 * time.Minute,
+		Set: d.Env.PlatformValues(gw.ACMEEmail), Timeout: 3 * time.Minute, HooksOnly: true,
 	}); err != nil {
 		return err
 	}
@@ -79,13 +87,6 @@ func (d Deployer) platform(ctx context.Context, c Cluster) error {
 	}); err != nil {
 		return err
 	}
-	if err := waitReady(ctx, "Gateway "+gw.Namespace+"/"+gw.Name+" (Programmed)", 180*time.Second, func(ctx context.Context) (bool, error) {
-		g, err := c.Gateway(ctx, gw.Namespace, gw.Name)
-		return err == nil && g.Programmed, nil
-	}); err != nil {
-		return err
-	}
-	cli.Step("Gateway zaprogramowany")
 	if err := d.secretStore(ctx); err != nil {
 		return err
 	}
@@ -93,14 +94,33 @@ func (d Deployer) platform(ctx context.Context, c Cluster) error {
 	// a wyzwanie DNS-01 wisi bez końca z błędem tylko w statusie Challenge.
 	// Sprawdzane dopiero po OpenBao: token żyje w OpenBao, a na nowym
 	// klastrze `dns-token` ma gdzie go zapisać dopiero teraz.
-	if !strings.HasPrefix(gw.Issuer, "letsencrypt") {
-		return nil
+	if strings.HasPrefix(gw.Issuer, "letsencrypt") {
+		tokens, err := d.DNSTokens(d.target())
+		if err != nil {
+			return err
+		}
+		if err := tokens.Ensure(ctx, d.Env.Task("dns-token")); err != nil {
+			return err
+		}
 	}
-	tokens, err := d.DNSTokens(d.target())
-	if err != nil {
+	if err := waitReady(ctx, "Gateway "+gw.Namespace+"/"+gw.Name+" (Programmed)", 180*time.Second, func(ctx context.Context) (bool, error) {
+		g, err := c.Gateway(ctx, gw.Namespace, gw.Name)
+		return err == nil && g.Programmed, nil
+	}); err != nil {
 		return err
 	}
-	return tokens.Ensure(ctx, d.Env.Task("dns-token"))
+	// Certyfikat listenera HTTPS (cert-manager nazywa go od sekretu
+	// w certificateRefs). Dawniej czekał na niego Helm; przy Let's Encrypt
+	// to wyzwanie DNS-01 — do kilku minut.
+	tls := gw.Name + "-tls"
+	if err := waitReady(ctx, "Certificate "+gw.Namespace+"/"+tls+" (Ready)", 5*time.Minute, func(ctx context.Context) (bool, error) {
+		cert, err := c.Certificate(ctx, gw.Namespace, tls)
+		return err == nil && cert.Ready, nil
+	}); err != nil {
+		return err
+	}
+	cli.Step("Gateway zaprogramowany, certyfikat %s gotowy", tls)
+	return nil
 }
 
 // secretStore instaluje OpenBao (decyzja 42): klucz odpieczętowania
