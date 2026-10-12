@@ -188,6 +188,8 @@ type kluster struct {
 	uid      int
 	// volumes — wolumeny danych OpenBao (PVC).
 	volumes []string
+	// readyAt — od tej chwili niegotowy pod staje się gotowy.
+	readyAt time.Time
 }
 
 func newKluster(revisions ...string) *kluster {
@@ -229,6 +231,13 @@ func (k *kluster) PersistentVolumeClaims(context.Context, string, string) ([]str
 	return k.volumes, nil
 }
 func (k *kluster) Pods(_ context.Context, _, selector string) ([]cluster.Pod, error) {
+	// Pod wracający po drainie jest gotowy dopiero po czasie, niezależnie od
+	// tego, ile razy ktoś zapyta.
+	for i := range k.pods {
+		if !k.pods[i].Ready && !k.readyAt.IsZero() && time.Now().After(k.readyAt) {
+			k.pods[i].Ready = true
+		}
+	}
 	var out []cluster.Pod
 	for _, p := range k.pods {
 		if strings.Contains(selector, store.ActiveLabel+"=true") && p.Labels[store.ActiveLabel] != "true" {
@@ -278,7 +287,14 @@ func newStore(t *testing.T, w *world, k *kluster) (Store, *keys) {
 	ks := &keys{}
 	return Store{
 		Cluster: k, Keys: ks, Config: cfg, PSAVersion: "v1.36", Timeout: time.Second,
+		// Jak prawdziwy port-forward: do poda, który jeszcze nie nasłuchuje,
+		// połączenie się zrywa.
 		Dial: func(_ context.Context, pod string, token sensitive.Value) (Server, func(), error) {
+			for _, p := range k.pods {
+				if p.Name == pod && !p.Ready {
+					return nil, nil, errors.New("port-forward: EOF")
+				}
+			}
 			return &server{w: w, pod: pod, token: token.Reveal()}, func() {}, nil
 		},
 	}, ks
@@ -447,6 +463,23 @@ func TestPrepare(t *testing.T) {
 	k.volumes = []string{"data-openbao-0"}
 	if err := s.Prepare(context.Background()); cli.ExitCode(err) != cli.ExitUnmet || len(k.secrets) != 0 {
 		t.Errorf("nowy klucz przy istniejących danych: %v, %v", err, k.secrets)
+	}
+}
+
+// TestCheckWaitsForReturningPod: bramka uruchomiona tuż po drainie, gdy pod
+// OpenBao dopiero wraca, czeka na jego gotowość zamiast łączyć się z nim
+// (w CI: EOF na port-forward).
+func TestCheckWaitsForReturningPod(t *testing.T) {
+	quiet(t)
+	w, k := newWorld(), newKluster()
+	s, _ := newStore(t, w, k)
+	s.Timeout = 10 * time.Second
+	if _, err := s.Bootstrap(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	k.pods[1].Ready, k.readyAt = false, time.Now().Add(time.Second)
+	if _, err := s.Check(context.Background()); err != nil {
+		t.Fatalf("bramka przy wracającym podzie: %v", err)
 	}
 }
 

@@ -516,6 +516,14 @@ type Report struct {
 // kolejnego węzła na PDB (decyzja 42).
 func (s Store) Check(ctx context.Context) (Report, error) {
 	var rep Report
+	// Poprzedni krok mógł właśnie odtworzyć pod OpenBao: wolumen local-path
+	// trzyma go na węźle, więc po drainie wraca dopiero po uncordon. W CI
+	// bramka przyszła 0,2 s po drainie, gdy openbao-1 dopiero startował,
+	// i port-forward skończył się EOF. Ocena dotyczy stanu ustalonego, nie
+	// powrotu poda — najpierw gotowość wszystkich replik.
+	if err := s.wait(ctx, "pody OpenBao gotowe", s.allReady); err != nil {
+		return rep, err
+	}
 	err := s.session(ctx, sensitive.Value{}, false, func(srv Server) error {
 		st, err := s.verify(ctx, srv)
 		rep.Status = st
@@ -533,8 +541,11 @@ func (s Store) Check(ctx context.Context) (Report, error) {
 			return cli.Unmet("OpenBao: brak poda standby do sprawdzenia restartu")
 		}
 		old, ok, err := s.pod(ctx, victim)
-		if err != nil || !ok {
-			return fmt.Errorf("pod %s: %v", victim, err)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return cli.Unmet("pod %s zniknął przed restartem — coś innego wymienia pody OpenBao w trakcie bramki", victim)
 		}
 		cli.Step("OpenBao: restart %s (standby) — ma wrócić odpieczętowany bez człowieka", victim)
 		started := time.Now()
