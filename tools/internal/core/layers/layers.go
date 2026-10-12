@@ -57,11 +57,15 @@ var ioStd = []string{"os/exec", "net", "net/http", "syscall"}
 
 // pureExternal — biblioteki spoza modułu, których mogą używać rdzeń
 // i etapy: typy Kubernetesa i nazw obrazów, YAML. Klienci (client-go,
-// zdalny rejestr) to adaptery.
+// zdalny rejestr) to adaptery. Dwa YAML-e: sigs.k8s.io/yaml do odczytu
+// przez typy Go, go.yaml.in/yaml/v3 do edycji drzewa z zachowaniem
+// komentarzy (pakowanie charta, decyzja 45) — tej sigs.k8s.io/yaml nie
+// umie, a sam korzysta z go.yaml.in/yaml pod spodem.
 var pureExternal = []string{
 	"k8s.io/api/",
 	"k8s.io/apimachinery/",
 	"sigs.k8s.io/yaml",
+	"go.yaml.in/yaml/v3",
 	"github.com/google/go-containerregistry/pkg/name",
 }
 

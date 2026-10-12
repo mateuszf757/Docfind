@@ -5,7 +5,9 @@ name: ci
 #           klastrowe; nic nie opuszcza pipeline'u
 # main    → dodatkowo publikacja obrazu otagowanego commitem — jedyny build
 #           tego commita (decyzja 40); klaster dostaje obraz z GHCR po
-#           digeście — dowód, że opublikowany obraz to obraz sprawdzony
+#           digeście — dowód, że opublikowany obraz to obraz sprawdzony;
+#           po bramkach klastra chart z tym obrazem, który śledzi Argo CD
+#           na stagingu (decyzja 45)
 # tag v*  → wydanie bez builda (decyzja 40): tag z adnotacją zakłada
 #           `./bin/mise run release` po akceptacji digestu z main na stagingu;
 #           tu ten sam digest dostaje w rejestrze tag X.Y.Z i atestację
@@ -55,8 +57,8 @@ on:
 # 19.10.2026, z innym python3 i innymi wersjami narzędzi na obrazie.
 
 # Najmniejsze uprawnienia na poziomie workflowu; zapis do rejestru dostają
-# tylko zadania, które go używają: build (publikacja), release (tag wydania
-# w rejestrze) i zadania atestacji (kopia obok obrazu).
+# tylko zadania, które go używają: build i chart (publikacja), release (tag
+# wydania w rejestrze) i zadania atestacji (kopia obok artefaktu).
 permissions:
   contents: read
 
@@ -698,3 +700,77 @@ jobs:
           include-hidden-files: true
           retention-days: 7
           if-no-files-found: warn
+
+  # Chart aplikacji z obrazem tego commita po digeście, jako artefakt OCI
+  # w GHCR (decyzja 45). Argo CD na stagingu wdraża najwyższą wersję z zakresu
+  # kilka minut po publikacji, więc publikacja to promocja na staging — stąd
+  # osobne zadanie po bramkach klastra na obrazie z GHCR, a nie krok w build.
+  # Commit, na którym bramka padła, nie trafia na staging; trafi następny
+  # zielony. Powtarzalny jak obraz: ten sam commit, ten sam digest. dft
+  # pobiera go z rejestru po wysłaniu i sprawdza wersję i obraz w wartościach.
+  chart:
+    needs: [build, attest, cluster]
+    if: github.event_name == 'push' && github.ref_type == 'branch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # Publikacja charta do GHCR.
+      packages: write
+    outputs:
+      chart: ${{ steps.chart.outputs.chart }}
+      digest: ${{ steps.chart.outputs.chart-digest }}
+    env:
+      # Jak w build: zadanie z packages: write uruchamia tylko dft zbudowany
+      # tutaj, z samym Go.
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Wersja charta z historii i tagów (git describe), jak w build.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Go (mise)
+        run: ./bin/mise install go
+
+      - name: logowanie do GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: publikacja charta (OCI)
+        id: chart
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
+        run: ./bin/mise run chart:publish -- --image "$IMAGE"
+
+  # Atestacja GitHuba charta — ta sama tożsamość workflowu i commita co
+  # obraz. Osobne zadanie z tego samego powodu co attest: id-token: write
+  # tylko tam, gdzie jest sama akcja atestacji. Klient (Etap 10) i weryfikacja
+  # przy przyjęciu (Etap 9) sprawdzą ją tak samo:
+  # gh attestation verify oci://…/charts/docfind@sha256:….
+  attest-chart:
+    needs: chart
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+      attestations: write
+      packages: write
+    steps:
+      - name: logowanie do GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ needs.chart.outputs.chart }}
+          subject-digest: ${{ needs.chart.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false

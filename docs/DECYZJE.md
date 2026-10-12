@@ -1729,6 +1729,68 @@ musi utworzyć klienta od nowa.
 **Kiedy zmieniam zdanie:** gdy sekretów będzie dużo, a rotacja częsta —
 wtedy obserwowanie katalogu (`..data`) zamiast odczytu przy każdym użyciu.
 
+## 45. GitOps przez chart OCI: CI publikuje chart, Argo CD śledzi wersje
+
+> Pierwszy krok Etapu 5. Rozstrzyga pytanie z planu przed Etapem 5: jak
+> nowy digest trafia do środowiska, skoro reguła `main` blokuje push z CI,
+> a push tokenem `GITHUB_TOKEN` i tak nie uruchamia workflowów.
+
+**Wybieram chart aplikacji jako artefakt OCI w GHCR, a nie zapis do gita.**
+Na każdym commicie `main` CI publikuje chart z obrazem tego commita po
+digeście, w wersji `X.Y.Z-dev.N`. Argo CD śledzi zakres wersji: staging
+`>=0.0.0-0` (każdy commit z `main`), prod — tylko wydania.
+
+Publikacja chartu to więc promocja na staging: Argo wdraża najwyższą wersję
+z zakresu kilka minut po jej pojawieniu się w rejestrze. Dlatego chart
+publikuje osobne zadanie dopiero po bramkach klastra na obrazie z GHCR
+(`build` → `attest` → `cluster` → `chart`), a nie krok w `build` zaraz po
+obrazie. Pierwsza wersja publikowała go w `build` i staging dostałby commit,
+który nie przeszedł jeszcze drainu, rotacji ani odnowienia TLS. Commit, na
+którym bramka padła, nie trafia na staging wcale — trafi następny zielony.
+Kolejność biegów nie ma znaczenia: Argo bierze najwyższą wersję, więc
+spóźniona publikacja starszego commita niczego nie cofa. Odpadły:
+osobne repozytorium środowisk z aplikacją GitHub z prawem zapisu (pełny
+GitOps, ale dwa repozytoria i poświadczenie do pilnowania), Argo CD Image
+Updater (zapis do gita — ten sam problem) i Kargo (nowy komponent
+zastępujący część `dft release` i `promote`). Chart OCI to też droga, którą
+klient instaluje produkt w Etapie 10 — jedna ścieżka zamiast dwóch.
+
+**Chart jest artefaktem jak obraz:**
+- wersja z tożsamości commita, bez metadanych budowania (`+sha`). OCI nie
+  dopuszcza `+` w tagu: Helm zapisuje `_`, a z powrotem zamienia je tylko
+  umowa Helma i Argo CD (`GetTags` w `util/helm/client.go`); rejestr,
+  `gh attestation` i reszta narzędzi widzą `_`. Porządku SemVer metadane
+  i tak nie zmieniają, a commit jest w `appVersion` i adnotacji
+  `org.opencontainers.image.revision`;
+- w wartościach obraz po digeście i wersja wdrożenia (`api.version`) —
+  chart z rejestru wdraża dokładnie obraz zbudowany i zaatestowany z tego
+  commita, bez `--set` przy instalacji;
+- powtarzalny (decyzja 21): `helm package` zapisuje czasy plików z dysku
+  (w CI — czas checkoutu), a `helm push` dopisuje do manifestu bieżący czas,
+  więc ten sam commit dawałby inne digesty. `dft` pakuje sam (wpisy
+  posortowane, czas commita, gzip bez nazwy i czasu) i wysyła manifest OCI
+  w formacie Helma bajt w bajt — ponowny bieg tego samego commita daje ten
+  sam digest;
+- sprawdzany w rejestrze po wysłaniu: `dft` pobiera manifest po digeście
+  i archiwum z warstwy i porównuje wersję i obraz z tym, co miało trafić;
+- z atestacją GitHuba z tego samego biegu co obraz.
+
+Edycja `values.yaml` przy pakowaniu idzie po drzewie YAML (komentarze
+zostają), a ścieżka klucza musi istnieć — literówka to błąd, nie nowy klucz.
+`dft test` renderuje spakowany chart z wartościami stagingu i wymaga w nim
+obrazu po digeście, jak od komponentów z zewnątrz.
+
+**Co tracę:** stan wdrożony na stagingu nie jest commitem w gicie — wersję
+wybiera Argo z rejestru w ramach zakresu z gita, a cofnięcie to przypięcie
+wersji w gicie, nie `git revert`. Pakiet `charts/docfind` w GHCR trzeba raz
+ustawić jako publiczny (jak `docfind-api`), inaczej Argo i klient muszą się
+logować. Własne pakowanie to kod, który musi nadążać za formatem Helma —
+`dft test` renderuje wynik prawdziwym Helmem.
+
+**Kiedy zmieniam zdanie:** gdy środowisk będzie więcej niż dwa i promocja
+między nimi zacznie potrzebować bramek per środowisko — wtedy Kargo, które
+robi z tego obiekt, a nie skrypt.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

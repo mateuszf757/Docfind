@@ -2,7 +2,10 @@ package registry
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http/httptest"
@@ -327,4 +330,32 @@ func mustTag(t *testing.T, ref string) name.Tag {
 		t.Fatal(err)
 	}
 	return tag
+}
+
+// TestPushManifest: artefakt inny niż obraz (chart) trafia do rejestru bajt
+// w bajt — digest z rejestru to digest złożonego manifestu, a bloby
+// odczytuje się z powrotem po digeście.
+func TestPushManifest(t *testing.T) {
+	repo := strings.TrimSuffix(testRegistry(t), "/docfind-api") + "/charts/docfind"
+	config, layer := []byte(`{"name":"docfind","version":"0.4.1-dev.3"}`), []byte("archiwum charta")
+	sum := func(b []byte) string { s := sha256.Sum256(b); return "sha256:" + hex.EncodeToString(s[:]) }
+	manifest := []byte(fmt.Sprintf(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{"mediaType":"application/vnd.cncf.helm.config.v1+json","digest":"%s","size":%d},"layers":[{"mediaType":"application/vnd.cncf.helm.chart.content.v1.tar+gzip","digest":"%s","size":%d}]}`,
+		sum(config), len(config), sum(layer), len(layer)))
+	ctx := context.Background()
+	c := Client{}
+	digest, err := c.PushManifest(ctx, repo+":0.4.1-dev.3", manifest, "application/vnd.oci.image.manifest.v1+json",
+		artifact.Blob{Data: config, MediaType: "application/vnd.cncf.helm.config.v1+json"}, artifact.Blob{Data: layer, MediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest != sum(manifest) {
+		t.Errorf("digest %s, oczekiwano %s", digest, sum(manifest))
+	}
+	got, mediaType, err := c.Manifest(ctx, repo+"@"+digest)
+	if err != nil || string(got) != string(manifest) || mediaType != "application/vnd.oci.image.manifest.v1+json" {
+		t.Errorf("manifest z rejestru: %s %s, %v", got, mediaType, err)
+	}
+	if blob, err := c.Blob(ctx, repo, sum(layer)); err != nil || string(blob) != string(layer) {
+		t.Errorf("blob: %q, %v", blob, err)
+	}
 }
