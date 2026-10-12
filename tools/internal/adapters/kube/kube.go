@@ -13,6 +13,7 @@ import (
 
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
@@ -59,6 +60,9 @@ func Guard(t cluster.Target) error {
 type Cluster struct {
 	core kubernetes.Interface
 	dyn  dynamic.Interface
+	// config — połączenie z kubeconfigu, dla strumieni (port-forward); nil
+	// w adapterze złożonym z gotowych klientów (New).
+	config *rest.Config
 	// runner i target — kubectl i cmctl na tym samym klastrze co klienci.
 	runner proc.Runner
 	target cluster.Target
@@ -91,7 +95,9 @@ func Connect(t cluster.Target, runner proc.Runner) (*Cluster, error) {
 	if err != nil {
 		return nil, err
 	}
-	return New(core, dyn, runner, t), nil
+	c := New(core, dyn, runner, t)
+	c.config = config
+	return c, nil
 }
 
 // kubectlArgs kieruje kubectl i cmctl na ten sam klaster co klientów —

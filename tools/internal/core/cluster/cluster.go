@@ -50,11 +50,24 @@ type Pod struct {
 	// rolloucie jeszcze odpowiada starą wersją przez preStop).
 	Running     bool
 	Terminating bool
+	// Ready — warunek PodReady: pod jest w endpointach Service.
+	Ready bool
+	// UID — tożsamość tej instancji poda; pod odtworzony pod tą samą nazwą
+	// (StatefulSet) ma inny UID.
+	UID string
 	// Restarts — suma restartów kontenerów.
 	Restarts int32
 	// Restarted — kontenery, które się restartowały: tylko one mają log
 	// poprzedniej instancji.
 	Restarted []string
+}
+
+// StatefulSet — stan StatefulSetu: ile replik chce spec, ile jest gotowych
+// i która rewizja szablonu jest bieżąca (przy OnDelete pody na starszej
+// rewizji czekają na wymianę).
+type StatefulSet struct {
+	Wanted, Ready  int32
+	UpdateRevision string
 }
 
 // Rollout — stan Deploymentu.
@@ -144,6 +157,10 @@ type Release struct {
 	// 123456789012) zostałby liczbą, a schemat charta odrzuciłby wdrożenie.
 	SetString []string
 	Timeout   time.Duration
+	// HooksOnly — helm czeka tylko na hooki, nie na gotowość zasobów. Dla
+	// komponentu, który staje się gotowy dopiero po kroku po instalacji:
+	// pody OpenBao są poza Service, dopóki `dft` go nie zainicjalizuje.
+	HooksOnly bool
 }
 
 // String — do komunikatów.

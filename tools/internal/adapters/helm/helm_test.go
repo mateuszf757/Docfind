@@ -18,7 +18,8 @@ import (
 
 func TestInstallAndTemplate(t *testing.T) {
 	f := &proc.Fake{Responses: map[string]proc.FakeResponse{
-		"helm upgrade --install platform deploy/charts/platform --namespace gateway --create-namespace --values v.yaml --set gateway.name=docfind --wait --timeout 3m0s --kubeconfig /k --kube-context k3d-docfind": {},
+		"helm upgrade --install platform deploy/charts/platform --namespace gateway --create-namespace --values v.yaml --set gateway.name=docfind --wait=watcher --timeout 3m0s --kubeconfig /k --kube-context k3d-docfind": {},
+		"helm upgrade --install openbao /c/openbao.tgz --namespace openbao --wait=hookOnly --timeout 5m0s --kubeconfig /k --kube-context k3d-docfind":                                                                       {},
 		"helm template docfind deploy/charts/docfind --set api.replica=3":      {Stderr: "Error: values don't meet the specifications of the schema", Code: 1},
 		"helm template docfind deploy/charts/docfind --set api.image.tag=lint": {Stdout: "kind: Deployment\n"},
 	}}
@@ -30,6 +31,14 @@ func TestInstallAndTemplate(t *testing.T) {
 	})
 	if err != nil {
 		t.Errorf("instalacja: %v", err)
+	}
+	// Bez czekania na gotowość — pody staną się gotowe dopiero po kroku po
+	// instalacji (inicjalizacja OpenBao).
+	err = h.Install(ctx, cluster.Target{Kubeconfig: "/k", Context: "k3d-docfind"}, cluster.Release{
+		Name: "openbao", Chart: "/c/openbao.tgz", Namespace: "openbao", Timeout: 5 * time.Minute, HooksOnly: true,
+	})
+	if err != nil {
+		t.Errorf("instalacja bez czekania na gotowość: %v", err)
 	}
 	err = h.Template(ctx, cluster.Release{Name: "docfind", Chart: "deploy/charts/docfind", Set: []string{"api.replica=3"}}, false, &strings.Builder{})
 	if cli.ExitCode(err) != cli.ExitUnmet || !strings.Contains(err.Error(), "specifications of the schema") {

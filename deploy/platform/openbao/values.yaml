@@ -1,0 +1,252 @@
+# OpenBao — magazyn sekretów platformy (decyzja 42). Wartości do charta
+# openbao-helm przypiętego w ci/pins.env; instaluje `dft cluster up` po
+# charcie platformy, bo certyfikat TLS wystawia wewnętrzne CA z tamtego
+# charta (ClusterIssuer docfind-internal-ca).
+#
+# Tylko serwer: bez injectora (sekrety do podów niesie External Secrets
+# Operator, nie sidecar w każdym podzie), bez sterownika CSI i bez UI.
+
+global:
+  # TLS na listenerze — przez to połączenie idą tokeny i wartości sekretów.
+  tlsDisable: false
+
+injector:
+  enabled: false
+
+csi:
+  enabled: false
+
+ui:
+  enabled: false
+
+server:
+  image:
+    registry: quay.io
+    repository: openbao/openbao
+    # Tag i digest indeksu (decyzja 20). Ten sam digest w quay.io, Docker Hub
+    # i GHCR; podpis cosign (pakiet Sigstore w referrerach obrazu) wystawił
+    # workflow openbao/openbao release-images.yml@refs/tags/v2.7.1 —
+    # sprawdzone `gh attestation verify --bundle` przy przypięciu.
+    tag: "2.7.1@sha256:6d2b93856e3fcf7b18ad855a0b51eaba474dc8b79cf554379ea32034797d2acf"
+
+  # Decyzja 16: requesty zawsze, limit pamięci zawsze, bez limitu CPU.
+  # Zmierzone na k3d (kubectl top, bez ESO): 26–35 MiB na replikę, aktywna
+  # najwięcej. Request z zapasem na ESO i audyt; do sprawdzenia, gdy ESO
+  # zacznie odświeżać sekrety.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      memory: 256Mi
+
+  # Kontekst zgodny z Pod Security restricted (przestrzeń nazw openbao ma ten
+  # profil). Bez IPC_LOCK: przy Raft mlock jest wyłączony (disable_mlock
+  # w konfiguracji niżej), bo Raft trzyma dane w plikach mapowanych do
+  # pamięci, a zablokowanie ich w RAM nie ma sensu.
+  statefulSet:
+    securityContext:
+      pod:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      container:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+
+  # Wszystkie pody naraz, nie po kolei (domyślne OrderedReady). Po kolei
+  # openbao-1 powstaje dopiero, gdy openbao-0 jest gotowy — a gotowy jest
+  # dopiero po inicjalizacji, a po pełnym restarcie klastra dopiero z kworum
+  # Raft, którego sam nie ma. Zakleszczenie wyszło przy pierwszym wdrożeniu.
+  podManagementPolicy: Parallel
+
+  # Zmiana konfiguracji nie restartuje podów sama: przy Raft kolejność ma
+  # znaczenie (najpierw standby, aktywny na końcu, po oddaniu przywództwa),
+  # więc pody wymienia `dft` (decyzja 42), a nie kontroler StatefulSetu.
+  updateStrategyType: OnDelete
+  # Suma konfiguracji HCL w szablonie poda: zmiana konfiguracji to nowa
+  # rewizja StatefulSetu, a pody na starej rewizji wymienia `dft`. Bez tego
+  # nowa ConfigMapa leżałaby obok podów działających na starej.
+  configAnnotation: true
+
+  # Gotowość: odpieczętowany (aktywny albo standby) — 200. Zapieczętowany 503,
+  # niezainicjalizowany 501: pod poza Service. Zapytanie HTTP zamiast
+  # domyślnego `bao status -tls-skip-verify` uruchamianego co 5 s jako proces.
+  readinessProbe:
+    enabled: true
+    path: "/v1/sys/health?standbyok=true"
+  # Żywotność sprawdza tylko, czy proces odpowiada: zapieczętowany
+  # i niezainicjalizowany dostają 204, bo restart nic by im nie dał — klucz
+  # odpieczętowania przyjdzie z Secreta albo wcale.
+  livenessProbe:
+    enabled: true
+    path: "/v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204"
+    initialDelaySeconds: 30
+
+  # System plików tylko do odczytu, a skrypt startowy charta kopiuje
+  # konfigurację do /tmp i podstawia w niej adresy poda (sed -i).
+  volumes:
+    - name: tmp
+      emptyDir:
+        sizeLimit: 16Mi
+  volumeMounts:
+    - name: tmp
+      mountPath: /tmp
+
+  # Wolumeny Secretów bez subPath: odnowiony certyfikat dociera do poda,
+  # a tls_auto_reload go przeładowuje. Montowane pod
+  # <path>/<name>/<klucz>.
+  extraVolumes:
+    - type: secret
+      name: openbao-tls
+      path: /openbao/tls
+    # Klucz odpieczętowania (seal "static"): 32 losowe bajty, Secret zakłada
+    # `dft` przed instalacją i nigdy go nie wypisuje.
+    - type: secret
+      name: openbao-seal
+      path: /openbao/seal
+
+  # Ruch do serwera tylko z ESO i między replikami. port-forward `dft`
+  # wchodzi do przestrzeni sieciowej poda przez kubelet, więc NetworkPolicy go
+  # nie dotyczy — i dobrze, bo nie przechodzi przez sieć klastra.
+  networkPolicy:
+    enabled: true
+    ingress:
+      - from:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: external-secrets
+        ports:
+          - port: 8200
+            protocol: TCP
+      - from:
+          - podSelector:
+              matchLabels:
+                app.kubernetes.io/name: openbao
+        ports:
+          - port: 8200
+            protocol: TCP
+          - port: 8201
+            protocol: TCP
+
+  dataStorage:
+    enabled: true
+    size: 1Gi
+
+  ha:
+    enabled: true
+    # Po jednej replice na węzeł (anti-affinity z charta). Drain węzła
+    # zabiera jedną, Raft ma kworum z dwóch, a odtworzony pod odpieczętowuje
+    # się sam. PDB z charta: maxUnavailable 1.
+    replicas: 3
+    # Adres do przekierowań klientów — po nazwie z usługi headless, którą
+    # obejmuje certyfikat, a nie po IP poda.
+    apiAddr: "https://$(HOSTNAME).openbao-internal:8200"
+    raft:
+      enabled: true
+      setNodeId: true
+      config: |
+        ui = false
+        disable_mlock = true
+
+        listener "tcp" {
+          address         = "[::]:8200"
+          cluster_address = "[::]:8201"
+          tls_cert_file   = "/openbao/tls/openbao-tls/tls.crt"
+          tls_key_file    = "/openbao/tls/openbao-tls/tls.key"
+          tls_min_version = "tls13"
+          # Certyfikat odnawia cert-manager; bez tego OpenBao trzymałby stary
+          # do SIGHUP albo restartu.
+          tls_auto_reload = true
+        }
+
+        storage "raft" {
+          path = "/openbao/data"
+          retry_join {
+            leader_api_addr     = "https://openbao-0.openbao-internal:8200"
+            leader_ca_cert_file = "/openbao/tls/openbao-tls/ca.crt"
+          }
+          retry_join {
+            leader_api_addr     = "https://openbao-1.openbao-internal:8200"
+            leader_ca_cert_file = "/openbao/tls/openbao-tls/ca.crt"
+          }
+          retry_join {
+            leader_api_addr     = "https://openbao-2.openbao-internal:8200"
+            leader_ca_cert_file = "/openbao/tls/openbao-tls/ca.crt"
+          }
+        }
+
+        # Automatyczne odpieczętowanie kluczem z Secreta — lokalny
+        # odpowiednik KMS (decyzja 42). Zmiana klucza: nowy current_key
+        # z nowym identyfikatorem, stary jako previous_key.
+        seal "static" {
+          current_key_id = "docfind-seal-1"
+          current_key    = "file:///openbao/seal/openbao-seal/key"
+        }
+
+        service_registration "kubernetes" {}
+
+        # Audyt każdego żądania na stdout poda: kto, co, kiedy. Wartości
+        # sekretów i tokeny trafiają do wpisu jako HMAC (log_raw=false), więc
+        # log nie staje się miejscem, z którego da się je odczytać. OpenBao
+        # odmawia obsługi żądania, którego nie umie zapisać w audycie.
+        # Deklaratywnie, bo OpenBao 2.7 nie włącza audytu przez API — token
+        # z uprawnieniami nie przekieruje go w inne miejsce. `dft` sprawdza,
+        # że urządzenie działa (deploy/platform/openbao/config.yaml).
+        audit "file" "stdout" {
+          description = "Audyt żądań na stdout poda"
+          options {
+            file_path = "stdout"
+            log_raw   = "false"
+          }
+        }
+
+  # Konto, przez które `dft` loguje się do OpenBao (rola platform-admin,
+  # uwierzytelnienie kubernetes) — token root jest odwoływany po pierwszej
+  # konfiguracji. Tokeny dla tego konta wydaje TokenRequest na 10 minut.
+  serviceAccount:
+    create: true
+
+# Certyfikat listenera z wewnętrznego CA i konto administracyjne — w tym
+# samym wydaniu: pody czekają na Secret z certyfikatem przy montowaniu
+# wolumenu, więc kolejność w obrębie wydania nie ma znaczenia.
+extraObjects:
+  - apiVersion: cert-manager.io/v1
+    kind: Certificate
+    metadata:
+      name: openbao-tls
+      namespace: openbao
+    spec:
+      secretName: openbao-tls
+      duration: 2160h
+      renewBefore: 720h
+      privateKey:
+        algorithm: ECDSA
+        size: 256
+        rotationPolicy: Always
+      usages: [server auth]
+      dnsNames:
+        - openbao
+        - openbao.openbao.svc
+        - openbao.openbao.svc.cluster.local
+        - openbao-active
+        - openbao-active.openbao.svc
+        - openbao-active.openbao.svc.cluster.local
+        - "*.openbao-internal"
+        - "*.openbao-internal.openbao.svc"
+        - "*.openbao-internal.openbao.svc.cluster.local"
+      issuerRef:
+        group: cert-manager.io
+        kind: ClusterIssuer
+        name: docfind-internal-ca
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: openbao-admin
+      namespace: openbao
+    automountServiceAccountToken: false

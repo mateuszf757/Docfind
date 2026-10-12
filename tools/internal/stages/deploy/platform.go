@@ -8,6 +8,7 @@ import (
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
 	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
+	"github.com/mateuszf757/Docfind/tools/internal/core/secretstore"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/poll"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/identity"
@@ -28,7 +29,8 @@ type platformChart struct {
 // wszystkim (bez niego żaden pod nie rozwiąże nazwy), Envoy Gateway przed
 // cert-managerem (jego chart instaluje CRD Gateway API, a cert-manager
 // z obsługą Gateway API bez nich nie czeka, tylko wpada w CrashLoopBackOff),
-// na końcu chart platformy, który tworzy zasoby obu.
+// potem chart platformy, który tworzy zasoby obu, i na końcu OpenBao — jego
+// certyfikat wystawia wewnętrzne CA z charta platformy.
 func (d Deployer) platform(ctx context.Context, c Cluster) error {
 	for _, pc := range []platformChart{
 		{pins.CoreDNS, "CoreDNS", "kube-system", false, "deploy/platform/coredns/values.yaml", 3 * time.Minute},
@@ -89,7 +91,38 @@ func (d Deployer) platform(ctx context.Context, c Cluster) error {
 		return err
 	}
 	cli.Step("Gateway zaprogramowany")
-	return nil
+	return d.secretStore(ctx)
+}
+
+// secretStore instaluje OpenBao (decyzja 42): klucz odpieczętowania
+// i przestrzeń nazw przed chartem, inicjalizacja i konfiguracja po nim.
+// Helm nie czeka na gotowość podów — staną się gotowe dopiero po
+// inicjalizacji, której Helm nie zrobi.
+func (d Deployer) secretStore(ctx context.Context) error {
+	ss, err := d.SecretStores(d.target())
+	if err != nil {
+		return err
+	}
+	if err := ss.Prepare(ctx); err != nil {
+		return err
+	}
+	chart, err := d.Pins.Chart(pins.OpenBao)
+	if err != nil {
+		return err
+	}
+	archive, err := d.Charts.Fetch(ctx, chart)
+	if err != nil {
+		return err
+	}
+	cli.Step("OpenBao: chart %s (suma zweryfikowana)", chart.Version)
+	if err := d.Releases.Install(ctx, d.target(), cluster.Release{
+		Name: pins.OpenBao, Chart: archive, Namespace: secretstore.Namespace,
+		ValuesFiles: []string{d.path(secretstore.Dir + "/values.yaml")}, Timeout: 5 * time.Minute, HooksOnly: true,
+	}); err != nil {
+		return err
+	}
+	_, err = ss.Bootstrap(ctx)
+	return err
 }
 
 // waitReady czeka na warunek zasobu; obiekt, którego jeszcze nie ma, to

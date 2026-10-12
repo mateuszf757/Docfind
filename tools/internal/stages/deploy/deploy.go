@@ -25,6 +25,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/stages/admission"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/build"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/identity"
+	"github.com/mateuszf757/Docfind/tools/internal/stages/secrets"
 )
 
 // Clusters — klastry k3d (adapters/k3d).
@@ -92,6 +93,14 @@ type Versions interface {
 	VersionOf(ctx context.Context, commit string) (string, error)
 }
 
+// SecretStore — magazyn sekretów platformy (stages/secrets): przygotowanie
+// przed instalacją charta OpenBao i doprowadzenie go do konfiguracji z gita
+// po instalacji.
+type SecretStore interface {
+	Prepare(ctx context.Context) error
+	Bootstrap(ctx context.Context) (secrets.Status, error)
+}
+
 // Deployer — wdrożenie jednego środowiska.
 type Deployer struct {
 	Root string
@@ -113,6 +122,8 @@ type Deployer struct {
 	Builder   Builder
 	Admission Admission
 	Versions  Versions
+	// SecretStores — magazyn sekretów na klastrze środowiska.
+	SecretStores func(t cluster.Target) (SecretStore, error)
 }
 
 // Source — skąd wziąć obraz.

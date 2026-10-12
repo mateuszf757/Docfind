@@ -41,6 +41,12 @@ func toPods(items []corev1.Pod) []cluster.Pod {
 			Images:      map[string]string{},
 			Running:     p.Status.Phase == corev1.PodRunning,
 			Terminating: p.DeletionTimestamp != nil,
+			UID:         string(p.UID),
+		}
+		for _, cond := range p.Status.Conditions {
+			if cond.Type == corev1.PodReady {
+				pod.Ready = cond.Status == corev1.ConditionTrue
+			}
 		}
 		for _, ctr := range p.Spec.Containers {
 			pod.Images[ctr.Name] = ctr.Image

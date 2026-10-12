@@ -1,0 +1,41 @@
+# Stan OpenBao jako kod (decyzja 42). `dft cluster up` doprowadza do niego
+# serwer przy każdym wdrożeniu (stages/secrets): brakujące tworzy, zmienione
+# aktualizuje, a polityki i role spoza tej listy usuwa. Montowań i metod
+# uwierzytelniania spoza listy nie usuwa, tylko zgłasza — wyłączenie
+# montowania kasuje jego dane.
+
+# Urządzenia audytu, które mają działać. Deklaruje je konfiguracja serwera
+# (blok audit w values.yaml), bo OpenBao 2.7 nie włącza audytu przez API;
+# tu `dft` tylko sprawdza, że serwer je ma — brak to warunek niespełniony.
+audit:
+  - path: stdout
+    type: file
+
+mounts:
+  # KV w wersji 2: każda zmiana to nowa wersja, poprzednie zostają do
+  # odczytu i odtworzenia — rotacja, którą da się cofnąć.
+  - path: docfind
+    type: kv
+    description: Sekrety DOCFIND (aplikacja i platforma)
+    options:
+      version: "2"
+
+auth:
+  # Konta Kubernetesa jako tożsamość: OpenBao sprawdza token w API serverze
+  # (TokenReview) własnym kontem z rolą system:auth-delegator.
+  - path: kubernetes
+    type: kubernetes
+    config:
+      kubernetes_host: https://kubernetes.default.svc
+
+roles:
+  # dft po pierwszej konfiguracji: token root jest wtedy odwoływany, a każde
+  # kolejne `cluster up` loguje się tokenem konta openbao-admin wydanym
+  # przez TokenRequest na 10 minut, dla odbiorcy "openbao".
+  - name: platform-admin
+    auth: kubernetes
+    serviceAccount: openbao-admin
+    namespace: openbao
+    audience: openbao
+    policies: [platform-admin]
+    ttl: 15m

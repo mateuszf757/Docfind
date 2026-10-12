@@ -88,7 +88,11 @@ func runCluster(ctx context.Context, w *workspace, args []string) error {
 		if err != nil {
 			return err
 		}
-		return d.Down(ctx)
+		if err := d.Down(ctx); err != nil {
+			return err
+		}
+		// Klucz odzyskiwania usuniętego klastra niczego już nie otworzy.
+		return os.RemoveAll(stateDir(def.Cluster.Name))
 	case "evidence":
 		return runEvidence(ctx, w, def)
 	default:
@@ -114,6 +118,7 @@ func (w *workspace) deployer(def environment.Definition) (deploy.Deployer, error
 			return c, nil
 		},
 		Builder: w.builder(), Admission: w.admission(), Versions: w.git(),
+		SecretStores: w.secretStores(def),
 	}, nil
 }
 
@@ -130,7 +135,7 @@ func runEvidence(ctx context.Context, w *workspace, def environment.Definition) 
 	collector := evidence.Collector{
 		Nodes:      w.k3d(),
 		Name:       def.Cluster.Name,
-		Namespaces: []string{def.App.Namespace, def.Gateway.Namespace, "envoy-gateway-system", "cert-manager", "kube-system"},
+		Namespaces: []string{def.App.Namespace, def.Gateway.Namespace, "envoy-gateway-system", "cert-manager", "openbao", "kube-system"},
 		Dir:        filepath.Join(w.reportDir(), "evidence-"+def.Name),
 	}
 	if c, err := w.connect(def); err != nil {
