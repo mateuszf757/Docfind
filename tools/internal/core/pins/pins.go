@@ -60,6 +60,9 @@ const (
 	ExternalSecretsVersion   = "DF_EXTERNAL_SECRETS_CHART_VERSION"
 	ExternalSecretsURL       = "DF_EXTERNAL_SECRETS_CHART_URL"
 	ExternalSecretsSHA256    = "DF_EXTERNAL_SECRETS_CHART_SHA256"
+	ArgoCDChartVersion       = "DF_ARGOCD_CHART_VERSION"
+	ArgoCDChartURL           = "DF_ARGOCD_CHART_URL"
+	ArgoCDChartSHA256        = "DF_ARGOCD_CHART_SHA256"
 	BuildKitImage            = "DF_BUILDKIT_IMAGE"
 	SBOMGeneratorImage       = "DF_SBOM_GENERATOR_IMAGE"
 	RegistryImage            = "DF_REGISTRY_IMAGE"
@@ -87,6 +90,9 @@ var rules = map[string]rule{
 	ExternalSecretsVersion:   {semver, "wersja X.Y.Z"},
 	ExternalSecretsURL:       {regexp.MustCompile(`^https://`), "adres https"},
 	ExternalSecretsSHA256:    {sha256Hex, "suma SHA-256"},
+	ArgoCDChartVersion:       {semver, "wersja X.Y.Z"},
+	ArgoCDChartURL:           {regexp.MustCompile(`^https://`), "adres https"},
+	ArgoCDChartSHA256:        {sha256Hex, "suma SHA-256"},
 	BuildKitImage:            {pinnedImage, "obraz z digestem"},
 	SBOMGeneratorImage:       {pinnedImage, "obraz z digestem"},
 	RegistryImage:            {pinnedImage, "obraz z digestem"},
@@ -102,6 +108,7 @@ var chartURLs = map[string]string{
 	CertManagerChartURL: CertManagerChartVersion,
 	OpenBaoChartURL:     OpenBaoChartVersion,
 	ExternalSecretsURL:  ExternalSecretsVersion,
+	ArgoCDChartURL:      ArgoCDChartVersion,
 }
 
 // Load czyta i sprawdza ci/pins.env w repozytorium o korzeniu root.
@@ -193,6 +200,7 @@ const (
 	EnvoyGateway    = "envoy-gateway"
 	OpenBao         = "openbao"
 	ExternalSecrets = "external-secrets"
+	ArgoCD          = "argocd"
 )
 
 // Chart — przypięty chart platformy.
@@ -211,7 +219,7 @@ type Chart struct {
 func (c Chart) OCI() bool { return strings.HasPrefix(c.Source, "oci://") }
 
 // Chart zwraca przypięty chart platformy (CoreDNS, CertManager,
-// EnvoyGateway, OpenBao, ExternalSecrets).
+// EnvoyGateway, OpenBao, ExternalSecrets, ArgoCD).
 func (p Pins) Chart(name string) (Chart, error) {
 	switch name {
 	case CoreDNS:
@@ -224,6 +232,8 @@ func (p Pins) Chart(name string) (Chart, error) {
 		return Chart{Name: name, Version: p[OpenBaoChartVersion], Source: p[OpenBaoChartURL], SHA256: p[OpenBaoChartSHA256]}, nil
 	case ExternalSecrets:
 		return Chart{Name: name, Version: p[ExternalSecretsVersion], Source: p[ExternalSecretsURL], SHA256: p[ExternalSecretsSHA256]}, nil
+	case ArgoCD:
+		return Chart{Name: name, Version: p[ArgoCDChartVersion], Source: p[ArgoCDChartURL], SHA256: p[ArgoCDChartSHA256]}, nil
 	}
 	return Chart{}, fmt.Errorf("nieznany chart platformy %q", name)
 }

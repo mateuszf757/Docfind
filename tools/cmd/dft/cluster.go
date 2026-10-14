@@ -31,9 +31,10 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/stages/ingress"
 )
 
-// sourceArgs czyta, skąd wziąć obraz: bez flag — build z drzewa;
-// --image repozytorium@sha256:… — z rejestru; --image-archive
-// i --config-digest — archiwum z zadania build.
+// sourceArgs czyta, skąd wziąć obraz: bez flag — z definicji środowiska
+// (build z drzewa albo obraz z charta, który wybierze Argo CD); --image
+// repozytorium@sha256:… — z rejestru; --image-archive i --config-digest —
+// archiwum z zadania build.
 func sourceArgs(args []string) (deploy.Source, error) {
 	const usage = "dft cluster up [--image <obraz>@sha256:… | --image-archive <plik.tar> --config-digest sha256:…]"
 	fs := flag.NewFlagSet("cluster up", flag.ContinueOnError)
@@ -51,7 +52,6 @@ func sourceArgs(args []string) (deploy.Source, error) {
 	case src.Ref == "" && src.Archive != "" && src.Config != "":
 		src.Kind = environment.SourceArchive
 	case src.Ref == "" && src.Archive == "" && src.Config == "":
-		src.Kind = environment.SourceLocal
 	default:
 		return src, cli.Usage("użycie: %s", usage)
 	}
@@ -118,7 +118,7 @@ func (w *workspace) deployer(def environment.Definition) (deploy.Deployer, error
 			}
 			return c, nil
 		},
-		Builder: w.builder(), Admission: w.admission(), Versions: w.git(),
+		Builder: w.builder(), Admission: w.admission(), Versions: w.git(), ChartRegistry: registry.Client{},
 		SecretStores: w.secretStores(def),
 		DNSTokens: func(t cluster.Target) (deploy.DNSToken, error) {
 			return w.dnsTokens(def, t)

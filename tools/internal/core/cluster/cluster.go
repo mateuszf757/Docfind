@@ -142,6 +142,35 @@ type SecretStore struct {
 	Reason, Message string
 }
 
+// Application — stan aplikacji Argo CD (decyzja 46).
+type Application struct {
+	// Sync — Synced, OutOfSync albo Unknown: czy manifesty na klastrze
+	// zgadzają się z chartem w wersji Revision.
+	Sync string
+	// Revision — wersja charta, którą Argo wybrał z zakresu.
+	Revision string
+	// Health — Healthy, Progressing, Degraded, Missing, Suspended, Unknown.
+	Health, HealthMessage string
+	// Operation — ostatnia operacja synchronizacji (pusta faza — nie było).
+	Operation AppOperation
+	// Conditions — warunki aplikacji: typ i komunikat (ComparisonError,
+	// SyncError, InvalidSpecError, …).
+	Conditions []AppCondition
+}
+
+// AppOperation — operacja synchronizacji Application.
+type AppOperation struct {
+	// Phase — Running, Succeeded, Failed, Error, Terminating.
+	Phase    string
+	Revision string
+	Message  string
+}
+
+// AppCondition — warunek Application.
+type AppCondition struct {
+	Type, Message string
+}
+
 // LocalCluster — klaster k3d do utworzenia.
 type LocalCluster struct {
 	Name string

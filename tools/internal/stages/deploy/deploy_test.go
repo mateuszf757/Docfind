@@ -248,6 +248,30 @@ func (f fakeCharts) Install(_ context.Context, _ cluster.Target, r cluster.Relea
 type fakeCluster struct {
 	*recorder
 	image string
+	// apps — kolejne stany Application (ostatni zostaje); helmRecords —
+	// zapis wydania Helma aplikacji sprzed Argo CD.
+	apps        *[]cluster.Application
+	helmRecords []string
+}
+
+func (f fakeCluster) Application(_ context.Context, ns, name string) (cluster.Application, error) {
+	if f.apps == nil || len(*f.apps) == 0 {
+		return cluster.Application{}, errors.New("brak Application")
+	}
+	app := (*f.apps)[0]
+	if len(*f.apps) > 1 {
+		*f.apps = (*f.apps)[1:]
+	}
+	return app, f.call("application %s/%s %s", ns, name, app.Revision)
+}
+func (f fakeCluster) RefreshApplication(_ context.Context, ns, name string) error {
+	return f.call("refresh %s/%s", ns, name)
+}
+func (f fakeCluster) HelmReleaseRecords(context.Context, string, string) ([]string, error) {
+	return f.helmRecords, nil
+}
+func (f fakeCluster) DeleteSecret(_ context.Context, ns, name string) error {
+	return f.call("delete secret %s/%s", ns, name)
 }
 
 func (f fakeCluster) Nodes(context.Context) ([]cluster.Node, error) {
@@ -325,7 +349,9 @@ func deployer(t *testing.T, env string, rec *recorder, exists bool, podImage str
 	return Deployer{
 		Root: root, Env: definition(t, env), Pins: p, Service: "api", Image: apiImage, LogDir: t.TempDir(),
 		Clusters: fakeClusters{rec, exists}, Engine: fakeEngine{rec}, Host: fakeHost{}, Charts: fakeCharts{rec}, Releases: fakeCharts{rec},
-		Connect: func(cluster.Target) (Cluster, error) { return fakeCluster{rec, podImage}, rec.call("connect") },
+		Connect: func(cluster.Target) (Cluster, error) {
+			return fakeCluster{recorder: rec, image: podImage}, rec.call("connect")
+		},
 		Builder: fakeBuilder{rec}, Admission: fakeAdmission{rec}, Versions: versions{},
 		SecretStores: func(cluster.Target) (SecretStore, error) { return fakeSecretStore{rec}, nil },
 		DNSTokens:    func(cluster.Target) (DNSToken, error) { return fakeDNSToken{rec}, nil },
@@ -396,28 +422,6 @@ func TestUpFromRegistry(t *testing.T) {
 	}
 }
 
-// TestUpLetsEncrypt: w środowisku z Let's Encrypt token Cloudflare jest
-// sprawdzany po OpenBao (żyje w nim), a nie przed chartem platformy — na
-// nowym klastrze `dns-token` ma gdzie go zapisać dopiero po OpenBao.
-func TestUpLetsEncrypt(t *testing.T) {
-	quiet(t)
-	digest := "sha256:" + strings.Repeat("d", 64)
-	rec := &recorder{}
-	d := deployer(t, "staging", rec, true, apiImage+":cccccccccccc@"+digest)
-	d.Env.Gateway.ACMEEmail = "ops@example.com"
-	if err := d.Up(context.Background(), Source{Kind: environment.SourceRegistry, Ref: apiImage + "@" + digest}); err != nil {
-		t.Fatalf("%v\n%s", err, strings.Join(rec.calls, "\n"))
-	}
-	if i, j := slices.Index(rec.calls, "openbao bootstrap"), slices.Index(rec.calls, "dns-token ensure"); i < 0 || j < i {
-		t.Errorf("token przed OpenBao albo wcale:\n%s", strings.Join(rec.calls, "\n"))
-	}
-	// Chart platformy bez czekania Helma: jego ExternalSecret i certyfikat
-	// Let's Encrypt są gotowe dopiero po OpenBao, który instaluje się po nim.
-	if i := slices.IndexFunc(rec.calls, func(c string) bool { return strings.HasPrefix(c, "install platform ") }); i < 0 || !strings.HasSuffix(rec.calls[i], "hooksOnly") {
-		t.Errorf("chart platformy z czekaniem Helma na gotowość:\n%s", strings.Join(rec.calls, "\n"))
-	}
-}
-
 // TestUpLocalBuild: obraz z drzewa dostaje tag z identyfikatora obrazu
 // i trafia do węzłów importem; zła tożsamość na podach to warunek
 // niespełniony.
@@ -466,8 +470,9 @@ func TestUpRefusesBeforeTouchingAnything(t *testing.T) {
 		want      string
 	}{
 		{"build z drzewa na ci", "ci", Source{Kind: environment.SourceLocal}, "nie przyjmuje obrazu ze źródła local"},
-		{"archiwum na staging", "staging", Source{Kind: environment.SourceArchive, Archive: "x.tar", Config: "sha256:x"}, "nie przyjmuje obrazu ze źródła archive"},
-		{"Let's Encrypt bez adresu ACME", "staging", Source{Kind: environment.SourceRegistry, Ref: apiImage + "@sha256:" + strings.Repeat("d", 64)}, "DOCFIND_ACME_EMAIL"},
+		{"archiwum na środowisko z Argo CD", "staging", Source{Kind: environment.SourceArchive, Archive: "x.tar", Config: "sha256:x"}, "obraz wybiera zakres"},
+		{"obraz z rejestru na środowisko z Argo CD", "staging", Source{Kind: environment.SourceRegistry, Ref: apiImage + "@sha256:" + strings.Repeat("d", 64)}, "obraz wybiera zakres"},
+		{"Let's Encrypt bez adresu ACME", "staging", Source{}, "DOCFIND_ACME_EMAIL"},
 		{"produkcja bez klastra", "prod", Source{Kind: environment.SourceRegistry}, "tylko klastry k3d"},
 	}
 	for _, tt := range tests {

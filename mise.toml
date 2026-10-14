@@ -208,7 +208,7 @@ run = [
 # deploy/environments/dev.yaml). MISE_ENV=<nazwa> nakłada mise.<nazwa>.toml,
 # który ustawia DOCFIND_ENV i KUBECONFIG tego środowiska (decyzja 35).
 [tasks."cluster:up"]
-description = "Klaster k3d (jeśli go nie ma), platforma, obraz (build, --image-archive albo --image po digeście), chart, tożsamość na każdym podzie"
+description = "Klaster k3d (jeśli go nie ma), platforma, obraz (build, --image-archive albo --image po digeście), chart, tożsamość na każdym podzie; środowisko z Argo CD — bez obrazu: Application i czekanie, aż Argo wdroży najwyższą wersję z zakresu"
 run = "ci/dft cluster up"
 
 [tasks."cluster:down"]
@@ -226,6 +226,10 @@ run = "ci/dft check drain"
 [tasks."cluster:rotation"]
 description = "Warunek Etapu 4: rotacja tokenu metryk przez OpenBao i ESO dociera do każdego poda API bez restartu"
 run = "ci/dft check rotation"
+
+[tasks."cluster:selfheal"]
+description = "Warunek Etapu 5 (decyzja 46): ręczna zmiana zasobu aplikacji (replika więcej, usunięty PDB) wraca do stanu z charta przez Argo CD, bez przestoju"
+run = "ci/dft check selfheal"
 
 [tasks."cluster:identity"]
 description = "Na każdym podzie obraz z Deploymentu, commit z obrazu (rejestr albo drzewo) i wersja z DOCFIND_VERSION"

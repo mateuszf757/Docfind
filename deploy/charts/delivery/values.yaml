@@ -1,0 +1,38 @@
+# Wartości podaje dft z definicji środowiska (deploy/environments,
+# delivery.argocd i AppValues) — tutaj tylko kształt i opisy. Render
+# każdego środowiska z GitOps sprawdza `dft test` (decyzja 46).
+application:
+  # Nazwa Application, projektu i wydania Helma aplikacji (app.release).
+  name: ""
+  # Przestrzeń nazw aplikacji (app.namespace). Zakłada ją platforma z
+  # etykietami PSA i zgodą na trasy — nie aplikacja sama sobie.
+  namespace: ""
+  # Repozytorium charta w rejestrze OCI bez schematu i nazwa charta — Argo
+  # traktuje je wtedy jako Helm OCI, bez Secreta repozytorium. Wyjątek: adres
+  # z portem (host:port/…) nie przechodzi url.Parse i Argo uzna go za zwykłe
+  # repozytorium Helma — wtedy Secret repozytorium z enableOCI (tylko
+  # rejestry lokalne w testach).
+  repoURL: ""
+  chart: ""
+  # Zakres wersji (SemVer): Argo wdraża najwyższą wersję w rejestrze, która
+  # go spełnia.
+  versions: ""
+  # Wartości charta aplikacji dla środowiska (valuesObject) — te same, które
+  # dft podaje przy instalacji z drzewa.
+  values: {}
+
+project:
+  # Rodzaje zasobów, które aplikacja może tworzyć — tylko w swojej
+  # przestrzeni nazw. Nowy rodzaj w charcie aplikacji wymaga dopisania tutaj;
+  # `dft test` sprawdza, że lista pokrywa render charta. Bez Secret, Role
+  # i RoleBinding: Secret robi ESO, uprawnień aplikacja sobie nie nadaje.
+  namespaceResources:
+    - {group: "", kind: ConfigMap}
+    - {group: "", kind: Service}
+    - {group: "", kind: ServiceAccount}
+    - {group: apps, kind: Deployment}
+    - {group: policy, kind: PodDisruptionBudget}
+    - {group: gateway.networking.k8s.io, kind: HTTPRoute}
+    - {group: gateway.envoyproxy.io, kind: BackendTrafficPolicy}
+    - {group: external-secrets.io, kind: SecretStore}
+    - {group: external-secrets.io, kind: ExternalSecret}

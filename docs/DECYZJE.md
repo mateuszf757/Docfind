@@ -1791,6 +1791,95 @@ logować. Własne pakowanie to kod, który musi nadążać za formatem Helma —
 między nimi zacznie potrzebować bramek per środowisko — wtedy Kargo, które
 robi z tego obiekt, a nie skrypt.
 
+## 46. Argo CD na stagingu: tryb Core, zakres wersji z rejestru, samonaprawa
+
+> Drugi krok Etapu 5. Decyzja 45 ustaliła, co CI publikuje (chart OCI po
+> bramkach klastra); ta — kto i jak wdraża go na staging.
+
+**Argo CD 3.5.4 w trybie Core** — kontroler aplikacji, repo-server i Redis,
+bez serwera API, UI, Dex, powiadomień i ApplicationSet. Instaluje go
+`dft cluster up` jako ostatni komponent platformy, tylko w środowisku
+z `delivery.argocd` w definicji (dziś staging):
+- serwer API to główna powierzchnia ataku Argo CD (logowanie, webhooki,
+  proxy rozszerzeń — część łatek 3.5.4), a nikt spoza maszyny autora nie ma
+  z nim rozmawiać. Dostęp to RBAC Kubernetesa z kubeconfigu, UI —
+  `argocd admin dashboard` na localhost. Chart 10.9.7 nie wyłącza serwera
+  (`server.enabled` jest od 10.10.0), więc zero replik;
+- wyjątek od cooldownu (decyzja 22): 3.5.4 łata cztery krytyczne podatności
+  repo-servera i projektów, a 10.9.7 to najmniejszy chart z tą wersją.
+  Redis 8.6.7 zamiast 8.6.4 z charta — dwie łatki bezpieczeństwa w linii
+  8.6. Obrazy po digeście; podpis Argo CD (bundle Sigstore) sprawdzony
+  przy przypięciu, certyfikat dla workflowu z tagu v3.5.4;
+- Pod Security restricted w przestrzeni `argocd`, domyślna odmowa ruchu
+  przychodzącego, a wychodzący tylko DNS, ruch w obrębie `argocd`, API
+  server i 443 (rejestr charta).
+
+**Application i projekt** — chart `deploy/charts/delivery` z wartościami
+z definicji, tą samą funkcją, którą `dft` instaluje aplikację z drzewa:
+- źródło `ghcr.io/mateuszf757/charts` + chart `docfind`, bez schematu:
+  Argo traktuje je wtedy jako Helm OCI i nie potrzebuje Secreta
+  repozytorium (pakiet publiczny). Z `oci://` wybrałby źródło OCI
+  z manifestami, nie chart. Adres z portem (`host:port/…`) nie przechodzi
+  `url.Parse` i bez Secreta z `enableOCI` Argo szuka `index.yaml` — wyszło
+  na klastrze testowym z lokalnym rejestrem;
+- zakres `>=0.0.0-0`, `automated` z `prune` i `selfHeal`, ponawianie
+  z narastającą przerwą. Bez finalizera: usunięcie Application nie usuwa
+  aplikacji;
+- projekt `docfind`: jedno źródło, jedna przestrzeń nazw, zero zasobów
+  klastrowych i lista rodzajów zasobów — bez Secret, Role i RoleBinding.
+  Kontroler Argo ma uprawnienia w całym klastrze, projekt zawęża je dla tej
+  aplikacji; `dft test` sprawdza, że lista obejmuje render charta, zanim
+  Argo odmówi synchronizacji na klastrze;
+- client-side apply (domyślny), nie Server-Side Apply. Wydanie Helma na
+  stagingu instalował Helm 4, czyli z SSA. Argo z SSA wymusza przejęcie
+  konfliktów, ale pola, których właścicielem zostaje też menedżer `helm`,
+  nie znikałyby po usunięciu z charta. Po przejęciu `dft` usuwa zapis
+  wydania Helma (`sh.helm.release.v1.docfind.*`); zasoby zostają.
+
+**`dft` sprawdza, a nie ufa:**
+- przed zmianą na klastrze liczy z tagów w GHCR wersję, którą Argo wybierze
+  z zakresu: ta sama biblioteka (Masterminds/semver v3.4.0, jak w go.mod
+  Argo CD 3.5.4) i ta sama reguła co `MaxVersion` w Argo. Czyta chart w tej
+  wersji i wpuszcza jego obraz polityką stagingu (pochodzenie, SBOM,
+  atestacja GitHuba) — jak obraz podany przez `--image`;
+- po założeniu Application zleca twarde odświeżenie (Argo trzyma listę
+  tagów w pamięci do 3 minut) i czeka, aż Argo wdroży dokładnie tę wersję:
+  zsynchronizowaną, zdrową, z ostatnią operacją zakończoną na tej wersji.
+  Gdy w trakcie Argo bierze nowszą — CI właśnie ją opublikował — `dft`
+  rozstrzyga zakres jeszcze raz, z tą samą polityką;
+- na końcu tożsamość na każdym podzie, jak przy każdym wdrożeniu;
+- `--image` na środowisku z Argo to odmowa: obraz wybiera zakres, a
+  cofnięcie to przypięcie wersji w definicji.
+
+**Warunek samonaprawy bez przestoju** (`cluster:selfheal`): Deployment
+o replikę więcej niż w charcie i usunięty PodDisruptionBudget — Argo ma
+przywrócić jedno i założyć od nowa drugie. Plan mówił o
+`kubectl delete deploy`: to ten sam mechanizm (Argo obserwuje zasoby
+aplikacji), ale za cenę przestoju stagingu — pody znikają z Deploymentem.
+Replika więcej zamiast mniej: różnica w specyfikacji bez utraty
+przepustowości.
+
+**Co tracę:**
+- weryfikację obrazu przy przyjęciu przez klaster (Etap 9). Argo wdroży
+  każdy chart z zakresu, także z obrazem, którego polityka nie przepuszcza;
+  `dft` to wykryje przy `cluster up`, ale nie zatrzyma. Do tego czasu
+  pilnują kolejność w CI (chart dopiero po bramkach, decyzja 45) i to, że do
+  GHCR pisze tylko workflow `ci` na `main`;
+- Application zakłada `dft` z drzewa roboczego: zmiana zakresu albo wartości
+  środowiska dociera na klaster przy `cluster up`, a nie z gita sama — do
+  kroku 3 (app-of-apps);
+- CI nie instaluje Argo CD: klaster `ci` dostaje aplikację od `dft`
+  z archiwum albo z GHCR. Ścieżkę Argo sprawdzają testy `dft`, render
+  i kubeconform na schematach z CRD Argo w `dft test`, klaster tymczasowy
+  przy zmianie i staging;
+- uprawnienia kontrolera Argo w całym klastrze. Tryb przestrzeni nazw
+  zawęziłby je do `docfind`, ale krok 3 przenosi pod Argo platformę
+  z zasobami klastrowymi.
+
+**Kiedy zmieniam zdanie:** po cooldownie charta 10.10 — `server.enabled:
+false` zamiast zera replik. Gdy ktoś spoza maszyny autora będzie
+potrzebował Argo: serwer API z SSO, nigdy konto `admin` z hasłem.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

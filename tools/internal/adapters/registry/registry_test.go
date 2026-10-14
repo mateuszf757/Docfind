@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -357,5 +358,14 @@ func TestPushManifest(t *testing.T) {
 	}
 	if blob, err := c.Blob(ctx, repo, sum(layer)); err != nil || string(blob) != string(layer) {
 		t.Errorf("blob: %q, %v", blob, err)
+	}
+	// Druga wersja pod tym samym manifestem: lista tagów repozytorium, z której
+	// dft rozwiązuje zakres wersji jak Argo CD.
+	if _, err := c.PushManifest(ctx, repo+":0.4.1-dev.4", manifest, "application/vnd.oci.image.manifest.v1+json"); err != nil {
+		t.Fatal(err)
+	}
+	tags, err := c.Tags(ctx, repo)
+	if slices.Sort(tags); err != nil || !slices.Equal(tags, []string{"0.4.1-dev.3", "0.4.1-dev.4"}) {
+		t.Errorf("tagi: %v, %v", tags, err)
 	}
 }

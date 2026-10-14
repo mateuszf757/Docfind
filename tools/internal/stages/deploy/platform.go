@@ -120,6 +120,11 @@ func (d Deployer) platform(ctx context.Context, c Cluster) error {
 		return err
 	}
 	cli.Step("Gateway zaprogramowany, certyfikat %s gotowy", tls)
+	// Argo CD na końcu: niczego z platformy nie potrzebuje do startu, a to,
+	// co wdroży (aplikacja), potrzebuje jej całej.
+	if d.Env.GitOps() {
+		return d.argoCD(ctx, c)
+	}
 	return nil
 }
 
@@ -167,19 +172,51 @@ func waitReady(ctx context.Context, what string, timeout time.Duration, ready fu
 // namespace zakłada przestrzeń nazw aplikacji z etykietami, które są zgodą
 // platformy, a nie aplikacji samej sobie: trasa może podpiąć się pod
 // listener HTTPS (gateway.routeNamespaceLabel) i Pod Security restricted
-// (decyzja 31) z wersją profilu przypiętą do wersji klastra.
+// (decyzja 31).
 func (d Deployer) namespace(ctx context.Context, c Cluster) error {
-	psa, err := cluster.PSAVersion(d.Pins.Get(pins.KubernetesVersion))
+	labels, err := d.restricted()
 	if err != nil {
 		return err
 	}
-	return c.EnsureNamespace(ctx, d.Env.App.Namespace, map[string]string{
-		"docfind.io/gateway-routes":                  "allowed",
+	labels["docfind.io/gateway-routes"] = "allowed"
+	return c.EnsureNamespace(ctx, d.Env.App.Namespace, labels)
+}
+
+// restricted — etykiety przestrzeni nazw z Pod Security restricted
+// (decyzja 31), z wersją profilu przypiętą do wersji klastra.
+func (d Deployer) restricted() (map[string]string, error) {
+	psa, err := cluster.PSAVersion(d.Pins.Get(pins.KubernetesVersion))
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{
 		"pod-security.kubernetes.io/enforce":         "restricted",
 		"pod-security.kubernetes.io/enforce-version": psa,
 		"pod-security.kubernetes.io/warn":            "restricted",
 		"pod-security.kubernetes.io/warn-version":    psa,
-	})
+	}, nil
+}
+
+// appSecrets przygotowuje sekrety aplikacji z OpenBao przez ESO (decyzja
+// 44) i zwraca CA, którym ESO sprawdza OpenBao (PEM w base64). Sekret musi
+// być w OpenBao przed chartem — pody czekają na Secret przy montowaniu
+// wolumenu. Klaster spoza k3d (klient) dostarcza Secret sam: bez CA.
+func (d Deployer) appSecrets(ctx context.Context, c Cluster) (string, error) {
+	if d.Env.Cluster.Provider != environment.ProviderK3d {
+		return "", nil
+	}
+	ss, err := d.SecretStores(d.target())
+	if err != nil {
+		return "", err
+	}
+	if err := ss.EnsureAppSecrets(ctx); err != nil {
+		return "", err
+	}
+	ca, err := c.SecretData(ctx, "cert-manager", "docfind-root-ca")
+	if err != nil {
+		return "", fmt.Errorf("CA platformy cert-manager/docfind-root-ca: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(ca["ca.crt"]), nil
 }
 
 // app instaluje chart aplikacji z obrazem img i sprawdza, że to, co stoi na
@@ -187,23 +224,9 @@ func (d Deployer) namespace(ctx context.Context, c Cluster) error {
 // podzie, a liczba podów z liczbą replik.
 func (d Deployer) app(ctx context.Context, c Cluster, img image) error {
 	release := d.Env.App.Release
-	// Sekrety aplikacji z OpenBao przez ESO (decyzja 44): sekret musi być
-	// w OpenBao przed chartem — pody czekają na Secret przy montowaniu
-	// wolumenu — a SecretStore dostaje CA, którym ESO sprawdza OpenBao.
-	var caBundle string
-	if d.Env.Cluster.Provider == environment.ProviderK3d {
-		ss, err := d.SecretStores(d.target())
-		if err != nil {
-			return err
-		}
-		if err := ss.EnsureAppSecrets(ctx); err != nil {
-			return err
-		}
-		ca, err := c.SecretData(ctx, "cert-manager", "docfind-root-ca")
-		if err != nil {
-			return fmt.Errorf("CA platformy cert-manager/docfind-root-ca: %w", err)
-		}
-		caBundle = base64.StdEncoding.EncodeToString(ca["ca.crt"])
+	caBundle, err := d.appSecrets(ctx, c)
+	if err != nil {
+		return err
 	}
 	cli.Step("helm upgrade --install %s", release)
 	// Wersja wdrożenia trafia do aplikacji zmienną środowiskową
@@ -219,6 +242,6 @@ func (d Deployer) app(ctx context.Context, c Cluster, img image) error {
 	}); err != nil {
 		return err
 	}
-	_, err := identity.Verify(ctx, c, d.Env.App.Namespace, release+"-api", "api", img.want)
+	_, err = identity.Verify(ctx, c, d.Env.App.Namespace, release+"-api", "api", img.want)
 	return err
 }

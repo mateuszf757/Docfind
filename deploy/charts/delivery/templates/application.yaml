@@ -1,0 +1,39 @@
+{{- $app := .Values.application }}
+# Aplikacja: chart z rejestru OCI w zakresie wersji. Argo wdraża najwyższą
+# wersję, która spełnia zakres, i przywraca stan z charta po każdej ręcznej
+# zmianie (selfHeal) — cofnięcie wdrożenia to przypięcie wersji w definicji
+# środowiska, a nie polecenie na klastrze.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ $app.name }}
+  namespace: {{ .Release.Namespace }}
+  # Bez finalizera resources-finalizer: usunięcie Application (np. razem
+  # z tym chartem) zostawia aplikację na klastrze. Usunięcie aplikacji to
+  # osobna, świadoma decyzja, nie skutek uboczny.
+spec:
+  project: {{ $app.name }}
+  source:
+    repoURL: {{ $app.repoURL | quote }}
+    chart: {{ required "application.chart" $app.chart | quote }}
+    targetRevision: {{ required "application.versions" $app.versions | quote }}
+    helm:
+      releaseName: {{ $app.name }}
+      valuesObject:
+        {{- toYaml $app.values | nindent 8 }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ $app.namespace | quote }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    # Synchronizacja, która padła (np. webhook ESO chwilowo niedostępny),
+    # wraca sama z narastającą przerwą zamiast czekać na następną wersję.
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+  revisionHistoryLimit: 10

@@ -190,6 +190,34 @@ func TestRolloutAndPods(t *testing.T) {
 	}
 }
 
+// TestScaleAndPDB: ręczne zmiany z bramki samonaprawy — liczba replik
+// w specyfikacji Deploymentu i usunięcie PDB.
+func TestScaleAndPDB(t *testing.T) {
+	ctx := context.Background()
+	replicas := int32(2)
+	labels := map[string]string{"app": "api"}
+	c := New(fake.NewClientset(
+		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "docfind-api", Namespace: "docfind"},
+			Spec: appsv1.DeploymentSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: labels}}},
+		&policyv1.PodDisruptionBudget{ObjectMeta: metav1.ObjectMeta{Name: "docfind-api", Namespace: "docfind"}},
+	), nil, nil, cluster.Target{})
+	if err := c.ScaleDeployment(ctx, "docfind", "docfind-api", 3); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := c.Rollout(ctx, "docfind", "docfind-api"); err != nil || r.Wanted != 3 {
+		t.Errorf("po skalowaniu: %+v, %v", r, err)
+	}
+	if ok, err := c.PodDisruptionBudgetExists(ctx, "docfind", "docfind-api"); !ok || err != nil {
+		t.Errorf("PDB przed usunięciem: %v, %v", ok, err)
+	}
+	if err := c.DeletePodDisruptionBudget(ctx, "docfind", "docfind-api"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := c.PodDisruptionBudgetExists(ctx, "docfind", "docfind-api"); ok || err != nil {
+		t.Errorf("PDB po usunięciu: %v, %v", ok, err)
+	}
+}
+
 func TestSecretData(t *testing.T) {
 	cs := fake.NewClientset(&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "token", Namespace: "cert-manager"}, Data: map[string][]byte{"api-token": []byte("t")}})
 	c := New(cs, nil, nil, cluster.Target{})
@@ -362,5 +390,52 @@ func TestExternalSecret(t *testing.T) {
 	got, _ := dyn.Resource(externalSecretGVR).Namespace("cert-manager").Get(ctx, "cloudflare-api-token", metav1.GetOptions{})
 	if got.GetAnnotations()["force-sync"] != "1791802800" {
 		t.Errorf("adnotacja: %v", got.GetAnnotations())
+	}
+}
+
+// TestApplication: stan aplikacji Argo CD z pól statusu (wersja, zdrowie,
+// operacja, warunki); odświeżenie to adnotacja refresh=hard; zapis wydania
+// Helma to Secrety z etykietami owner=helm i name=<wydanie>, bez innych.
+func TestApplication(t *testing.T) {
+	ctx := context.Background()
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{applicationGVR: "ApplicationList"})
+	u := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "argoproj.io/v1alpha1", "kind": "Application",
+		"metadata": map[string]any{"name": "docfind", "namespace": "argocd"},
+		"status": map[string]any{
+			"sync":   map[string]any{"status": "Synced", "revision": "0.4.1-dev.3"},
+			"health": map[string]any{"status": "Progressing", "message": "Waiting for rollout"},
+			"operationState": map[string]any{"phase": "Succeeded", "message": "successfully synced",
+				"syncResult": map[string]any{"revision": "0.4.1-dev.3"}},
+			"conditions": []any{map[string]any{"type": "ComparisonError", "message": "boom"}},
+		},
+	}}
+	if _, err := dyn.Resource(applicationGVR).Namespace("argocd").Create(ctx, u, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	core := fake.NewClientset(
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "sh.helm.release.v1.docfind.v1", Namespace: "docfind", Labels: map[string]string{"owner": "helm", "name": "docfind"}}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "sh.helm.release.v1.inne.v1", Namespace: "docfind", Labels: map[string]string{"owner": "helm", "name": "inne"}}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "docfind-api-secrets", Namespace: "docfind"}},
+	)
+	c := New(core, dyn, nil, cluster.Target{})
+	app, err := c.Application(ctx, "argocd", "docfind")
+	want := cluster.Application{Sync: "Synced", Revision: "0.4.1-dev.3", Health: "Progressing", HealthMessage: "Waiting for rollout",
+		Operation:  cluster.AppOperation{Phase: "Succeeded", Revision: "0.4.1-dev.3", Message: "successfully synced"},
+		Conditions: []cluster.AppCondition{{Type: "ComparisonError", Message: "boom"}}}
+	if err != nil || app.Sync != want.Sync || app.Revision != want.Revision || app.Health != want.Health || app.HealthMessage != want.HealthMessage ||
+		app.Operation != want.Operation || len(app.Conditions) != 1 || app.Conditions[0] != want.Conditions[0] {
+		t.Errorf("Application: %+v, %v", app, err)
+	}
+	if err := c.RefreshApplication(ctx, "argocd", "docfind"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := dyn.Resource(applicationGVR).Namespace("argocd").Get(ctx, "docfind", metav1.GetOptions{})
+	if got.GetAnnotations()["argocd.argoproj.io/refresh"] != "hard" {
+		t.Errorf("adnotacja: %v", got.GetAnnotations())
+	}
+	records, err := c.HelmReleaseRecords(ctx, "docfind", "docfind")
+	if err != nil || len(records) != 1 || records[0] != "sh.helm.release.v1.docfind.v1" {
+		t.Errorf("zapis wydania: %v, %v", records, err)
 	}
 }

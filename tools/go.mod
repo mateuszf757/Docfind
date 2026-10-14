@@ -8,6 +8,7 @@ tool (
 )
 
 require (
+	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/google/go-containerregistry v0.22.1
 	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/term v0.46.0

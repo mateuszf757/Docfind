@@ -1,0 +1,22 @@
+{{- $app := .Values.application }}
+# Projekt aplikacji: granice tego, co Argo CD może wdrożyć w jej imieniu,
+# niezależnie od treści charta z rejestru. Kontroler Argo ma uprawnienia
+# w całym klastrze; projekt zawęża je dla tej aplikacji do jednego źródła,
+# jednej przestrzeni nazw i listy rodzajów zasobów.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: {{ required "application.name" $app.name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  description: DOCFIND — chart z rejestru OCI, tylko przestrzeń {{ $app.namespace }}
+  sourceRepos:
+    - {{ required "application.repoURL" $app.repoURL | quote }}
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: {{ required "application.namespace" $app.namespace | quote }}
+  # Nic na poziomie klastra: przestrzeń nazw, jej etykiety i CRD należą do
+  # platformy.
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    {{- toYaml .Values.project.namespaceResources | nindent 4 }}

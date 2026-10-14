@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/artifact"
 	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
@@ -71,6 +72,12 @@ type Cluster interface {
 	SecretData(ctx context.Context, namespace, name string) (map[string][]byte, error)
 	Gateway(ctx context.Context, namespace, name string) (cluster.Gateway, error)
 	EnsureNamespace(ctx context.Context, name string, labels map[string]string) error
+	// Argo CD (decyzja 46): stan i odświeżenie Application, zapis wydania
+	// Helma aplikacji do usunięcia po przejęciu przez Argo.
+	Application(ctx context.Context, namespace, name string) (cluster.Application, error)
+	RefreshApplication(ctx context.Context, namespace, name string) error
+	HelmReleaseRecords(ctx context.Context, namespace, release string) ([]string, error)
+	DeleteSecret(ctx context.Context, namespace, name string) error
 }
 
 // Connect łączy się z klastrem przez strażnika kontekstu (kube.Connect).
@@ -135,11 +142,18 @@ type Deployer struct {
 	SecretStores func(t cluster.Target) (SecretStore, error)
 	// DNSTokens — token Cloudflare w środowisku z Let's Encrypt.
 	DNSTokens func(t cluster.Target) (DNSToken, error)
+	// ChartRegistry — chart aplikacji w rejestrze, który śledzi Argo CD.
+	ChartRegistry ChartRegistry
+	// Poll i DeliveryTimeout — odstęp sprawdzania stanu Argo CD i limit
+	// czekania na wdrożenie; zero — 5 s i 10 min.
+	Poll, DeliveryTimeout time.Duration
 }
 
 // Source — skąd wziąć obraz.
 type Source struct {
-	// Kind — environment.SourceLocal, SourceArchive albo SourceRegistry.
+	// Kind — environment.SourceLocal, SourceArchive albo SourceRegistry;
+	// pusty — bez wskazania: build z drzewa, a w środowisku z Argo CD obraz
+	// z charta, który Argo wybierze.
 	Kind string
 	// Archive — archiwum `docker save` z zadania build; Config — digest
 	// konfiguracji obrazu, który to zadanie sprawdziło.
@@ -183,7 +197,9 @@ func (d Deployer) Down(ctx context.Context) error {
 	return nil
 }
 
-// Up stawia środowisko z obrazem ze źródła src.
+// Up stawia środowisko z obrazem ze źródła src. W środowisku z Argo CD
+// (delivery.argocd) obraz wybiera Argo z charta w rejestrze, a dft stawia
+// platformę z Argo CD, zakłada Application i sprawdza, co Argo wdrożył.
 func (d Deployer) Up(ctx context.Context, src Source) error {
 	if d.Env.Cluster.Provider != environment.ProviderK3d {
 		return cli.Unmet("środowisko %s (cluster.provider=%s): wdrożenie przez dft obsługuje tylko klastry k3d", d.Env.Name, d.Env.Cluster.Provider)
@@ -191,7 +207,13 @@ func (d Deployer) Up(ctx context.Context, src Source) error {
 	if err := d.Env.Require(environment.OpDeploy); err != nil {
 		return err
 	}
-	if !d.Env.AllowsSource(src.Kind) {
+	switch {
+	case d.Env.GitOps() && src.Kind != "":
+		return cli.Unmet("środowisko %s wdraża Argo CD z charta %s w zakresie %s — obraz wybiera zakres, nie źródło obrazu (%s); cofnięcie to przypięcie wersji w definicji", d.Env.Name, d.Env.Delivery.ArgoCD.Chart, d.Env.Delivery.ArgoCD.Versions, src.Kind)
+	case src.Kind == "" && !d.Env.GitOps():
+		src.Kind = environment.SourceLocal
+	}
+	if src.Kind != "" && !d.Env.AllowsSource(src.Kind) {
 		return cli.Unmet("środowisko %s nie przyjmuje obrazu ze źródła %s (artifact.sources: %v)", d.Env.Name, src.Kind, d.Env.Artifact.Sources)
 	}
 	if err := d.requireACMEEmail(); err != nil {
@@ -208,7 +230,18 @@ func (d Deployer) Up(ctx context.Context, src Source) error {
 		return err
 	}
 	defer os.RemoveAll(tmp)
-	img, err := d.resolve(ctx, src, tmp)
+	// Artefakt rozstrzygnięty przed zmianą na klastrze: obraz albo — przy
+	// Argo CD — wersja charta, którą Argo wybierze, z obrazem wpuszczonym
+	// tą samą polityką.
+	var (
+		img image
+		rel release
+	)
+	if d.Env.GitOps() {
+		rel, err = d.resolveChart(ctx)
+	} else {
+		img, err = d.resolve(ctx, src, tmp)
+	}
 	if err != nil {
 		return err
 	}
@@ -249,6 +282,9 @@ func (d Deployer) Up(ctx context.Context, src Source) error {
 	}
 	if err := d.namespace(ctx, c); err != nil {
 		return err
+	}
+	if d.Env.GitOps() {
+		return d.deliver(ctx, c, rel)
 	}
 	return d.app(ctx, c, img)
 }
