@@ -90,8 +90,12 @@ func (h *helm) Template(_ context.Context, r cluster.Release, includeCRDs bool, 
 	}
 	var out string
 	switch {
-	case strings.HasSuffix(r.Chart, "docfind"):
+	case strings.HasSuffix(r.Chart, "docfind"), strings.HasPrefix(filepath.Base(r.Chart), "docfind-") && strings.HasSuffix(r.Chart, ".tgz"):
 		tag, digest, version := "lint", "", ""
+		// Spakowany chart (decyzja 45) niesie obraz po digeście w wartościach.
+		if strings.HasSuffix(r.Chart, ".tgz") {
+			digest = "@sha256:" + strings.Repeat("a", 64)
+		}
 		for _, v := range values {
 			switch key, value, _ := strings.Cut(v, "="); key {
 			case "api.image.tag":

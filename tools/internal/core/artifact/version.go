@@ -124,11 +124,21 @@ const DefaultOwner = "mateuszf757"
 // zastępuje go w całości — publikację sprawdza się wtedy na tymczasowym
 // rejestrze na loopbacku tym samym kodem, zamiast go łatać.
 func ImageName(registry, owner, service string) string {
+	return fmt.Sprintf("%s/docfind-%s", registryPrefix(registry, owner), service)
+}
+
+// ChartName zwraca repozytorium charta aplikacji w tym samym rejestrze co
+// obrazy: <rejestr>/charts/docfind (decyzja 45).
+func ChartName(registry, owner string) string {
+	return registryPrefix(registry, owner) + "/charts/docfind"
+}
+
+func registryPrefix(registry, owner string) string {
 	if registry == "" {
 		if owner == "" {
 			owner = DefaultOwner
 		}
 		registry = "ghcr.io/" + strings.ToLower(owner)
 	}
-	return fmt.Sprintf("%s/docfind-%s", strings.TrimSuffix(registry, "/"), service)
+	return strings.TrimSuffix(registry, "/")
 }

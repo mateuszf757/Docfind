@@ -90,6 +90,11 @@ var commands = map[string]command{
 		help:  "okres próbny zadań CI: seria zielonych biegów na main (push, nocą) za pierwszym podejściem; kod 0, gdy każde ma N",
 		run:   runTrial,
 	},
+	"chart": {
+		usage: "dft chart publish --image <obraz@sha256:…>",
+		help:  "chart aplikacji z tym obrazem w rejestrze OCI: wersja z commita, powtarzalny artefakt, sprawdzony po wysłaniu (decyzja 45)",
+		run:   runChart,
+	},
 	"dns-token": {
 		usage: "dft dns-token",
 		help:  "token API Cloudflare do klastra (DNS-01), sprawdzony w API; bez echa, nigdy w argumentach",

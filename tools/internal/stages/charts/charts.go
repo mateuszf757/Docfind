@@ -13,7 +13,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/mateuszf757/Docfind/tools/internal/core/chart"
 	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
 	"github.com/mateuszf757/Docfind/tools/internal/core/crdschema"
 	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
@@ -139,6 +141,25 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 		}
 		appRenders = append(appRenders, "docfind-"+e.Name)
 	}
+	// Chart w postaci z rejestru (decyzja 45): spakowany jak w CI, z obrazem
+	// po digeście w wartościach, bez --set obrazu. Render musi mieć obraz
+	// z digestem, jak komponenty z zewnątrz — edycja values.yaml przy
+	// pakowaniu nie może go zgubić ani zepsuć schematu. Wartości stagingu,
+	// bo staging śledzi ten chart przez Argo CD.
+	packaged, err := packagedApp(app, tmp)
+	if err != nil {
+		return err
+	}
+	for _, e := range envs {
+		if e.Name != "staging" {
+			continue
+		}
+		r := cluster.Release{Name: e.App.Release, Chart: packaged, Namespace: e.App.Namespace, Set: e.AppValues(sampleCABundle)}
+		if err := add("docfind-oci-"+e.Name, true, false, r); err != nil {
+			return err
+		}
+		appRenders = append(appRenders, "docfind-oci-"+e.Name)
+	}
 
 	for _, pc := range []struct{ pin, namespace, values string }{
 		{pins.CoreDNS, "kube-system", "deploy/platform/coredns/values.yaml"},
@@ -232,6 +253,24 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 }
 
 func (c Checker) path(rel string) string { return filepath.Join(c.Root, rel) }
+
+// packagedApp pakuje chart aplikacji tak jak publikacja w CI, z przykładowym
+// obrazem po digeście, i zwraca ścieżkę archiwum.
+func packagedApp(dir, tmp string) (string, error) {
+	files, err := chart.Files(dir)
+	if err != nil {
+		return "", err
+	}
+	archive, err := chart.Package("docfind", files, chart.Build{
+		Version: "0.0.0-lint", AppVersion: "lint", Tag: "lint",
+		Digest: "sha256:" + strings.Repeat("a", 64), DeployVersion: "0.0.0-lint",
+	}, time.Unix(0, 0))
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(tmp, "docfind-0.0.0-lint.tgz")
+	return path, os.WriteFile(path, archive, 0o644)
+}
 
 // sampleCABundle — przykładowy CA OpenBao w renderze (base64 nagłówka PEM):
 // prawdziwy jest z klastra, a render ma przejść tę samą ścieżkę szablonu.

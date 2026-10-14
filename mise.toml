@@ -167,6 +167,10 @@ run = "ci/dft check vulns"
 description = "Przed promocją: atestacja BuildKitu (pochodzenie, SBOM) i atestacja GitHuba opublikowanego obrazu <obraz@sha256:…>"
 run = "ci/dft check attestation"
 
+[tasks."chart:publish"]
+description = "Chart aplikacji z obrazem <obraz@sha256:…> do rejestru OCI (w CI na main, decyzja 45): --image"
+run = "ci/dft chart publish"
+
 [tasks.release]
 description = "Wydanie bez builda (decyzja 40): -- vX.Y.Z [\"tytuł\"] — akceptacja na stagingu digestu, który tam stoi (tożsamość, drain, TLS), i tag z adnotacją na jego commicie; push tagu robi autor"
 run = "ci/dft release"

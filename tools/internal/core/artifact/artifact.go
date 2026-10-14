@@ -62,6 +62,13 @@ func ParseRef(ref string) (repository, digest string, err error) {
 	return d.Context().Name(), d.DigestStr(), nil
 }
 
+// Blob — zawartość artefaktu wysyłana do rejestru przed manifestem, który
+// na nią wskazuje (chart Helma: konfiguracja i archiwum).
+type Blob struct {
+	Data      []byte
+	MediaType string
+}
+
 // ErrNotFound — w rejestrze nie ma obrazu pod tą referencją. Adapter
 // rejestru owija nim odpowiedź 404, a etapy rozróżniają nim brak obrazu
 // (np. obrazu bazowego do porównania) od awarii rejestru.

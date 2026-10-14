@@ -78,6 +78,10 @@ func TestImageName(t *testing.T) {
 		if got := ImageName(tt.registry, tt.owner, "api"); got != tt.want {
 			t.Errorf("ImageName(%q, %q) = %q, oczekiwano %q", tt.registry, tt.owner, got, tt.want)
 		}
+		// Chart w tym samym rejestrze co obraz (decyzja 45).
+		if got, want := ChartName(tt.registry, tt.owner), strings.TrimSuffix(tt.want, "/docfind-api")+"/charts/docfind"; got != want {
+			t.Errorf("ChartName(%q, %q) = %q, oczekiwano %q", tt.registry, tt.owner, got, want)
+		}
 	}
 }
 
