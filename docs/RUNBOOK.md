@@ -130,8 +130,14 @@ Wymuszenie synchronizacji po poprawce:
 ### OpenBao niedostępny albo zapieczętowany
 
 Secrety od ESO zostają w klastrze, więc wszystko, co je czyta, działa dalej;
-nie dochodzą tylko nowe wartości. ESO zgłasza błąd synchronizacji i ponawia.
-Naprawa — sekcja OpenBao wyżej; po niej synchronizacja wraca sama.
+nie dochodzą tylko nowe wartości. ESO zgłasza błąd synchronizacji i ponawia
+— z narastającą przerwą, do kilkunastu minut. Naprawa — sekcja OpenBao
+wyżej; po niej wymuś walidację magazynów, zamiast czekać na ESO:
+
+```bash
+./bin/mise exec -- kubectl annotate secretstore -A --all docfind.io/revalidate=$(date +%s) --overwrite
+./bin/mise exec -- kubectl get secretstore,externalsecret -A
+```
 
 ### Zmiana tokenu Cloudflare
 

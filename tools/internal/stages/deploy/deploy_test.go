@@ -411,6 +411,11 @@ func TestUpLetsEncrypt(t *testing.T) {
 	if i, j := slices.Index(rec.calls, "openbao bootstrap"), slices.Index(rec.calls, "dns-token ensure"); i < 0 || j < i {
 		t.Errorf("token przed OpenBao albo wcale:\n%s", strings.Join(rec.calls, "\n"))
 	}
+	// Chart platformy bez czekania Helma: jego ExternalSecret i certyfikat
+	// Let's Encrypt są gotowe dopiero po OpenBao, który instaluje się po nim.
+	if i := slices.IndexFunc(rec.calls, func(c string) bool { return strings.HasPrefix(c, "install platform ") }); i < 0 || !strings.HasSuffix(rec.calls[i], "hooksOnly") {
+		t.Errorf("chart platformy z czekaniem Helma na gotowość:\n%s", strings.Join(rec.calls, "\n"))
+	}
 }
 
 // TestUpLocalBuild: obraz z drzewa dostaje tag z identyfikatora obrazu

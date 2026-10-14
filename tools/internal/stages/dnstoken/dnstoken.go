@@ -32,7 +32,9 @@ const (
 	SecretKey       = "api-token"
 	// VaultPath — ścieżka w KV docfind; WriterAccount i WriterRole — konto
 	// w przestrzeni openbao i rola, która ten jeden sekret zapisuje.
-	VaultPath     = "platform/cloudflare"
+	VaultPath = "platform/cloudflare"
+	// StoreName — SecretStore z charta platformy (secretStore.name).
+	StoreName     = "openbao"
 	WriterAccount = "openbao-dns-writer"
 	WriterRole    = "dns-token-writer"
 )
@@ -54,6 +56,8 @@ type Cluster interface {
 	SecretData(ctx context.Context, namespace, name string) (map[string][]byte, error)
 	ExternalSecret(ctx context.Context, namespace, name string) (cluster.ExternalSecret, error)
 	ForceSync(ctx context.Context, namespace, name string, at time.Time) error
+	SecretStore(ctx context.Context, namespace, name string) (cluster.SecretStore, error)
+	RevalidateStore(ctx context.Context, namespace, name string, at time.Time) error
 }
 
 // ReadToken czyta token z wejścia: jedna linia, bez końcowych białych znaków.
@@ -95,6 +99,9 @@ func Verify(ctx context.Context, dns DNS, token, zone string) error {
 	cli.Step("token widzi strefę %s", zone)
 	return nil
 }
+
+// nudgeEvery — co ile ponawiać wymuszenia, dopóki ESO nie zsynchronizuje.
+const nudgeEvery = 10 * time.Second
 
 // Sync — token w OpenBao i jego Secret od ESO.
 type Sync struct {
@@ -156,22 +163,39 @@ func (s Sync) Ensure(ctx context.Context, hint string) error {
 }
 
 // sync wymusza synchronizację ExternalSecret i czeka na udaną po since.
+//
+// Na nowym klastrze SecretStore powstaje z chartem platformy, zanim
+// OpenBao istnieje: pierwsza walidacja się nie udaje, a ESO ponawia ją
+// z narastającą przerwą. Wymuszona synchronizacja trafiała wtedy na magazyn
+// wciąż oznaczony jako niegotowy (staging). Dopóki ExternalSecret się nie
+// zsynchronizował, co nudgeEvery: niegotowy magazyn dostaje wymuszenie
+// walidacji, a ExternalSecret — ponowne force-sync.
 func (s Sync) sync(ctx context.Context, since time.Time) error {
-	if err := s.Cluster.ForceSync(ctx, SecretNamespace, SecretName, s.now()); err != nil {
-		return err
-	}
 	timeout := s.Timeout
 	if timeout <= 0 {
 		timeout = 2 * time.Minute
 	}
 	var last cluster.ExternalSecret
+	var nudged time.Time
 	err := poll.Until(ctx, timeout, 2*time.Second, func(ctx context.Context) (bool, error) {
-		es, err := s.Cluster.ExternalSecret(ctx, SecretNamespace, SecretName)
-		if err != nil {
-			return false, nil
+		if es, err := s.Cluster.ExternalSecret(ctx, SecretNamespace, SecretName); err == nil {
+			last = es
+			if es.Ready && !es.RefreshTime.Before(since) {
+				return true, nil
+			}
 		}
-		last = es
-		return es.Ready && !es.RefreshTime.Before(since), nil
+		if now := s.now(); nudged.IsZero() || now.Sub(nudged) >= nudgeEvery {
+			nudged = now
+			if store, err := s.Cluster.SecretStore(ctx, SecretNamespace, StoreName); err == nil && !store.Ready {
+				if err := s.Cluster.RevalidateStore(ctx, SecretNamespace, StoreName, now); err != nil {
+					return false, err
+				}
+			}
+			if err := s.Cluster.ForceSync(ctx, SecretNamespace, SecretName, now); err != nil {
+				return false, err
+			}
+		}
+		return false, nil
 	})
 	if errors.Is(err, poll.ErrTimeout) {
 		// Bez żadnego stanu kontroler ESO nie dotarł do obiektu — przyczyna
