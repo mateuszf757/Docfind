@@ -7,12 +7,13 @@ import (
 
 func release() Release {
 	return Release{
-		Version:    "0.4.0",
-		Title:      "Etap 4: indeksowanie",
-		Image:      repo + "@" + digest,
-		Commit:     strings.Repeat("c", 40),
-		AcceptedAt: "2026-10-12T10:00:00Z",
-		Staging:    "tożsamość na 2 podach; drain 3 węzłów, 1765 żądań, 0 nieudanych",
+		Version:     "0.4.0",
+		Title:       "Etap 4: indeksowanie",
+		Image:       repo + "@" + digest,
+		Commit:      strings.Repeat("c", 40),
+		AcceptedAt:  "2026-10-12T10:00:00Z",
+		Staging:     "tożsamość na 2 podach; drain 3 węzłów, 1765 żądań, 0 nieudanych",
+		GatesCommit: strings.Repeat("a", 40),
 	}
 }
 
@@ -42,6 +43,8 @@ func TestParseReleaseTagRejects(t *testing.T) {
 		{"obraz po tagu", "v0.4.0", strings.Replace(msg, "@"+digest, ":0.4.0", 1), "bez digestu"},
 		{"skrócony commit", "v0.4.0", strings.Replace(msg, strings.Repeat("c", 40), "ccccccc", 1), "pełnym SHA"},
 		{"bez wyników akceptacji", "v0.4.0", strings.Replace(msg, "Akceptacja na stagingu: ", "Uwagi: ", 1), "brak wyników akceptacji"},
+		{"bez commita kodu bramek (tag sprzed decyzji 48)", "v0.4.0", strings.Replace(msg, "Gates-Commit: "+strings.Repeat("a", 40)+"\n", "", 1), "kodu bramek"},
+		{"skrócony commit kodu bramek", "v0.4.0", strings.Replace(msg, strings.Repeat("a", 40), "aaaaaaa", 1), "kodu bramek"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

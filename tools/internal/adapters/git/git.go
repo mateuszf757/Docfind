@@ -161,6 +161,21 @@ func (r Repo) TagExists(ctx context.Context, name string) (bool, error) {
 	}
 }
 
+// IsAncestor mówi, czy commit jest przodkiem ref albo nim samym
+// (`git merge-base --is-ancestor`: kod 0 — tak, 1 — nie, inny — awaria,
+// np. nieznany ref).
+func (r Repo) IsAncestor(ctx context.Context, commit, ref string) (bool, error) {
+	_, err := r.git(ctx, "merge-base", "--is-ancestor", commit, ref)
+	switch {
+	case err == nil:
+		return true, nil
+	case proc.ExitCode(err) == 1:
+		return false, nil
+	default:
+		return false, fmt.Errorf("git merge-base --is-ancestor %s %s: %w", commit, ref, err)
+	}
+}
+
 // CreateTag tworzy tag z adnotacją na commicie. Treść idzie przez stdin,
 // nie argumenty — wieloliniowa i bez cytowania dla powłoki.
 func (r Repo) CreateTag(ctx context.Context, name, commit, message string) error {

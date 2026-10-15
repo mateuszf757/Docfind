@@ -3,9 +3,13 @@ package artifact
 import (
 	"bufio"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
+
+// fullCommit — pełny identyfikator commita SHA-1.
+var fullCommit = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 // ReleasePredicate — typ predykatu atestacji wydania (decyzja 40): digest
 // obrazu zbudowanego na main jest wydaniem X.Y.Z, przyjętym na stagingu.
@@ -27,6 +31,10 @@ type Release struct {
 	AcceptedAt string `json:"accepted_at"`
 	// Staging — wyniki bramek akceptacji na stagingu.
 	Staging string `json:"staging"`
+	// GatesCommit — commit kodu bramek, którym biegła akceptacja (dft
+	// zbudowany z czystego drzewa, vcs.revision): wynik akceptacji bez wersji
+	// kodu, który go wydał, nie da się sprawdzić (decyzja 48).
+	GatesCommit string `json:"gates_commit"`
 }
 
 // Tag — nazwa tagu wydania.
@@ -37,6 +45,7 @@ const (
 	trailerImage      = "Image"
 	trailerCommit     = "Commit"
 	trailerAcceptedAt = "Accepted-At"
+	trailerGates      = "Gates-Commit"
 	stagingPrefix     = "Akceptacja na stagingu: "
 )
 
@@ -58,6 +67,9 @@ func (r Release) Validate() error {
 	if strings.TrimSpace(r.Staging) == "" {
 		problems = append(problems, "brak wyników akceptacji na stagingu")
 	}
+	if !fullCommit.MatchString(r.GatesCommit) {
+		problems = append(problems, fmt.Sprintf("commit kodu bramek %q nie jest pełnym SHA", r.GatesCommit))
+	}
 	if len(problems) > 0 {
 		return fmt.Errorf("wydanie %s: %s", r.Tag(), strings.Join(problems, "; "))
 	}
@@ -71,9 +83,9 @@ func (r Release) TagMessage() string {
 	if title == "" {
 		title = "Wydanie " + r.Version
 	}
-	return fmt.Sprintf("%s\n\n%s%s\n\n%s: %s\n%s: %s\n%s: %s\n",
+	return fmt.Sprintf("%s\n\n%s%s\n\n%s: %s\n%s: %s\n%s: %s\n%s: %s\n",
 		title, stagingPrefix, r.Staging,
-		trailerImage, r.Image, trailerCommit, r.Commit, trailerAcceptedAt, r.AcceptedAt)
+		trailerImage, r.Image, trailerCommit, r.Commit, trailerAcceptedAt, r.AcceptedAt, trailerGates, r.GatesCommit)
 }
 
 // ParseReleaseTag czyta wydanie z tagu vX.Y.Z i jego treści. Tag bez
@@ -105,6 +117,8 @@ func ParseReleaseTag(tag, message string) (Release, error) {
 			r.Commit = value
 		case key == trailerAcceptedAt:
 			r.AcceptedAt = value
+		case key == trailerGates:
+			r.GatesCommit = value
 		}
 	}
 	if err := r.Validate(); err != nil {

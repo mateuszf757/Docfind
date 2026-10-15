@@ -1373,6 +1373,10 @@ a nie wyjątku w regule.
 
 ## 40. Jeden build na commit, wydanie bez builda
 
+> Zmienione decyzją 48: akceptacja zapisuje cel (obraz i wersję charta
+> Argo CD) i sprawdza go po każdej bramce, a biegnie tylko kodem bramek
+> z zatwierdzonego commita ze scalonego main.
+
 **Wybieram obraz bez wersji i wydanie jako nazwę digestu, który przeszedł
 staging.** Reguła: konfiguracja nie może być w obrazie — jeśli obraz dla
 stagingu różni się od obrazu dla produkcji, to nie testowałem tego, co
@@ -1917,6 +1921,45 @@ read` i zapis Deploymentu.
 **Kiedy zmieniam zdanie:** gdy GitHub udostępni warunek patrzący tylko na
 bezpośrednie `needs` albo gdy graf przestanie mieć zadania pomijane na
 części zdarzeń.
+
+## 48. Akceptacja wydania na przypiętym celu i czystym kodzie bramek
+
+> Zmienia decyzję 40. Spełnił się jej warunek „W Etapie 5, gdy staging
+> dostanie digest z GitOps — akceptacja przeniesie się do zadania, które
+> widzi wynik synchronizacji”: staging dostaje wersje od Argo CD
+> (decyzja 46), a akceptacja synchronizacji nie widziała.
+
+**Wybieram akceptację, która odmawia, gdy cel się poruszy.** `dft release`
+czytał obraz Deploymentu raz, na początku, a tożsamość porównywała pody
+z obrazem Deploymentu z chwili wywołania. Argo CD z automatyczną
+synchronizacją i zakresem `>=0.0.0-0` wdraża nową wersję kilka minut po
+publikacji charta (zmierzone: 1,7 min po końcu biegu `main`), a akceptacja
+trwa minuty — trzy drainy i odnowienie certyfikatu Let's Encrypt, do 420 s.
+Wydanie zrobione zaraz po scaleniu nakładało się na bieg `main`: tag
+dostałby digest z początku, a część bramek i końcowa tożsamość przeszłyby
+na nowszym. Teraz obraz i wersja charta z Application są zapisane na
+starcie i porównywane po każdej bramce, tożsamość dostaje obraz z początku,
+a zmiana to odmowa bez tagu, z poleceniem powtórzenia po synchronizacji.
+
+Drugi warunek dotyczy kodu bramek. `ci/dft` buduje `dft` z drzewa
+roboczego i z tego samego drzewa powstaje sonda drainu, więc poluzowany
+lokalnie próg dawał zieloną akceptację, zapisaną w tagu jak każda inna.
+`go build` zapisuje w binarce commit i stan drzewa (`vcs.revision`,
+`vcs.modified`): `dft release` odmawia przy niezatwierdzonych zmianach
+i przy commicie spoza `origin/main`, a commit zapisuje w tagu jako
+`Gates-Commit:` — trafia też do predykatu atestacji wydania. CI na tagu
+odrzuca zapis bez tej przyczepy.
+
+**Co tracę:** wydanie robione w trakcie biegu `main` częściej się nie uda
+i trzeba je powtórzyć po synchronizacji. Eksperyment z bramką na stagingu
+wymaga commita i scalenia, zanim jego wynik może zostać wydaniem.
+`origin/main` w klonie autora musi być aktualne (`git pull`) — nieaktualne
+daje odmowę zamiast zgody. Tag założony starszą wersją `dft release`, bez
+`Gates-Commit`, CI odrzuci.
+
+**Kiedy zmieniam zdanie:** gdy bramki zaczną biec w klastrze z CronJoba,
+po synchronizacji — akceptacja dzieje się wtedy po synchronizacji
+z definicji, a sprawdzanie celu przed i po bramce jest zbędne.
 
 ## Czego bym dziś nie powtórzył
 

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/artifact"
+	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
 	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/admission"
@@ -42,19 +43,35 @@ type Git interface {
 	TagExists(ctx context.Context, name string) (bool, error)
 	LatestRelease(ctx context.Context, commit string) (string, error)
 	CreateTag(ctx context.Context, name, commit, message string) error
+	IsAncestor(ctx context.Context, commit, ref string) (bool, error)
 }
 
 // Staging — wdrożenie na klastrze akceptacji (adapters/kube).
 type Staging interface {
 	DeploymentImage(ctx context.Context, namespace, name, container string) (string, error)
+	Application(ctx context.Context, namespace, name string) (cluster.Application, error)
 }
 
 // Gates — bramki akceptacji na wdrożeniu, które stoi na stagingu; składa je
-// cmd z etapów identity, drain i ingress.
+// cmd z etapów identity, drain i ingress. Tożsamość porównuje pody z obrazem,
+// który zostaje wydaniem, a nie z tym, który akurat stoi w Deploymencie.
 type Gates interface {
-	Identity(ctx context.Context) ([]identity.Pod, error)
+	Identity(ctx context.Context, image string) ([]identity.Pod, error)
 	Drain(ctx context.Context) (drain.Report, error)
 	Ingress(ctx context.Context) (ingress.Report, error)
+}
+
+// MainRef — ref, w którym musi być commit kodu bramek: zdalny main w klonie
+// autora. Kod z niescalonej gałęzi może mieć poluzowane progi, a tag
+// zapisałby jego wynik tak samo jak każdy inny.
+const MainRef = "origin/main"
+
+// GatesCode — kod bramek, którym biegnie akceptacja: commit i stan drzewa
+// z informacji o buildzie programu (vcs.revision, vcs.modified). Sonda drainu
+// powstaje z tego samego drzewa.
+type GatesCode struct {
+	Commit   string
+	Modified bool
 }
 
 // Acceptor — akceptacja na stagingu i tag wydania.
@@ -66,6 +83,8 @@ type Acceptor struct {
 	Admission  Admission
 	Gates      Gates
 	Git        Git
+	// Code — kod bramek z informacji o buildzie dft.
+	Code GatesCode
 	// Now — zegar akceptacji; nil oznacza time.Now.
 	Now func() time.Time
 }
@@ -86,17 +105,23 @@ func (a Acceptor) Accept(ctx context.Context, tag, title string) (artifact.Relea
 	if err := a.Staging.RequireCluster(); err != nil {
 		return artifact.Release{}, err
 	}
+	if err := a.checkCode(ctx); err != nil {
+		return artifact.Release{}, err
+	}
 
-	deployment := a.Staging.App.Release + "-api"
-	image, err := a.Cluster.DeploymentImage(ctx, a.Staging.App.Namespace, deployment, "api")
+	start, err := a.target(ctx)
 	if err != nil {
 		return artifact.Release{}, err
 	}
+	image := start.image
 	if !strings.Contains(image, "@sha256:") {
 		return artifact.Release{}, cli.Unmet("na %s stoi %s — wydaniem może być tylko obraz z rejestru po digeście: %s -- --image <obraz>@sha256:…",
 			a.Staging.Name, image, a.Staging.Task("cluster:up"))
 	}
 	cli.Step("na %s stoi %s", a.Staging.Name, image)
+	if start.chart != "" {
+		cli.Step("Argo CD: wersja charta %s — akceptacja odmówi, jeśli zmieni się w trakcie", start.chart)
+	}
 	admitted, err := a.Admission.Admit(ctx, image, policy(a.Staging.Name, a.Repository))
 	if err != nil {
 		return artifact.Release{}, err
@@ -110,7 +135,7 @@ func (a Acceptor) Accept(ctx context.Context, tag, title string) (artifact.Relea
 		return artifact.Release{}, cli.Unmet("wydanie %s nie jest późniejsze niż %s, z którego wyrósł commit %s", version, latest, artifact.ShortCommit(img.Commit))
 	}
 
-	summary, err := a.accept(ctx)
+	summary, err := a.accept(ctx, start)
 	if err != nil {
 		return artifact.Release{}, fmt.Errorf("akceptacja %s na %s: %w", img.Ref(), a.Staging.Name, err)
 	}
@@ -120,7 +145,7 @@ func (a Acceptor) Accept(ctx context.Context, tag, title string) (artifact.Relea
 	}
 	r := artifact.Release{
 		Version: version, Title: title, Image: img.Ref(), Commit: img.Commit,
-		AcceptedAt: now().UTC().Format(time.RFC3339), Staging: summary,
+		AcceptedAt: now().UTC().Format(time.RFC3339), Staging: summary, GatesCommit: a.Code.Commit,
 	}
 	if err := r.Validate(); err != nil {
 		return artifact.Release{}, err
@@ -134,22 +159,34 @@ func (a Acceptor) Accept(ctx context.Context, tag, title string) (artifact.Relea
 
 // accept uruchamia bramki akceptacji na wdrożeniu stagingu: tożsamość,
 // drain każdego węzła pod ruchem, odnowienie certyfikatu pod ruchem
-// i tożsamość jeszcze raz — po drainach stoją nowe pody. Zwraca
-// podsumowanie do tagu.
-func (a Acceptor) accept(ctx context.Context) (string, error) {
-	pods, err := a.Gates.Identity(ctx)
+// i tożsamość jeszcze raz — po drainach stoją nowe pody. Po każdej bramce
+// sprawdza, że cel się nie ruszył. Zwraca podsumowanie do tagu.
+func (a Acceptor) accept(ctx context.Context, start target) (string, error) {
+	pods, err := a.Gates.Identity(ctx, start.image)
 	if err != nil {
+		return "", err
+	}
+	if err := a.unchanged(ctx, start, "tożsamości"); err != nil {
 		return "", err
 	}
 	drained, err := a.Gates.Drain(ctx)
 	if err != nil {
 		return "", err
 	}
+	if err := a.unchanged(ctx, start, "drainu"); err != nil {
+		return "", err
+	}
 	tls, err := a.Gates.Ingress(ctx)
 	if err != nil {
 		return "", err
 	}
-	if _, err := a.Gates.Identity(ctx); err != nil {
+	if err := a.unchanged(ctx, start, "odnowienia certyfikatu"); err != nil {
+		return "", err
+	}
+	if _, err := a.Gates.Identity(ctx, start.image); err != nil {
+		return "", err
+	}
+	if err := a.unchanged(ctx, start, "tożsamości po drainach"); err != nil {
 		return "", err
 	}
 	requests := 0
@@ -165,7 +202,68 @@ func (a Acceptor) accept(ctx context.Context) (string, error) {
 	} else {
 		parts = append(parts, fmt.Sprintf("odnowienie certyfikatu %s (rewizja %d → %d), %d żądań, 0 nieudanych", tls.Hostname, tls.RevisionBefore, tls.RevisionAfter, tls.Requests))
 	}
+	if start.chart != "" {
+		parts = append(parts, fmt.Sprintf("Argo CD na wersji charta %s przez całą akceptację", start.chart))
+	}
 	return strings.Join(parts, "; "), nil
+}
+
+// checkCode — akceptacja biegnie kodem bramek z zatwierdzonego commita ze
+// scalonego main. Zmieniony lokalnie próg albo eksperymentalna gałąź dałyby
+// zieloną akceptację, którą tag zapisałby tak samo jak każdą inną.
+func (a Acceptor) checkCode(ctx context.Context) error {
+	switch {
+	case len(a.Code.Commit) != 40:
+		return cli.Unmet("kod bramek bez commita w informacji o buildzie (vcs.revision=%q) — dft musi być zbudowany w repozytorium gita, przez ci/dft", a.Code.Commit)
+	case a.Code.Modified:
+		return cli.Unmet("kod bramek z niezatwierdzonymi zmianami (vcs.modified, commit %s) — akceptacja tylko kodem z zatwierdzonego commita", artifact.ShortCommit(a.Code.Commit))
+	}
+	merged, err := a.Git.IsAncestor(ctx, a.Code.Commit, MainRef)
+	if err != nil {
+		return err
+	}
+	if !merged {
+		return cli.Unmet("kod bramek z %s, którego nie ma w %s — akceptacja tylko kodem ze scalonego main (git switch main && git pull)", artifact.ShortCommit(a.Code.Commit), MainRef)
+	}
+	cli.Step("kod bramek: %s z %s, bez niezatwierdzonych zmian", artifact.ShortCommit(a.Code.Commit), MainRef)
+	return nil
+}
+
+// target — co stoi na stagingu: obraz Deploymentu i wersja charta, którą
+// wdrożył Argo CD (pusta, gdy staging nie ma Argo).
+type target struct {
+	image, chart string
+}
+
+func (a Acceptor) target(ctx context.Context) (target, error) {
+	image, err := a.Cluster.DeploymentImage(ctx, a.Staging.App.Namespace, a.Staging.App.Release+"-api", "api")
+	if err != nil {
+		return target{}, err
+	}
+	t := target{image: image}
+	if a.Staging.GitOps() {
+		app, err := a.Cluster.Application(ctx, environment.ArgoCDNamespace, a.Staging.App.Release)
+		if err != nil {
+			return target{}, err
+		}
+		t.chart = app.Revision
+	}
+	return t, nil
+}
+
+// unchanged — cel akceptacji się nie ruszył. Argo CD z automatyczną
+// synchronizacją wdraża nowszą wersję kilka minut po publikacji, także
+// w trakcie bramek; wtedy część bramek przeszłaby na innym digeście niż ten,
+// który zostaje wydaniem, a tag by tego nie pokazał.
+func (a Acceptor) unchanged(ctx context.Context, want target, after string) error {
+	got, err := a.target(ctx)
+	if err != nil {
+		return err
+	}
+	if got != want {
+		return cli.Unmet("cel akceptacji zmienił się po bramce %s: obraz %s → %s, wersja charta %q → %q — Argo CD wdrożył nowszą wersję; powtórz wydanie po synchronizacji", after, want.image, got.image, want.chart, got.chart)
+	}
+	return nil
 }
 
 // Tags — tagi wydań w repozytorium na GitHubie (adapters/github).

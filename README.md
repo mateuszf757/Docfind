@@ -177,19 +177,24 @@ podaje wdrożenie zmienną `DOCFIND_VERSION`: ten sam digest jest na stagingu
 `0.3.1-dev.<commity od tagu>+<sha>`, a na produkcji `0.3.1`.
 
 ```bash
-# 1. digest z main na staging (z podsumowania zadania build)
-MISE_ENV=staging ./bin/mise run cluster:up -- --image ghcr.io/mateuszf757/docfind-api@sha256:…
-# 2. akceptacja tego, co stoi na stagingu, i tag z adnotacją na jego commicie
-./bin/mise run release -- v0.3.1 "Etap 3: <co zawiera wydanie>"
+# 1. staging dostaje chart z main sam — Argo CD (decyzja 46); stan wdrożenia:
+MISE_ENV=staging ./bin/mise exec -- kubectl -n argocd get application docfind
+# 2. akceptacja tego, co stoi na stagingu, i tag z adnotacją na jego commicie —
+#    kodem bramek ze scalonego main, z czystego drzewa (decyzja 48)
+git switch main && git pull
+./bin/mise run release -- v0.4.0 "Etap 4: <co zawiera wydanie>"
 # 3. wypchnięcie tagu uruchamia wydanie w CI
-git push origin v0.3.1
+git push origin v0.4.0
 ```
 
 `release` sprawdza pochodzenie digestu z `main` i numer (większy niż
 ostatnie wydanie, z którego wyrósł commit), uruchamia na stagingu bramki
 akceptacji — tożsamość na podach, drain każdego węzła pod ruchem,
 odnowienie certyfikatu pod ruchem, tożsamość po drainach — i zapisuje ich
-wyniki w tagu razem z digestem. Na tagu CI niczego nie buduje: dopisuje
+wyniki w tagu razem z digestem i commitem kodu bramek (`Gates-Commit:`).
+Odmawia, gdy kod bramek ma niezatwierdzone zmiany albo nie jest
+w `origin/main`, i gdy w trakcie Argo CD wdroży inną wersję — wtedy wydanie
+powtarza się po synchronizacji. Na tagu CI niczego nie buduje: dopisuje
 w rejestrze `ghcr.io/mateuszf757/docfind-api:0.3.1` do tego samego
 digestu, wystawia atestację wydania z zapisem akceptacji i skanuje digest
 z polityką wydania. Zadanie `promote` czeka na zgodę w Environment
