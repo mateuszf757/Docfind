@@ -161,7 +161,7 @@ jobs:
       # kodu Go; nocą zgłosi to vulns-issue.
       - name: raport podatności kodu Go
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: raport-podatnosci-go
           path: .cache/reports/vulns-go.json
@@ -269,7 +269,7 @@ jobs:
       # zadaniami tego samego biegu.
       - name: archiwum obrazu dla zadania cluster
         if: github.event_name != 'push'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: obraz-api
           path: ${{ runner.temp }}/image-api.tar
@@ -452,7 +452,7 @@ jobs:
 
       - name: archiwum obrazu z zadania build
         if: github.event_name != 'push'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: obraz-api
           path: ${{ runner.temp }}/obraz
@@ -492,7 +492,7 @@ jobs:
       # w raporcie nie ma sekretów.
       - name: raport podatności obrazu
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: raport-podatnosci-api
           path: .cache/reports/vulns-api.json
@@ -531,7 +531,7 @@ jobs:
 
       # Wzorzec zamiast nazw: brak artefaktu skanu, który się nie wykonał,
       # nie przerywa kroku. Których raportów oczekiwać, wie dft.
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: raport-podatnosci-*
           merge-multiple: true
@@ -631,7 +631,7 @@ jobs:
 
       - name: archiwum obrazu z zadania build
         if: github.event_name != 'push'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: obraz-api
           path: ${{ runner.temp }}/obraz
@@ -693,7 +693,7 @@ jobs:
       # żadnych nie dostaje, a kubeconfig leży poza tym katalogiem.
       - name: artefakt z dowodami
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dowody-cluster
           path: .cache/reports/
