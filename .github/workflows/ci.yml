@@ -57,8 +57,10 @@ on:
 # 19.10.2026, z innym python3 i innymi wersjami narzędzi na obrazie.
 
 # Najmniejsze uprawnienia na poziomie workflowu; zapis do rejestru dostają
-# tylko zadania, które go używają: build i chart (publikacja), release (tag
-# wydania w rejestrze) i zadania atestacji (kopia obok artefaktu).
+# tylko zadania, które go używają, i żadne z nich nie biegnie na PR-ach:
+# build-publish i chart (publikacja), release (tag wydania w rejestrze)
+# i zadania atestacji (kopia obok artefaktu). Pilnuje tego dft check
+# workflows (decyzja 49).
 permissions:
   contents: read
 
@@ -174,25 +176,23 @@ jobs:
       - name: powtarzalność narzędzi Go
         run: ./bin/mise run check:tools
 
+  # Build obrazu na PR-ach i nocą: archiwum dla zadania cluster, token tylko
+  # do odczytu. Uprawnienia dostaje zadanie, a nie krok — jedno zadanie
+  # z publikacją przy push miało packages: write także na każdym PR-ze, z kodem
+  # PR-a w środku (decyzja 49). Na push na main te same kroki (akcja
+  # build-image) wykonuje build-publish, z prawem zapisu do rejestru.
+  # Nazwa zadania to nazwa wymaganego statusu reguły main — bez pola name.
   build:
     needs: test
-    # Jawny wynik zamiast domyślnego success() (decyzja 47): na tagu test
-    # jest pominięty warunkiem i build też — tak ma być — ale zależność od
-    # przodków ma być widoczna w warunku, a nie domyślna.
-    if: ${{ !cancelled() && needs.test.result == 'success' }}
+    if: ${{ !cancelled() && github.event_name != 'push' && needs.test.result == 'success' }}
     runs-on: ubuntu-24.04
-    # Typowy bieg trwa 1–2 minuty; publikacja i powtarzalność to dwa buildy.
+    # Typowy bieg trwa 4–5 minut; powtarzalność to drugi build.
     timeout-minutes: 30
     permissions:
       contents: read
-      # Publikacja obrazu do GHCR — tylko przy push, ale zadanie jest jedno.
-      packages: write
-    # image i digest puste poza push, bo nic nie jest publikowane; config —
-    # digest konfiguracji obrazu z archiwum dla zadania cluster (PR, nocą).
+    # Digest konfiguracji obrazu z archiwum dla zadań cluster i vulns.
     outputs:
-      image: ${{ steps.publish.outputs.image }}
-      digest: ${{ steps.publish.outputs.digest }}
-      config: ${{ steps.build.outputs.config }}
+      config: ${{ steps.image.outputs.config }}
     env:
       # Zadania mise biegną tu z samym Go. Domyślnie `mise run` doinstalowałby
       # brakujące narzędzia (kubectl, helm, …) — z zapytaniami do API GitHuba,
@@ -206,103 +206,46 @@ jobs:
           # i może go odczytać każdy późniejszy krok. Skrypty nie pushują.
           persist-credentials: false
 
-      # Tylko Go, z sumą z mise.lock: dft budowany ze źródeł w tym zadaniu,
-      # a nie binarka z zadania test — zadanie z packages: write
-      # uruchamiałoby program zbudowany gdzie indziej. Go pobierany
-      # z dl.google.com, więc bez tokenu: token tego zadania ma prawo zapisu
-      # do rejestru.
-      - name: Go (mise)
-        run: ./bin/mise install go
-
-      # Obraz BuildKit z ci/pins.env. Bez przypięcia sterownik docker-container
-      # bierze przesuwalny tag, a od wersji BuildKit (i wbudowanego w nią
-      # frontendu Dockerfile) zależy, czy obraz z CI jest bajt w bajt taki
-      # jak lokalny (decyzja 21).
-      - name: przypięte wersje
-        id: pins
-        run: ./bin/mise run pins
-
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # Akcja z obszaru roboczego, nie składnia $/…, którą zaleca zizmor:
+      # actionlint 1.7.12 jej nie zna i odrzuca workflow. Ryzyko, przed którym
+      # chroni $/… — akcja podmieniona w obszarze roboczym przez wcześniejszy
+      # krok — tu nie zachodzi: jedyny wcześniejszy krok to checkout tego
+      # samego commita. Do zmiany razem z aktualizacją actionlinta.
+      - name: build i sprawdzenia obrazu, archiwum
+        id: image
+        uses: ./.github/actions/build-image # zizmor: ignore[self-repository]
         with:
-          driver-opts: image=${{ steps.pins.outputs.buildkit }}
+          publish: "false"
 
-      - name: build obrazu api
-        id: build
-        env:
-          # Bez publikacji obraz idzie do zadania cluster jako archiwum
-          # `docker save` — w rejestrze go nie ma. dft zapisuje do wyjść
-          # kroku digest jego konfiguracji.
-          ARCHIVE: ${{ github.event_name != 'push' && format('{0}/image-api.tar', runner.temp) || '' }}
-        run: ./bin/mise run build
-
-      # Odświeżenie digestu python:3.14-alpine od Dependabota jest scalane
-      # automatycznie, ale może przynieść nowe wydanie Alpine. Tu zamienia się
-      # to w czerwony build, dopóki człowiek nie podbije DF_BASE_ALPINE.
-      - name: baza obrazu zgodna z zapisaną
-        run: ./bin/mise run check:base
-
-      # Testy jednostkowe na tej samej bazie co produkcja: musl i ta sama łatka
-      # Pythona. Zadanie test uruchamia je na glibc runnera.
-      - name: testy na obrazie (musl)
-        run: ./bin/mise run test:image
-
-      # Warunki zakończenia Etapu 1 sprawdzane na artefakcie, nie na kodzie:
-      # rozmiar obrazu, odmowa startu bez konfiguracji i ze złą konfiguracją,
-      # koszt zamykania, żądanie w locie przy SIGTERM. Raport JSON zostaje
-      # w .cache/reports.
-      - name: warunki zakończenia etapu
-        run: ./bin/mise run check:runtime
-
-      # Warianty, które bramki muszą odrzucić, na tym samym obrazie: obraz,
-      # który wstaje bez konfiguracji, PID 1 bez obsługi SIGTERM, żądanie
-      # w locie dłuższe niż limit dokańczania. Bramka, której nie da się
-      # oblać, niczego nie sprawdza.
-      - name: warianty negatywne bramek
-        run: ./bin/mise run test:negatives
-
-      # Build z pamięcią podręczną i build od zera muszą dać identyczny obraz.
-      # Publikowany digest da się wtedy niezależnie odtworzyć z commita, a zmiana
-      # digestu zawsze oznacza zmianę zawartości. Porównanie warstwa po
-      # warstwie robi dft (port dawnego compare_oci.py) — bez uv i Pythona.
-      - name: powtarzalność builda
-        run: ./bin/mise run check:reproducible
-
-      # Archiwum dopiero po wszystkich sprawdzeniach: zadanie cluster dostaje
-      # obraz, który je przeszedł, i porówna jego konfigurację z digestem
-      # z wyjść tego zadania. Jeden dzień — to tylko przekazanie między
-      # zadaniami tego samego biegu.
-      - name: archiwum obrazu dla zadania cluster
-        if: github.event_name != 'push'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+  # Build i publikacja obrazu na push na main — jedyny build tego commita
+  # (decyzja 40). Warunek wyklucza PR-y, więc token z prawem zapisu do
+  # rejestru nie trafia do zadania z kodem PR-a (decyzja 49).
+  build-publish:
+    needs: test
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref_type == 'branch' && needs.test.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Publikacja obrazu do GHCR — zadanie biegnie tylko na push na main.
+      packages: write
+    # Digest opublikowanego obrazu: promuje się digest, nie tag.
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      digest: ${{ steps.image.outputs.digest }}
+    env:
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: obraz-api
-          path: ${{ runner.temp }}/image-api.tar
-          retention-days: 1
-          if-no-files-found: error
+          fetch-depth: 0
+          persist-credentials: false
 
-      # Logowanie i publikacja tylko przy push, po wszystkich sprawdzeniach:
-      # dane logowania leżą w ~/.docker/config.json od tego kroku do końca
-      # zadania, więc nie ma ich tam, gdy biegną build, testy i bramki.
-      # Na PR-ach nie ma czego publikować, a PR-y od Dependabota i tak
-      # dostają token tylko do odczytu.
-      - name: logowanie do GHCR
-        if: github.event_name == 'push'
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+      - name: build, sprawdzenia i publikacja obrazu
+        id: image
+        uses: ./.github/actions/build-image # zizmor: ignore[self-repository]
         with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-
-      # dft build publikuje z BuildKitu z atestacją pochodzenia i sprawdza
-      # w rejestrze (go-containerregistry), że to indeks z atestacją, a obraz
-      # ma konfigurację obrazu przetestowanego wyżej.
-      - name: publikacja obrazu api
-        id: publish
-        if: github.event_name == 'push'
-        env:
-          PUSH: "1"
-        run: ./bin/mise run build
+          publish: "true"
 
   # Atestacja GitHuba (Sigstore) opublikowanego obrazu: podpis krótkotrwałym
   # certyfikatem wystawionym temu workflowowi, wpis w publicznym dzienniku
@@ -310,10 +253,8 @@ jobs:
   # pozwala każdemu krokowi zadania wybić token OIDC — tu jest tylko akcja
   # atestacji i logowanie do rejestru.
   attest:
-    needs: build
-    # Push na tagu też jest zdarzeniem push, ale build jest wtedy pominięty —
-    # warunek patrzy na jego wynik jawnie (decyzja 47).
-    if: ${{ !cancelled() && github.event_name == 'push' && needs.build.result == 'success' }}
+    needs: build-publish
+    if: ${{ !cancelled() && needs.build-publish.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Strona atestacji digestu — link w zapisie promocji (zadanie promote).
@@ -337,8 +278,8 @@ jobs:
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         id: attest
         with:
-          subject-name: ${{ needs.build.outputs.image }}
-          subject-digest: ${{ needs.build.outputs.digest }}
+          subject-name: ${{ needs.build-publish.outputs.image }}
+          subject-digest: ${{ needs.build-publish.outputs.digest }}
           push-to-registry: true
           # Rekordy przechowywania istnieją tylko dla repozytoriów organizacji
           # i wymagałyby uprawnienia artifact-metadata.
@@ -435,10 +376,10 @@ jobs:
   # bieg, polityka i wyjątki z datą w dft. Na PR-ze punktem odniesienia jest
   # obraz z main dla commita bazowego — blokuje tylko to, co PR wnosi.
   vulns:
-    needs: [build, release]
-    # Na tagu build jest pominięty, a obraz wydania przychodzi z zadania
-    # release; poza tagiem odwrotnie.
-    if: ${{ !cancelled() && (needs.build.result == 'success' || needs.release.result == 'success') }}
+    needs: [build, build-publish, release]
+    # Obraz przychodzi z jednego z trzech zadań: archiwum z build (PR, noc),
+    # digest z build-publish (push na main) albo wydanie z release (tag).
+    if: ${{ !cancelled() && (needs.build.result == 'success' || needs.build-publish.result == 'success' || needs.release.result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -482,7 +423,7 @@ jobs:
       - name: skan opublikowanego obrazu z main (raport)
         if: github.event_name == 'push' && github.ref_type == 'branch'
         env:
-          IMAGE: ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
+          IMAGE: ${{ needs.build-publish.outputs.image }}@${{ needs.build-publish.outputs.digest }}
         run: ./bin/mise run check:vulns -- --image "$IMAGE" --report-only
 
       # Wydanie z naprawialną HIGH/CRITICAL bez wyjątku nie przechodzi —
@@ -615,10 +556,10 @@ jobs:
   # main; `./bin/mise run ci:trial` mówi, kiedy można go dopisać. Klaster
   # znika razem z maszyną runnera.
   cluster:
-    needs: [build, attest]
-    # Na PR-ze i nocą attest jest pominięte (nic nie opublikowano) — cluster
-    # i tak rusza; po publikacji czeka na atestację, którą sprawdza.
-    if: ${{ !cancelled() && needs.build.result == 'success' && needs.attest.result != 'failure' }}
+    needs: [build, build-publish, attest]
+    # Na PR-ze i nocą obraz to archiwum z build; po publikacji — digest
+    # z build-publish, i wtedy cluster czeka na atestację, którą sprawdza.
+    if: ${{ !cancelled() && (needs.build.result == 'success' || (needs.build-publish.result == 'success' && needs.attest.result == 'success')) }}
     runs-on: ubuntu-24.04
     # Typowy bieg: utworzenie klastra i platforma ~5 minut, bramki ~4.
     timeout-minutes: 30
@@ -671,7 +612,7 @@ jobs:
       - name: klaster i wdrożenie obrazu z GHCR po digeście
         if: github.event_name == 'push'
         env:
-          IMAGE: ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
+          IMAGE: ${{ needs.build-publish.outputs.image }}@${{ needs.build-publish.outputs.digest }}
           GH_TOKEN: ${{ github.token }}
         run: ./bin/mise run cluster:up -- --image "$IMAGE"
 
@@ -727,11 +668,11 @@ jobs:
   # zielony. Powtarzalny jak obraz: ten sam commit, ten sam digest. dft
   # pobiera go z rejestru po wysłaniu i sprawdza wersję i obraz w wartościach.
   chart:
-    needs: [build, attest, cluster]
+    needs: [build-publish, attest, cluster]
     if: >-
       ${{
         !cancelled() && github.event_name == 'push' && github.ref_type == 'branch'
-        && needs.build.result == 'success'
+        && needs.build-publish.result == 'success'
         && needs.attest.result == 'success'
         && needs.cluster.result == 'success'
       }}
@@ -768,7 +709,7 @@ jobs:
       - name: publikacja charta (OCI)
         id: chart
         env:
-          IMAGE: ${{ needs.build.outputs.image }}@${{ needs.build.outputs.digest }}
+          IMAGE: ${{ needs.build-publish.outputs.image }}@${{ needs.build-publish.outputs.digest }}
         run: ./bin/mise run chart:publish -- --image "$IMAGE"
 
   # Atestacja GitHuba charta — ta sama tożsamość workflowu i commita co
