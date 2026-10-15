@@ -20,6 +20,7 @@ import (
 
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/docker"
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/httpclient"
+	"github.com/mateuszf757/Docfind/tools/internal/core/contract"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 )
@@ -55,20 +56,19 @@ func dockerChecker(t *testing.T, name string) *Checker {
 	}
 }
 
-// negativeBudget — górna granica czasu jednego wariantu: limity odmowy,
-// startu i zamykania razem z narzutem Dockera mieszczą się w niej kilka razy.
+// Budżet jednego wariantu (contract.NegativeVariantBudget): limity odmowy,
+// startu i zamykania razem z narzutem Dockera mieszczą się w nim kilka razy.
 // Wariant zaliczony dopiero po czasie nie sprawdził mechanizmu, który opisuje
 // — tak `sleep 300` czekał do końca w co trzecim biegu CI, gdy usunięcie
 // kontenera po limicie chybiało (H27).
-const negativeBudget = 2 * time.Minute
 
 // runBounded uruchamia bramkę i sprawdza, że wariant skończył się w budżecie.
 func runBounded(t *testing.T, c *Checker) (Report, error) {
 	t.Helper()
 	started := time.Now()
 	rep, err := c.Run(context.Background())
-	if elapsed := time.Since(started); elapsed > negativeBudget {
-		t.Errorf("wariant trwał %v, budżet %v — zaliczony po czasie, a nie przez mechanizm, który sprawdza", elapsed.Round(time.Second), negativeBudget)
+	if elapsed := time.Since(started); elapsed > contract.NegativeVariantBudget {
+		t.Errorf("wariant trwał %v, budżet %v — zaliczony po czasie, a nie przez mechanizm, który sprawdza", elapsed.Round(time.Second), contract.NegativeVariantBudget)
 	}
 	return rep, err
 }

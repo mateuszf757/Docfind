@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
+	"github.com/mateuszf757/Docfind/tools/internal/core/contract"
 	"github.com/mateuszf757/Docfind/tools/internal/core/loopback"
 	"github.com/mateuszf757/Docfind/tools/internal/core/policy"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
@@ -380,7 +381,7 @@ func (c *Checker) renewUnderTraffic(ctx context.Context, rep *Report, secret str
 
 	// Proxy podaje nowy certyfikat sam — Envoy Gateway śledzi Secret
 	// i przekazuje go proxy przez SDS, bez restartu podów.
-	err = poll.Until(ctx, 60*time.Second, time.Second, func(ctx context.Context) (bool, error) {
+	err = poll.Until(ctx, contract.TLSPropagation, time.Second, func(ctx context.Context) (bool, error) {
 		after, err := c.Edge.Certificate(ctx, version)
 		if err != nil || after.SerialNumber.Cmp(before.SerialNumber) == 0 {
 			return false, nil
@@ -389,7 +390,7 @@ func (c *Checker) renewUnderTraffic(ctx context.Context, rep *Report, secret str
 		return true, nil
 	})
 	if errors.Is(err, poll.ErrTimeout) {
-		return cli.Unmet("proxy nadal podaje stary certyfikat 60 s po odnowieniu")
+		return cli.Unmet("proxy nadal podaje stary certyfikat %v po odnowieniu", contract.TLSPropagation)
 	}
 	if err != nil {
 		return err

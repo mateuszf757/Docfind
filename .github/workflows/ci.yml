@@ -136,27 +136,26 @@ jobs:
           enable-cache: false
 
       # Jedno zadanie mise: spójność wersji, shellcheck, actionlint, zizmor,
-      # gitleaks na całej historii (stąd fetch-depth: 0 — w płytkim klonie
+      # kontrakt inżynierski, gitleaks na całej historii (stąd fetch-depth: 0 — w płytkim klonie
       # dft odmawia, bo skan widziałby jej część), charty, polityki, ruff,
       # mypy, pytest, schemat i bramki kodu Go
       # (gofmt, vet, staticcheck, testy z -race, govulncheck). Osobny krok
       # w CI, którego nie ma w zadaniu, to krok, który lokalnie nie biegnie.
       #
-      # govulncheck w trybie skanu obrazu (decyzja 37): na PR-ze blokuje
-      # tylko podatności, których nie ma w kodzie tools/ z commita bazowego,
-      # na main i nocą tylko raportuje — nowa podatność w bazie Go nie
+      # Zmianę ocenia się względem commita bazowego PR-a: govulncheck
+      # blokuje tylko podatności, których nie ma w kodzie tools/ z commita
+      # bazowego (decyzja 37), a pole chronione kontraktu zmienione bez
+      # wpisu w DECYZJE jest czerwone (decyzja 50). Na main i nocą
+      # govulncheck tylko raportuje — nowa podatność w bazie Go nie
       # zatrzymuje builda ani nocnego skanu obrazu, tylko trafia do issue.
-      # Lokalnie bez flag: blokuje każda.
-      - name: wersje, lint, typy, testy, polityki, schemat, kod Go
+      # Tryb wybiera dft ze zdarzenia (`dft test --event`), a nie warunek
+      # powłoki tutaj — ten lokalnie nie biegnie i nie ma testu. Na push
+      # BASE_SHA jest puste.
+      - name: wersje, lint, kontrakt, typy, testy, polityki, schemat, kod Go
         env:
           EVENT: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if [ "$EVENT" = pull_request ]; then
-            ./bin/mise run test -- --vulns-baseline "$BASE_SHA"
-          else
-            ./bin/mise run test -- --vulns-report-only
-          fi
+        run: ./bin/mise run test -- --event "$EVENT" --base "$BASE_SHA"
 
       # Raport govulncheck także przy czerwonym kroku — wtedy jest
       # najbardziej potrzebny. Brak pliku znaczy, że test nie doszedł do

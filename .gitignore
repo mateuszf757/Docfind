@@ -3,6 +3,7 @@
 # bo docs/DECYZJE.md musi być widoczne w repozytorium.
 docs/*
 !docs/DECYZJE.md
+!docs/engineering-contracts.md
 !docs/RUNBOOK.md
 !docs/INSTALACJA.md
 !docs/WYMAGANIA.md

@@ -15,6 +15,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/kube"
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/openbao"
 	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
+	"github.com/mateuszf757/Docfind/tools/internal/core/contract"
 	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
 	"github.com/mateuszf757/Docfind/tools/internal/core/loopback"
 	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
@@ -200,7 +201,7 @@ func runCheckRotation(ctx context.Context, w *workspace, args []string) error {
 		Port: 8000,
 		// refreshInterval ExternalSecret (1 min) + podmiana plików przez
 		// kubelet (okres synchronizacji poda, 1 min) z zapasem.
-		Budget: 4 * time.Minute, Interval: 2 * time.Second,
+		Budget: contract.RotationPhaseBudget, Interval: 2 * time.Second,
 		NewToken: secrets.NewToken,
 	}
 	rep, err := gate.Run(ctx)

@@ -2006,6 +2006,69 @@ jest wyciszone przy linii. `cache-mode: none` w workflowie publikującym
 **Kiedy zmieniam zdanie:** gdy GitHub pozwoli ustawić uprawnienia zadania
 zależnie od zdarzenia — wtedy jedno zadanie `build`.
 
+## 50. Kontrakt inżynierski w gicie: progi w kodzie, pola chronione
+
+> Kontrakt (`docs/engineering-contracts.md`) miał status „obowiązujący”,
+> a istniał tylko poza gitem: `docs/*` w `.gitignore`, pusty
+> `git log --all` dla tego pliku. Wersja 2.0 trafia do repozytorium
+> i odwołuje się do decyzji, które go dotyczą, w tym 47–49.
+
+**Wybieram kontrakt w gicie, sprawdzany programem, z progami w kodzie.**
+Kontrakt zmienia się PR-em. `dft check contract` — część `dft test`, więc
+biegnie na każdym PR-ze, na `main` i nocą — sprawdza, że:
+
+- tabela progów w §10 jest równa tabeli z rejestru `core/contract`.
+  Bramki biorą progi z tych samych stałych, a test `core/contract`
+  odrzuca liczbę wpisaną wprost w pole progu konfiguracji bramki
+  (`MinRequests: 10`);
+- każda klauzula ma pola Egzekwuje, Dowód, Warstwa, Wariant negatywny
+  i Decyzja;
+- zadanie mise, polecenie i bramka `dft`, pakiet narzędzi i numer
+  decyzji, na które kontrakt się powołuje, istnieją. Strażnik, którego
+  jeszcze nie ma, stoi w znaczniku `[ŻYCZENIE: …]` — kontrakt mówi wprost,
+  która obietnica jest sprawdzana, a która jest planem.
+
+Na PR-ze ta sama bramka porównuje zmianę z commitem bazowym. Pole
+chronione zmienione bez zmiany tego pliku w tym samym PR-ze to czerwony
+`test`. Pola chronione:
+
+- progi i sam kontrakt;
+- konfiguracja gitleaks i jej wyjątki;
+- reguły repozytorium, środowiska GitHuba i konfiguracja Dependabota;
+- działanie workflowów i akcji złożonych.
+
+Workflowy ocenia po działaniu, a nie po bajtach: porównuje drzewo YAML
+bez komentarzy, nazw kroków i wersji akcji w `uses`. Podbicia Dependabota
+przechodzą. Zmiana warunku, polecenia, `needs`, uprawnienia albo limitu
+czasu wymaga wpisu tutaj, podobnie `if: false` przy kroku bramki.
+Pominięte zadanie wymagane raportuje sukces, więc warunek zadania był
+najkrótszą drogą do zielonej bramki, która niczego nie sprawdziła. Tryb
+`dft test` wybiera teraz `dft` z argumentów (`--event`, `--base`), a nie
+warunek powłoki w `run:` — tamten lokalnie nie biegł i nie miał testu.
+
+**Co tracę:**
+
+- **Koszt zmian.** Każda zmiana działania workflowu, także drobna, i każda
+  poprawka kontraktu wymaga zdania w tym pliku.
+- **Sprawdzana jest obecność, nie treść.** Reguła patrzy tylko, czy ten
+  plik jest w diffie: dopisana spacja ją obchodzi, ale widać ją
+  w recenzji.
+- **Zakres porównania.** Commit bazowy to `pull_request.base.sha` z chwili
+  zdarzenia. Gdy `main` w tym czasie uciekł, porównanie obejmuje też jego
+  nowe commity. Na push i nocą bramka sprawdza tylko dokument, bo zmianę
+  ocenił już PR.
+- **Wyjątki podatności nie są chronione.** Każdy ma uzasadnienie i datę
+  najdalej za 90 dni, sprawdzaną przez `core/vuln`, więc wygasa sam.
+  Wyjątek gitleaks nie wygasa, dlatego jest chroniony.
+- **Odłożone na osobny PR.** Diff renderów `staging`/`prod` (§2.4),
+  znacznik warstwy przy zadaniu (§3.1) i lint wejść powłoki (§1.1) mają
+  w kontrakcie znacznik `[ŻYCZENIE]`.
+
+**Kiedy zmieniam zdanie:** gdy pola chronione zaczną wymuszać wpisy bez
+treści (trzy takie PR-y w miesiącu). Wtedy zawężę listę pól albo wyjątek
+od klauzuli dostanie rejestr z datą wygaśnięcia (§0.4 kontraktu) zamiast
+wpisu tutaj.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

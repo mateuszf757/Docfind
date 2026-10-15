@@ -89,7 +89,16 @@ func TestUsageErrors(t *testing.T) {
 		"wydanie w CI bez numeru":       func() error { return runReleaseImage(ctx, w, nil) },
 		"tag obrazu z wersji":           func() error { return runIdentity(ctx, w, []string{"docker-tag"}) },
 		"test z argumentem":             func() error { return runTest(ctx, w, []string{"go"}) },
-		"bramka Go z nieznaną flagą":    func() error { return runCheckGo(ctx, w, []string{"--baseline-commit", "abc"}) },
+		"test na PR-ze bez bazy":        func() error { return runTest(ctx, w, []string{"--event", "pull_request"}) },
+		"test na PR-ze z trybem raportu": func() error {
+			return runTest(ctx, w, []string{"--event", "pull_request", "--base", "abc", "--vulns-report-only"})
+		},
+		"test na push z bazą":               func() error { return runTest(ctx, w, []string{"--event", "push", "--base", "abc"}) },
+		"test z dwoma punktami odniesienia": func() error { return runTest(ctx, w, []string{"--base", "a", "--vulns-baseline", "b"}) },
+		"kontrakt bez podpolecenia":         func() error { return runContract(ctx, w, nil) },
+		"kontrakt z nieznaną flagą":         func() error { return runContract(ctx, w, []string{"thresholds", "--force"}) },
+		"bramka kontraktu z argumentem":     func() error { return runCheckContract(ctx, w, []string{"origin/main"}) },
+		"bramka Go z nieznaną flagą":        func() error { return runCheckGo(ctx, w, []string{"--baseline-commit", "abc"}) },
 		"issue z pliku zamiast katalogu": func() error {
 			return runVulnsIssue(ctx, w, []string{filepath.Join(w.root, "vulns-api.json")})
 		},
@@ -100,6 +109,37 @@ func TestUsageErrors(t *testing.T) {
 	}
 	if calls := w.runner.(*proc.Fake).Calls; len(calls) > 0 {
 		t.Errorf("przed odmową uruchomiono %v", calls)
+	}
+}
+
+// TestParseTestFlags: zdarzenie z CI wybiera tryb, lokalnie decydują flagi.
+func TestParseTestFlags(t *testing.T) {
+	for _, tt := range []struct {
+		args []string
+		want testMode
+	}{
+		{[]string{"--event", "pull_request", "--base", "abc"}, testMode{vulns: goVulnMode{baseline: "abc"}, base: "abc"}},
+		{[]string{"--event", "push", "--base", ""}, testMode{vulns: goVulnMode{reportOnly: true}}},
+		{[]string{"--event", "schedule"}, testMode{vulns: goVulnMode{reportOnly: true}}},
+		{nil, testMode{}},
+		{[]string{"--base", "origin/main"}, testMode{vulns: goVulnMode{baseline: "origin/main"}, base: "origin/main"}},
+		{[]string{"--vulns-baseline", "origin/main"}, testMode{vulns: goVulnMode{baseline: "origin/main"}}},
+		{[]string{"--vulns-report-only"}, testMode{vulns: goVulnMode{reportOnly: true}}},
+	} {
+		got, err := parseTestFlags(tt.args)
+		if err != nil || got != tt.want {
+			t.Errorf("parseTestFlags(%q) = %+v, %v; oczekiwano %+v", tt.args, got, err, tt.want)
+		}
+	}
+}
+
+// TestRepositoryContract: kontrakt w repozytorium przechodzi własne
+// sprawdzenie — z prawdziwymi poleceniami, bramkami, zadaniami i decyzjami.
+func TestRepositoryContract(t *testing.T) {
+	quiet(t)
+	w := &workspace{root: filepath.Join("..", "..", ".."), runner: &proc.Fake{}}
+	if err := checkContract(context.Background(), w, ""); err != nil {
+		t.Fatal(err)
 	}
 }
 

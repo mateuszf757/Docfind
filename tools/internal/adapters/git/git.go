@@ -176,6 +176,61 @@ func (r Repo) IsAncestor(ctx context.Context, commit, ref string) (bool, error) 
 	}
 }
 
+// ChangedFiles zwraca pliki zmienione od wspólnego przodka base i HEAD do
+// HEAD (`git diff base...HEAD`) — zakres zmiany na PR-ze, bez tego, co
+// w międzyczasie weszło na base. Ścieżki względem korzenia repozytorium
+// także przy diff.relative w konfiguracji użytkownika. Bez wykrywania zmian
+// nazw: przeniesiony plik to usunięta stara ścieżka i dodana nowa, więc
+// przeniesienie pola chronionego widać pod starą nazwą.
+//
+// Brak commita w repozytorium — artifact.ErrUnknownCommit.
+func (r Repo) ChangedFiles(ctx context.Context, base string) ([]string, error) {
+	commit, err := r.git(ctx, "rev-parse", "--verify", "--quiet", "--end-of-options", base+"^{commit}")
+	switch {
+	case proc.ExitCode(err) > 0:
+		return nil, fmt.Errorf("%s: %w", base, artifact.ErrUnknownCommit)
+	case err != nil:
+		return nil, fmt.Errorf("git rev-parse %s: %w", base, err)
+	}
+	out, err := r.git(ctx, "diff", "--name-only", "--no-relative", "--no-renames", "-z", commit+"...HEAD")
+	if err != nil {
+		return nil, fmt.Errorf("git diff %.12s...HEAD: %w", commit, err)
+	}
+	var files []string
+	for _, f := range strings.Split(out, "\x00") {
+		if f != "" {
+			files = append(files, f)
+		}
+	}
+	return files, nil
+}
+
+// FileAt zwraca treść pliku w commicie rev; nil bez błędu — pliku tam nie
+// ma. Ścieżka względem korzenia repozytorium.
+//
+// Brak commita w repozytorium — artifact.ErrUnknownCommit.
+func (r Repo) FileAt(ctx context.Context, rev, file string) ([]byte, error) {
+	commit, err := r.git(ctx, "rev-parse", "--verify", "--quiet", "--end-of-options", rev+"^{commit}")
+	switch {
+	case proc.ExitCode(err) > 0:
+		return nil, fmt.Errorf("%s: %w", rev, artifact.ErrUnknownCommit)
+	case err != nil:
+		return nil, fmt.Errorf("git rev-parse %s: %w", rev, err)
+	}
+	blob, err := r.git(ctx, "rev-parse", "--verify", "--quiet", "--end-of-options", commit+":"+file)
+	switch {
+	case proc.ExitCode(err) > 0:
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("git rev-parse %.12s:%s: %w", commit, file, err)
+	}
+	var out bytes.Buffer
+	if _, err := r.Runner.Run(ctx, proc.Cmd{Name: "git", Args: []string{"-C", r.Dir, "cat-file", "blob", blob}, Stdout: &out}); err != nil {
+		return nil, fmt.Errorf("git cat-file %.12s:%s: %w", commit, file, err)
+	}
+	return out.Bytes(), nil
+}
+
 // CreateTag tworzy tag z adnotacją na commicie. Treść idzie przez stdin,
 // nie argumenty — wieloliniowa i bez cytowania dla powłoki.
 func (r Repo) CreateTag(ctx context.Context, name, commit, message string) error {

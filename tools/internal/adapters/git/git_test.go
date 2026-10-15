@@ -1,11 +1,13 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -412,6 +414,70 @@ func TestIsAncestor(t *testing.T) {
 // TestExport: kod katalogu z commita, a nie z drzewa roboczego, tylko ten
 // katalog i ze ścieżkami względem niego; rev, który wygląda jak opcja,
 // nie trafia do git archive; dowiązanie symboliczne zatrzymuje wypakowanie.
+func TestChangedFiles(t *testing.T) {
+	r := newTestRepo(t)
+	r.commit("a")
+	r.git("branch", "baza")
+	if err := os.Mkdir(filepath.Join(r.dir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r.write("docs/DECYZJE.md", "decyzja\n")
+	r.write("plik ze spacją.txt", "x\n")
+	r.git("add", "-A")
+	r.git("commit", "-q", "-m", "zmiana")
+	// Commit, który wszedł na bazę po odgałęzieniu, nie należy do zmiany.
+	r.git("switch", "-q", "baza")
+	r.write("inna.txt", "y\n")
+	r.git("add", "-A")
+	r.git("commit", "-q", "-m", "równolegle")
+	r.git("switch", "-q", "-")
+	r.git("config", "diff.relative", "true")
+	repo := Repo{Dir: filepath.Join(r.dir, "docs"), Runner: proc.Exec{}}
+	got, err := repo.ChangedFiles(context.Background(), "baza")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"docs/DECYZJE.md", "plik ze spacją.txt"}; !slices.Equal(got, want) {
+		t.Errorf("ChangedFiles = %q; oczekiwano %q", got, want)
+	}
+	if _, err := repo.ChangedFiles(context.Background(), "brak"); !errors.Is(err, artifact.ErrUnknownCommit) {
+		t.Errorf("nieznany commit bazowy: %v", err)
+	}
+}
+
+func TestFileAt(t *testing.T) {
+	r := newTestRepo(t)
+	r.write("plik.yml", "a: 1\n")
+	r.git("add", "-A")
+	r.git("commit", "-q", "-m", "plik")
+	base := r.git("rev-parse", "HEAD")
+	r.write("plik.yml", "a: 2\n")
+	r.git("add", "-A")
+	r.git("commit", "-q", "-m", "zmiana")
+	if err := os.Mkdir(filepath.Join(r.dir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Z podkatalogu: ścieżka i tak względem korzenia.
+	repo := Repo{Dir: filepath.Join(r.dir, "docs"), Runner: proc.Exec{}}
+	ctx := context.Background()
+	for _, tt := range []struct {
+		rev, file string
+		want      []byte
+	}{
+		{base, "plik.yml", []byte("a: 1\n")},
+		{"HEAD", "plik.yml", []byte("a: 2\n")},
+		{"HEAD", "brak.yml", nil},
+	} {
+		got, err := repo.FileAt(ctx, tt.rev, tt.file)
+		if err != nil || !bytes.Equal(got, tt.want) {
+			t.Errorf("FileAt(%.7s, %s) = %q, %v; oczekiwano %q", tt.rev, tt.file, got, err, tt.want)
+		}
+	}
+	if _, err := repo.FileAt(ctx, "brak", "plik.yml"); !errors.Is(err, artifact.ErrUnknownCommit) {
+		t.Errorf("nieznany commit: %v", err)
+	}
+}
+
 func TestExport(t *testing.T) {
 	r := newTestRepo(t)
 	put := func(name, content string) {
