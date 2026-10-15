@@ -1880,6 +1880,44 @@ przepustowości.
 false` zamiast zera replik. Gdy ktoś spoza maszyny autora będzie
 potrzebował Argo: serwer API z SSO, nigdy konto `admin` z hasłem.
 
+## 47. Pominięte to nie zaliczone: jawne wyniki w warunkach zadań
+
+> Uzupełnia decyzje 38 i 40: zadanie `promote` nie wystartowało na tagu
+> `v0.3.1` (bieg 38164714816), a bieg był zielony.
+
+**Wybieram jawne warunki wyników zamiast domyślnego `success()`.** Zadanie
+bez funkcji statusu w `if` dostaje `success()`, a ono patrzy na wszystkich
+przodków, nie tylko na bezpośrednie `needs` — „a failure or skip applies to
+all jobs in the dependency chain from the point of failure or skip onwards”
+(dokumentacja `jobs.<id>.needs`). Na tagu `test` jest pominięty warunkiem,
+więc `build` też; `vulns` rusza dzięki `!cancelled()`, ale `promote`
+z warunkiem `github.ref_type == 'tag'` był pomijany razem z `build`, choć
+`release`, `attest-release` i `vulns` skończyły się sukcesem. Wydanie
+`v0.3.1` nie dostało ani zgody, ani zapisu (GitHub Deployment). Pominięte
+zadanie jest szare, nie czerwone, a testy jednostkowe `dft promote` były
+zielone — nic nie sprawdzało, że zadanie w ogóle startuje.
+
+Teraz każde zadanie, którego przodek ma warunek, ma w `if` `!cancelled()`
+i jawne `needs.<zadanie>.result == 'success'` dla bezpośrednich zależności:
+`build`, `attest`, `attest-release`, `promote`, `chart`, `attest-chart`.
+`dft check workflows` (także w `dft test`) odrzuca zadanie bez funkcji
+statusu za warunkowym przodkiem — reguła w `core/workflow`, z wariantem
+negatywnym: układem zadań sprzed tej zmiany. actionlint 1.7.12 i zizmor
+1.30.1 tej semantyki nie sprawdzają.
+
+**Co tracę:** dłuższe warunki w `ci.yml`, w których trzeba wymienić każdą
+zależność, i regułę grafu do utrzymania. Reguła jest grubsza niż semantyka
+GitHuba: zgłasza też zadania, których warunkowy przodek na zdarzeniach, na
+których zadanie biegnie, nigdy nie jest pomijany (`chart` na push do
+`main`) — wolę jawny warunek niż dowód, że pominięcia nie będzie. Poprawny
+warunek nie dowodzi jeszcze, że promocja przejdzie: pierwszy bieg sprawdzi
+po raz pierwszy odczyt reguł środowiska `production` tokenem z `actions:
+read` i zapis Deploymentu.
+
+**Kiedy zmieniam zdanie:** gdy GitHub udostępni warunek patrzący tylko na
+bezpośrednie `needs` albo gdy graf przestanie mieć zadania pomijane na
+części zdarzeń.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta
