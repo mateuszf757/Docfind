@@ -449,6 +449,7 @@ func runCheckVulns(ctx context.Context, w *workspace, args []string) error {
 		Exceptions: vuln.InScope(exceptions, vuln.ScopeImage),
 		Today:      today,
 		Repository: imageName("api"),
+		History:    w.git(),
 	}
 	rep, err := scan.Run(ctx, target, *baselineCommit, *reportOnly)
 	// Raport i podsumowanie także przy wyniku negatywnym — awaria skanu

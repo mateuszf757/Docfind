@@ -167,11 +167,14 @@ porównuje efektywną regułę z plikiem]. Dowód: efektywne reguły
 albo warunku `build` bez wpisu w DECYZJE → czerwony `test`. Decyzja: 22, 36, 38.
 
 **3.3 Okres próbny.** Nowa bramka wchodzi do wymaganych po 10 kolejnych biegach na `main`
-(push i noc) za pierwszym podejściem.
-Egzekwuje: `dft trial` (`ci:trial`) [ŻYCZENIE: przerwa w serii dłuższa niż 48 h przerywa
-serię; biegi PR dla zadań, których tryb na PR-ze różni się od trybu na `main`].
-Dowód: wyjście `ci:trial`. Warstwa: W4 (pomiar), dotyczy W1–W2. Wariant negatywny: bieg
-ponowiony (podejście 2) przerywa serię (testy `stages/trial`). Decyzja: 36.
+(push i noc) za pierwszym podejściem. Zadanie, którego tryb na PR-ze różni się od trybu na
+`main` (`vulns`: na PR-ze blokuje względem obrazu bazowego, na `main` raportuje), ma drugą
+serię: 10 kolejnych scalonych PR-ów, na których ostatnim commicie przeszło za pierwszym
+podejściem.
+Egzekwuje: `dft trial` (`ci:trial`, flaga `--pull-requests`) [ŻYCZENIE: przerwa w serii
+dłuższa niż 48 h przerywa serię]. Dowód: wyjście `ci:trial`. Warstwa: W4 (pomiar), dotyczy
+W1–W2. Wariant negatywny: bieg ponowiony przerywa serię; PR scalony z czerwonym zadaniem
+przerywa serię PR-ów (testy `stages/trial`). Decyzja: 36, 51.
 
 **3.4 Bez automatycznych ponowień.** Ani workflow, ani `dft` nie ponawia nieudanej bramki;
 ponawianie wywołań zewnętrznych (429, rejestr) tylko w adapterze, z limitem i logiem.
@@ -312,11 +315,14 @@ czerwony]. Decyzja: 39.
 
 **6.2 Podatności.** Blokuje podatność naprawialna o wadze HIGH, CRITICAL albo nieznanej, bez
 ważnego wyjątku (§10): na PR-ze — tylko nowa względem obrazu i kodu `tools/` z commita
-bazowego; na tagu — każda; na `main` i nocą — raport i issue.
-Egzekwuje: `check:vulns` (`stages/vulns`), govulncheck w `dft check go` i `dft test`
-[ŻYCZENIE: brak obrazu bazowego → najbliższy przodek z ostrzeżeniem]. Dowód:
-`vulns-api.json`, `vulns-go.json` z wersjami baz. Warstwa: W1 (Go), W2 (obraz), W5.
-Wariant negatywny: wygasły wyjątek → blokuje. Decyzja: 37.
+bazowego; gdy obrazu commita bazowego jeszcze nie ma w rejestrze — względem obrazu
+najbliższego przodka (§10), z ostrzeżeniem w raporcie; na tagu — każda; na `main` i nocą —
+raport i issue.
+Egzekwuje: `check:vulns` (`stages/vulns`), govulncheck w `dft check go` i `dft test`.
+Dowód: `vulns-api.json` (punkt odniesienia i obraz, którego zabrakło), `vulns-go.json`
+z wersjami baz. Warstwa: W1 (Go), W2 (obraz), W5. Wariant negatywny: wygasły wyjątek →
+blokuje; rejestr bez obrazu commita bazowego → porównanie z obrazem przodka, a bez żadnego
+obrazu — blokuje każda naprawialna (testy `stages/vulns`). Decyzja: 37, 51.
 
 **6.3 Sekrety w gicie.** Skan całej historii sprawdzanego commita z diffem scaleń;
 konfiguracja i wyjątki tylko z `ci/`, znacznik wyciszenia w kodzie nie działa; znalezisko =
@@ -483,6 +489,7 @@ docelowe bez strażnika (budżety warstw, Z, pokrycie) stoją w klauzulach, w zn
 | §5.4 | nowy certyfikat na proxy (Y) | ≤ 1m0s od odnowienia | stages/ingress |
 | §5.5 | faza rotacji sekretu na podzie | ≤ 4m0s | cmd/dft (rotation) |
 | §5.6 | samonaprawa jednej zmiany | ≤ 1m0s | cmd/dft (selfheal) |
+| §6.2 | punkt odniesienia skanu obrazu na PR-ze | obraz commita bazowego albo najbliższego z 10 przodków | stages/vulns |
 | §6.2 | ważność wyjątku podatności | ≤ 90 dni | core/vuln |
 <!-- progi: koniec -->
 

@@ -205,6 +205,26 @@ func (r Repo) ChangedFiles(ctx context.Context, base string) ([]string, error) {
 	return files, nil
 }
 
+// FirstParents zwraca commit i jego przodków po pierwszym rodzicu, od
+// najnowszego, najwyżej limit — na main po squashu to kolejne commity
+// main. Płytki klon kończy listę na granicy historii.
+//
+// Brak commita w repozytorium — artifact.ErrUnknownCommit.
+func (r Repo) FirstParents(ctx context.Context, commit string, limit int) ([]string, error) {
+	full, err := r.git(ctx, "rev-parse", "--verify", "--quiet", "--end-of-options", commit+"^{commit}")
+	switch {
+	case proc.ExitCode(err) > 0:
+		return nil, fmt.Errorf("%s: %w", commit, artifact.ErrUnknownCommit)
+	case err != nil:
+		return nil, fmt.Errorf("git rev-parse %s: %w", commit, err)
+	}
+	out, err := r.git(ctx, "rev-list", "--first-parent", fmt.Sprintf("--max-count=%d", limit), full)
+	if err != nil {
+		return nil, fmt.Errorf("git rev-list --first-parent %.12s: %w", full, err)
+	}
+	return strings.Fields(out), nil
+}
+
 // FileAt zwraca treść pliku w commicie rev; nil bez błędu — pliku tam nie
 // ma. Ścieżka względem korzenia repozytorium.
 //

@@ -19,3 +19,12 @@ type Job struct {
 	Name       string `json:"name"`
 	Conclusion string `json:"conclusion"`
 }
+
+// PullRequest — scalony PR: ostatni commit (ten, na którym CI dało wynik
+// przed scaleniem) i chwila scalenia.
+type PullRequest struct {
+	Number   int    `json:"number"`
+	HeadSHA  string `json:"head_sha"`
+	MergedAt string `json:"merged_at"`
+	URL      string `json:"html_url"`
+}

@@ -389,6 +389,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Historia dla punktu odniesienia na PR-ze: gdy obrazu commita
+          # bazowego jeszcze nie ma w rejestrze (main publikuje go ok. 10 min
+          # po scaleniu), skan bierze obraz najbliższego przodka (decyzja 51).
+          fetch-depth: 0
           # Bez tokenu w .git/config: domyślnie zostaje tam na całe zadanie
           # i może go odczytać każdy późniejszy krok. Skrypty nie pushują.
           persist-credentials: false

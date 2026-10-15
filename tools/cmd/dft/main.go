@@ -91,8 +91,8 @@ var commands = map[string]command{
 		run:   runVulnsIssue,
 	},
 	"trial": {
-		usage: "dft trial <N> <zadanie>…",
-		help:  "okres próbny zadań CI: seria zielonych biegów na main (push, nocą) za pierwszym podejściem; kod 0, gdy każde ma N",
+		usage: "dft trial [--pull-requests <zadanie,…>] <N> <zadanie>…",
+		help:  "okres próbny zadań CI: seria zielonych biegów na main (push, nocą) za pierwszym podejściem, a dla zadań z --pull-requests także scalonych PR-ów; kod 0, gdy każda ma N",
 		run:   runTrial,
 	},
 	"chart": {

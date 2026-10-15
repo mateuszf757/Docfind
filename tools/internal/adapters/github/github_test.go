@@ -146,6 +146,27 @@ func released(version string) string {
 		`","commit":"cafe"}},"signature":{"certificate":{"sourceRepositoryRef":"refs/tags/v` + version + `","sourceRepositoryDigest":"cafe","runnerEnvironment":"github-hosted"}}}}]`
 }
 
+func TestMergedPullRequestsAndRunsForCommit(t *testing.T) {
+	f := &proc.Fake{Responses: map[string]proc.FakeResponse{
+		"gh api repos/{owner}/{repo}/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=30": {Stdout: `[
+			{"number":3,"merged_at":"2026-10-12T10:00:00Z","html_url":"u3","head":{"sha":"c3"}},
+			{"number":2,"merged_at":null,"html_url":"u2","head":{"sha":"c2"}},
+			{"number":4,"merged_at":"2026-10-14T10:00:00Z","html_url":"u4","head":{"sha":"c4"}}]`},
+		"gh api repos/{owner}/{repo}/actions/workflows/ci.yml/runs?head_sha=c4&event=pull_request&status=completed&per_page=10": {Stdout: `{"workflow_runs":[{"id":11,"event":"pull_request","run_attempt":1,"head_sha":"c4"}]}`},
+	}}
+	c := CLI{Runner: f}
+	ctx := context.Background()
+	prs, err := c.MergedPullRequests(ctx, "main", 30)
+	// Zamknięty bez scalenia pominięty; kolejność według scalenia.
+	if err != nil || len(prs) != 2 || prs[0].Number != 4 || prs[1].Number != 3 || prs[0].HeadSHA != "c4" {
+		t.Errorf("scalone PR-y: %+v, %v", prs, err)
+	}
+	runs, err := c.RunsForCommit(ctx, "ci.yml", "c4", "pull_request")
+	if err != nil || len(runs) != 1 || runs[0].ID != 11 {
+		t.Errorf("biegi commita: %+v, %v", runs, err)
+	}
+}
+
 func TestVerifyRelease(t *testing.T) {
 	a := Attestations{Repo: "mateuszf757/Docfind", Workflow: ".github/workflows/ci.yml"}
 	ctx := context.Background()

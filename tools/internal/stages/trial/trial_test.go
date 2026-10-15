@@ -95,3 +95,68 @@ func TestStreak(t *testing.T) {
 		t.Error("awaria API przyjęta")
 	}
 }
+
+// pulls — scalone PR-y i biegi ich ostatniego commita w pamięci.
+type pulls struct {
+	merged []ci.PullRequest
+	runs   map[string][]ci.Run
+}
+
+func (p pulls) MergedPullRequests(_ context.Context, base string, limit int) ([]ci.PullRequest, error) {
+	if base != "main" || limit != 50 {
+		return nil, fmt.Errorf("zapytanie %s %d", base, limit)
+	}
+	return p.merged, nil
+}
+
+func (p pulls) RunsForCommit(_ context.Context, workflow, sha, event string) ([]ci.Run, error) {
+	if workflow != "ci.yml" || event != "pull_request" {
+		return nil, fmt.Errorf("zapytanie %s %s", workflow, event)
+	}
+	return p.runs[sha], nil
+}
+
+func TestPullRequestStreak(t *testing.T) {
+	pr := func(n int) ci.PullRequest { return ci.PullRequest{Number: n, HeadSHA: fmt.Sprintf("c%d", n)} }
+	tests := []struct {
+		name       string
+		pulls      pulls
+		jobs       map[int64]string
+		wantStreak int
+		wantReason string
+	}{
+		{
+			name: "czerwone zadanie na scalonym PR-ze przerywa serię; PR bez biegu się nie liczy",
+			pulls: pulls{
+				merged: []ci.PullRequest{pr(9), pr(8), pr(7), pr(6), pr(5)},
+				runs:   map[string][]ci.Run{"c9": {run(19, "pull_request", 1)}, "c7": {run(17, "pull_request", 1)}, "c6": {run(16, "pull_request", 1)}, "c5": {run(15, "pull_request", 1)}},
+			},
+			jobs:       map[int64]string{19: "success", 17: "", 16: "success", 15: "failure"},
+			wantStreak: 2,
+			wantReason: "PR #5 scalony z zadaniem cluster: failure",
+		},
+		{
+			name:       "liczy się ostatni bieg commita; ponowiony przerywa",
+			pulls:      pulls{merged: []ci.PullRequest{pr(4)}, runs: map[string][]ci.Run{"c4": {run(24, "pull_request", 2), run(23, "pull_request", 1)}}},
+			jobs:       map[int64]string{},
+			wantReason: "PR #4: bieg ponowiony (podejście 2)",
+		},
+		{
+			name:       "PR sprzed dodania zadania kończy przegląd",
+			pulls:      pulls{merged: []ci.PullRequest{pr(3), pr(2), pr(1)}, runs: map[string][]ci.Run{"c3": {run(13, "pull_request", 1)}, "c2": {run(12, "pull_request", 1)}}},
+			jobs:       map[int64]string{13: "success", 12: "brak"},
+			wantStreak: 1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := checker(runs{jobs: tt.jobs}).PullRequestStreak(context.Background(), tt.pulls)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Streak != tt.wantStreak || got.Reason != tt.wantReason {
+				t.Errorf("seria %d (%q), oczekiwano %d (%q)", got.Streak, got.Reason, tt.wantStreak, tt.wantReason)
+			}
+		})
+	}
+}

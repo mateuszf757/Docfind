@@ -1110,6 +1110,11 @@ próbnego — przyczyna przed wymaganiem, nie ponowienia.
 
 ## 37. SBOM, atestacje GitHuba i skan podatności z polityką na zmienną bazę
 
+> Uzupełnione decyzją 51: gdy obrazu commita bazowego nie ma jeszcze
+> w rejestrze, punktem odniesienia jest obraz najbliższego przodka, a nie
+> „bez porównania”; okres próbny `vulns` liczy też scalone PR-y, bo seria
+> na `main` mierzy tylko tryb raportu.
+
 **Wybieram dwie atestacje i skaner, którego podpis sprawdza mise.**
 Publikacja niosła atestację BuildKitu z pochodzeniem, bez SBOM; nikt jej
 nie podpisywał, więc każdy z prawem zapisu do rejestru mógł ją podmienić.
@@ -2068,6 +2073,49 @@ warunek powłoki w `run:` — tamten lokalnie nie biegł i nie miał testu.
 treści (trzy takie PR-y w miesiącu). Wtedy zawężę listę pól albo wyjątek
 od klauzuli dostanie rejestr z datą wygaśnięcia (§0.4 kontraktu) zamiast
 wpisu tutaj.
+
+## 51. Skan obrazu na PR-ze względem przodka, okres próbny na scalonych PR-ach
+
+> Uzupełnia decyzje 36 i 37 przed dopisaniem `vulns` do wymaganych statusów.
+
+**Wybieram obraz najbliższego przodka zamiast „bez porównania” i drugą serię
+okresu próbnego dla trybu PR.** Skan obrazu na PR-ze porównuje z obrazem
+commita bazowego z GHCR. Obraz commita `main` pojawia się tam ok. 10 minut
+po scaleniu (`build-publish`). PR zaktualizowany na świeży `main` w tym
+oknie nie miał punktu odniesienia, a wtedy blokowała go każda naprawialna
+HIGH i CRITICAL — także podatność sprzed jego zmiany. Do 2026-10-28 chroni
+wyjątek dla zlib; po tej dacie taki PR byłby czerwony przez wyścig
+z publikacją, nie przez swoją zmianę. Teraz, gdy obrazu commita bazowego
+nie ma, skan sprawdza w rejestrze kolejnych przodków po pierwszym rodzicu,
+najwyżej 10 (próg w kontrakcie, §6.2). Pierwszy znaleziony obraz jest
+punktem odniesienia, a raport i ostrzeżenie mówią, którego obrazu
+zabrakło. Zadanie `vulns` pobiera pełną historię (`fetch-depth: 0`).
+
+Okres próbny liczył biegi na `main` (push, noc), a tam `vulns` tylko
+raportuje — tryb, który ma zostać wymagany, nie był mierzony. `dft trial
+--pull-requests vulns` liczy dla niego drugą serię: scalone PR-y, na
+których ostatnim commicie zadanie przeszło za pierwszym podejściem.
+Czerwony `vulns` na scalonym PR-ze to scalenie, które wymagany status by
+zatrzymał — przez zmianę albo przez samą bramkę — więc przerywa serię.
+
+**Co tracę:**
+
+- **Starszy punkt odniesienia.** Podatność, którą wprowadził inny PR
+  scalony między przodkiem a commitem bazowym, liczy się jako nowa
+  w tym PR-ze. Ostrzeżenie i raport to mówią, ale czerwony wynik zostaje,
+  dopóki nie opublikuje się obraz commita bazowego — wtedy wystarczy
+  ponowić bieg.
+- **Koszt wywołań.** Do 10 prób w rejestrze i pełna historia w zadaniu
+  `vulns` (kilka sekund przy 90 commitach).
+- **Ostrzejsza seria PR-ów.** Seria liczy także PR scalony świadomie
+  z czerwonym `vulns` — to sygnał, że status nie jest jeszcze gotowy do
+  wymagania.
+
+**Kiedy zmieniam zdanie:** gdy publikacja obrazu na `main` będzie częścią
+scalenia (kolejka scalania) — wtedy obraz commita bazowego zawsze istnieje
+i przodek niepotrzebny. Gdy `vulns` przejdzie okres próbny na obu seriach
+i stanie się wymagany — flaga `--pull-requests` zostaje dla następnych
+zadań z osobnym trybem PR.
 
 ## Czego bym dziś nie powtórzył
 

@@ -59,6 +59,11 @@ const (
 	// to wynik dobry z niewłaściwego powodu (`sleep 300` zaliczany po pięciu
 	// minutach); dziś najdłuższy ok. 42 s (§5.1, §8.1).
 	NegativeVariantBudget = 2 * time.Minute
+	// VulnsBaselineAncestors — ilu przodków commita bazowego (po pierwszym
+	// rodzicu) skan obrazu na PR-ze sprawdza w rejestrze, gdy obrazu commita
+	// bazowego jeszcze nie ma: main publikuje obraz ok. 10 min po scaleniu,
+	// a każdy commit main ma obraz, chyba że jego build padł (§6.2).
+	VulnsBaselineAncestors = 10
 )
 
 // Threshold — wiersz tabeli progów.
@@ -84,6 +89,7 @@ func Thresholds() []Threshold {
 		{"§5.4", "nowy certyfikat na proxy (Y)", fmt.Sprintf("≤ %v od odnowienia", TLSPropagation), "stages/ingress"},
 		{"§5.5", "faza rotacji sekretu na podzie", fmt.Sprintf("≤ %v", RotationPhaseBudget), "cmd/dft (rotation)"},
 		{"§5.6", "samonaprawa jednej zmiany", fmt.Sprintf("≤ %v", SelfHealBudget), "cmd/dft (selfheal)"},
+		{"§6.2", "punkt odniesienia skanu obrazu na PR-ze", fmt.Sprintf("obraz commita bazowego albo najbliższego z %d przodków", VulnsBaselineAncestors), "stages/vulns"},
 		{"§6.2", "ważność wyjątku podatności", fmt.Sprintf("≤ %d dni", vuln.MaxExceptionDays), "core/vuln"},
 	}
 }

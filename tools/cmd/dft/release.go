@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/kube"
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/registry"
@@ -187,42 +191,71 @@ func runRepoSettings(ctx context.Context, w *workspace, args []string) error {
 }
 
 // runTrial mówi, czy zadania CI skończyły okres próbny i ich statusy mogą
-// trafić do wymaganych w regule main (decyzje 36 i 37).
+// trafić do wymaganych w regule main (decyzje 36 i 37). Zadania
+// z --pull-requests mają tryb na PR-ze inny niż na main (vulns blokuje
+// względem obrazu bazowego, na main raportuje): ich druga seria to scalone
+// PR-y (decyzja 51).
 func runTrial(ctx context.Context, w *workspace, args []string) error {
-	const usage = "dft trial <N> <zadanie>…"
-	if len(args) < 2 {
+	const usage = "dft trial [--pull-requests <zadanie,…>] <N> <zadanie>…"
+	fs := flag.NewFlagSet("dft trial", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	pullRequests := fs.String("pull-requests", "", "")
+	if err := fs.Parse(args); err != nil || fs.NArg() < 2 {
 		return cli.Usage("użycie: %s", usage)
 	}
-	need, err := strconv.Atoi(args[0])
+	need, err := strconv.Atoi(fs.Arg(0))
 	if err != nil || need < 1 {
 		return cli.Usage("użycie: %s — N to dodatnia liczba biegów", usage)
+	}
+	jobs := fs.Args()[1:]
+	var prJobs []string
+	if *pullRequests != "" {
+		prJobs = strings.Split(*pullRequests, ",")
+	}
+	for _, job := range prJobs {
+		if !slices.Contains(jobs, job) {
+			return cli.Usage("użycie: %s — zadanie %q z --pull-requests musi być na liście zadań", usage, job)
+		}
 	}
 	if err := requireTools("gh"); err != nil {
 		return err
 	}
 	v := &cli.Verdict{}
-	for _, job := range args[1:] {
-		res, err := trial.Checker{Runs: w.gh(), Workflow: "ci.yml", Job: job, Branch: "main", Events: []string{"push", "schedule"}, Limit: 50}.Streak(ctx)
+	for _, job := range jobs {
+		checker := trial.Checker{Runs: w.gh(), Workflow: "ci.yml", Job: job, Branch: "main", Events: []string{"push", "schedule"}, Limit: 50}
+		res, err := checker.Streak(ctx)
 		if err != nil {
 			return err
 		}
-		for _, r := range res.Counted {
-			cli.Step("%s zielony: %s %s %.7s %s", job, r.CreatedAt, r.Event, r.HeadSHA, r.URL)
+		reportTrial(v, job, "biegów na main", res, need)
+		if slices.Contains(prJobs, job) {
+			res, err := checker.PullRequestStreak(ctx, w.gh())
+			if err != nil {
+				return err
+			}
+			reportTrial(v, job+" (PR-y)", "scalonych PR-ów", res, need)
 		}
-		if res.Broken != nil {
-			cli.Step("%s: serię przerywa %s %s — %s (%s)", job, res.Broken.CreatedAt, res.Broken.Event, res.Reason, res.Broken.URL)
-		}
-		if res.Streak < need {
-			v.Fail("okres próbny %s trwa: %d z %d zielonych biegów z rzędu", job, res.Streak, need)
-			continue
-		}
-		cli.Step("%s: %d zielonych biegów z rzędu — status można dopisać do .github/rulesets/main.json", job, res.Streak)
 	}
 	if err := v.Err("okres próbny"); err != nil {
 		return err
 	}
 	cli.Step("wszystkie zadania po okresie próbnym — zastosuj regułę: ./bin/mise run repo:settings")
 	return nil
+}
+
+// reportTrial wypisuje serię i dopisuje do werdyktu, gdy jest za krótka.
+func reportTrial(v *cli.Verdict, name, unit string, res trial.Result, need int) {
+	for _, r := range res.Counted {
+		cli.Step("%s zielony: %s %s %.7s %s", name, r.CreatedAt, r.Event, r.HeadSHA, r.URL)
+	}
+	if res.Broken != nil {
+		cli.Step("%s: serię przerywa %s %s — %s (%s)", name, res.Broken.CreatedAt, res.Broken.Event, res.Reason, res.Broken.URL)
+	}
+	if res.Streak < need {
+		v.Fail("okres próbny %s trwa: %d z %d zielonych %s z rzędu", name, res.Streak, need, unit)
+		return
+	}
+	cli.Step("%s: %d zielonych %s z rzędu — status można dopisać do .github/rulesets/main.json", name, res.Streak, unit)
 }
 
 // runVulnsIssue — wynik nocnych skanów do jednego issue (stages/vulns).

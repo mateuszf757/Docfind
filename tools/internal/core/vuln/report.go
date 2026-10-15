@@ -10,16 +10,19 @@ import (
 type Report struct {
 	// Subject — co skanowano, w dopełniaczu („obrazu api"): nagłówek raportu
 	// i sekcji issue.
-	Subject    string     `json:"subject"`
-	Target     string     `json:"target"`
-	Baseline   string     `json:"baseline,omitempty"`
-	Scanner    string     `json:"scanner"`
-	ScannedAt  time.Time  `json:"scanned_at"`
-	Databases  []Database `json:"databases"`
-	Findings   []Finding  `json:"findings"`
-	Blocking   int        `json:"blocking"`
-	Unused     []string   `json:"unused_exceptions,omitempty"`
-	ReportOnly bool       `json:"report_only"`
+	Subject  string `json:"subject"`
+	Target   string `json:"target"`
+	Baseline string `json:"baseline,omitempty"`
+	// BaselineFor — obraz commita bazowego, którego nie było w rejestrze;
+	// Baseline to wtedy obraz jego przodka.
+	BaselineFor string     `json:"baseline_for,omitempty"`
+	Scanner     string     `json:"scanner"`
+	ScannedAt   time.Time  `json:"scanned_at"`
+	Databases   []Database `json:"databases"`
+	Findings    []Finding  `json:"findings"`
+	Blocking    int        `json:"blocking"`
+	Unused      []string   `json:"unused_exceptions,omitempty"`
+	ReportOnly  bool       `json:"report_only"`
 }
 
 // Summary — raport jako Markdown (podsumowanie biegu, sekcja issue).
@@ -28,6 +31,9 @@ func (r Report) Summary() string {
 	fmt.Fprintf(&b, "### Podatności %s\n\n%s — %d podatności, blokujących: %d", r.Subject, r.Target, len(r.Findings), r.Blocking)
 	if r.Baseline != "" {
 		fmt.Fprintf(&b, ", punkt odniesienia: %s", r.Baseline)
+	}
+	if r.BaselineFor != "" {
+		fmt.Fprintf(&b, " (obraz przodka — %s nie było w rejestrze)", r.BaselineFor)
 	}
 	if r.ReportOnly {
 		b.WriteString(" (tylko raport)")

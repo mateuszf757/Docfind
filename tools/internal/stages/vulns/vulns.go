@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/artifact"
+	"github.com/mateuszf757/Docfind/tools/internal/core/contract"
 	"github.com/mateuszf757/Docfind/tools/internal/core/vuln"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/ociarchive"
@@ -28,6 +29,13 @@ type Scanner interface {
 // artifact.ErrNotFound.
 type Registry interface {
 	Save(ctx context.Context, ref, path string) error
+}
+
+// History — historia gita (adapters/git): commit i jego przodkowie po
+// pierwszym rodzicu, od najnowszego. Nieznany commit —
+// artifact.ErrUnknownCommit.
+type History interface {
+	FirstParents(ctx context.Context, commit string, limit int) ([]string, error)
 }
 
 // Images — obrazy w lokalnym demonie (adapters/docker).
@@ -55,6 +63,9 @@ type Scan struct {
 	Today      time.Time
 	// Repository — obraz aplikacji; obraz bazowy to Repository:<sha12>.
 	Repository string
+	// History — przodkowie commita bazowego, gdy jego obrazu nie ma
+	// w rejestrze.
+	History History
 }
 
 // Run skanuje obraz i ocenia podatności. baselineCommit — commit na main,
@@ -115,14 +126,21 @@ func (s Scan) Run(ctx context.Context, target Target, baselineCommit string, rep
 		if len(baselineCommit) < 12 {
 			return rep, cli.Usage("--baseline-commit: pełny SHA commita")
 		}
-		ref := s.Repository + ":" + artifact.ShortCommit(baselineCommit)
 		base := filepath.Join(tmp, "baseline.tar")
-		switch err := s.Registry.Save(ctx, ref, base); {
+		switch ref, err := s.baseline(ctx, baselineCommit, base); {
 		case errors.Is(err, artifact.ErrNotFound):
-			cli.Warn("obrazu bazowego %s nie ma w rejestrze — bez porównania blokuje każda naprawialna HIGH i CRITICAL", ref)
+			cli.Warn("obrazu bazowego %s ani obrazu żadnego z %d przodków nie ma w rejestrze — bez porównania blokuje każda naprawialna HIGH i CRITICAL", s.image(baselineCommit), contract.VulnsBaselineAncestors)
 		case err != nil:
 			return rep, err
 		default:
+			if wanted := s.image(baselineCommit); ref != wanted {
+				// Obraz main pojawia się w rejestrze ok. 10 min po scaleniu:
+				// PR zaktualizowany na świeży main w tym oknie nie ma czego
+				// porównać. Bez obrazu przodka blokowałaby go każda
+				// podatność, także sprzed jego zmiany.
+				rep.BaselineFor = wanted
+				cli.Warn("obrazu bazowego %s nie ma jeszcze w rejestrze — punkt odniesienia: obraz przodka %s; podatność wprowadzona między nimi liczy się jako nowa", wanted, ref)
+			}
 			// Bez pobierania baz: obraz bazowy oceniony tą samą migawką.
 			baseline, err := s.Scanner.Scan(ctx, base, false)
 			if err != nil {
@@ -155,6 +173,35 @@ func (s Scan) Run(ctx context.Context, target Target, baselineCommit string, rep
 		return rep, cli.Unmet("%d naprawialnych podatności HIGH/CRITICAL bez wyjątku — napraw albo dopisz wyjątek z datą do %s", rep.Blocking, vuln.ExceptionsFile)
 	}
 	return rep, nil
+}
+
+// image — obraz commita w rejestrze.
+func (s Scan) image(commit string) string {
+	return s.Repository + ":" + artifact.ShortCommit(commit)
+}
+
+// baseline zapisuje w path obraz commita bazowego, a gdy go nie ma —
+// obraz najbliższego przodka po pierwszym rodzicu, najwyżej
+// contract.VulnsBaselineAncestors wstecz. Zwraca referencję zapisanego
+// obrazu; żadnego — artifact.ErrNotFound. Historię gita czyta dopiero,
+// gdy obrazu commita bazowego brakuje.
+func (s Scan) baseline(ctx context.Context, commit, path string) (string, error) {
+	ref := s.image(commit)
+	err := s.Registry.Save(ctx, ref, path)
+	if !errors.Is(err, artifact.ErrNotFound) || s.History == nil {
+		return ref, err
+	}
+	commits, err := s.History.FirstParents(ctx, commit, contract.VulnsBaselineAncestors+1)
+	if err != nil {
+		return "", fmt.Errorf("przodkowie commita bazowego (w CI checkout z fetch-depth: 0): %w", err)
+	}
+	for _, c := range commits[min(1, len(commits)):] {
+		ref := s.image(c)
+		if err := s.Registry.Save(ctx, ref, path); !errors.Is(err, artifact.ErrNotFound) {
+			return ref, err
+		}
+	}
+	return "", fmt.Errorf("%s: %w", ref, artifact.ErrNotFound)
 }
 
 // Issues — issue repozytorium (adapters/github).
