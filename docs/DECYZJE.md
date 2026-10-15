@@ -1056,6 +1056,11 @@ kluczy, które środowisko może zmienić. Gdy staging przejmie Argo CD
 
 ## 36. Klaster w CI przed Etapem 9, wymagany po okresie próbnym
 
+> Uzupełnione decyzją 52: okres próbny skończony (`ci:trial` — `cluster`
+> i `vulns` ponad 10 biegów, `vulns` także 20 scalonych PR-ów). Oba są
+> wymagane przez zadanie zbierające `integration`, a nie jako własne
+> statusy.
+
 **Wybieram część Etapu 9 teraz.** Bramki klastrowe — drain każdego węzła,
 odnowienie certyfikatu pod ruchem, tożsamość na podach — biegły tylko
 wtedy, gdy autor pamiętał je uruchomić, więc zmiana chartu, platformy albo
@@ -2116,6 +2121,62 @@ scalenia (kolejka scalania) — wtedy obraz commita bazowego zawsze istnieje
 i przodek niepotrzebny. Gdy `vulns` przejdzie okres próbny na obu seriach
 i stanie się wymagany — flaga `--pull-requests` zostaje dla następnych
 zadań z osobnym trybem PR.
+
+## 52. Warstwy CI: dwa wymagane statusy zbierające, W1 równolegle
+
+> Zmienia listę wymaganych statusów z decyzji 22 i 36 (`test`, `build`) na
+> `fast-feedback` i `integration`. Okres próbny `cluster` i `vulns` jest
+> zakończony (decyzja 51).
+
+**Wybieram zadania zbierające warstwy jako jedyne wymagane statusy i W1
+bez kolejki.** Wymaganym statusem było zadanie, które samo wykonuje bramkę.
+GitHub traktuje pominięte zadanie wymagane jak zaliczone, więc warunek
+takiego zadania — także przodka, gdy warunek nie ma funkcji statusu
+(decyzja 47) — przepuszczał PR bez bramki. Teraz reguła `main` wymaga
+dokładnie dwóch zadań zbierających z `always()`:
+
+- `fast-feedback` — `test`, `build`, `tools`, `negatives`;
+- `integration` — `cluster` i `vulns`.
+
+Oba biegną także wtedy, gdy zadanie warstwy zawiodło, zostało anulowane
+albo pominięte. Wynik ocenia `dft ci require` z wyników `needs` (zielone
+tylko przy samych sukcesach) — reguła ma test, a nie żyje w wyrażeniu
+YAML-a. `dft check workflows` odrzuca wymagany status, którego nie daje
+żadne zadanie na `pull_request`, i taki, którego warunek nie ma `always()`
+albo patrzy na `needs`.
+
+W1 przestaje być kolejką:
+
+- `build` na PR-ach i nocą nie czeka na `test`;
+- powtarzalność narzędzi (`tools`) i warianty negatywne (`negatives`, z
+  własnym buildem tego samego commita) są osobnymi zadaniami;
+- W2 (`cluster`, `vulns`) startuje po `test` i `build`; `build` trwa
+  dłużej, więc to nie wydłuża biegu, a PR z czerwonym `test` nie zajmuje
+  klastra;
+- na `main` `chart` czeka też na `negatives` i `tools` — bramka, której nie
+  da się oblać, nie dopuszcza commita na staging.
+
+**Co tracę:**
+
+- **Runner na czerwonym `test`.** PR z czerwonym `test` i tak buduje obraz
+  i warianty negatywne: ok. 10 min runnera więcej.
+- **Narzut zadań zbierających.** Każde to osobny runner: checkout, Go
+  z `mise.lock` i build `dft`, ok. 40–60 s. `fast-feedback` dokłada to do
+  czasu sygnału W1.
+- **Drugi build w W1.** `negatives` buduje obraz sam, bo w `build` czekałby
+  na build powtarzalności. Że to ten sam obraz, gwarantuje powtarzalność,
+  a nie porównanie digestów.
+- **Integracja wymagana na każdym PR-ze.** Każdy PR — także łatka
+  Dependabota — czeka na klaster (ok. 20 min), zanim auto-merge go scali.
+- **Kolejność wdrożenia.** Reguła w GitHubie zmienia się dopiero po
+  `./bin/mise run repo:settings` autora, po scaleniu. Do tego czasu
+  wymagane są stare statusy (`test`, `build`), a zadania o tych nazwach
+  dalej istnieją.
+
+**Kiedy zmieniam zdanie:** gdy p95 czasu do `fast-feedback` z 20 biegów
+przekroczy 6 min (budżet W1 w kontrakcie, §3.1) — wtedy cache warstw albo
+mniej osobnych zadań. Gdy repozytorium dostanie kolejkę scalania — wtedy
+`integration` biegnie w kolejce, a nie na każdym PR-ze.
 
 ## Czego bym dziś nie powtórzył
 

@@ -96,6 +96,10 @@ zero nieudanych), i sprząta po sobie także po przerwaniu.
   z zadania build (archiwum albo digest z GHCR), drain każdego węzła,
   odnowienie certyfikatu pod ruchem, tożsamość na podach, dowody z klastra
   jako artefakt; wymagany po dziesięciu zielonych biegach z rzędu (decyzja 36)
+- dwa wymagane statusy przed scaleniem: `fast-feedback` (lint, testy, obraz,
+  warianty negatywne, powtarzalność narzędzi — równolegle) i `integration`
+  (klaster, skan obrazu); pominięte zadanie warstwy to czerwony status
+  (decyzje 47, 52)
 
 Zrobione w Etapach 0–1:
 

@@ -396,3 +396,73 @@ func TestConjuncts(t *testing.T) {
 		t.Fatalf("człony %q, oczekiwano %q", got, want)
 	}
 }
+
+const requiredWorkflow = `on: [pull_request, push]
+jobs:
+  test:
+    if: github.ref_type != 'tag'
+    runs-on: ubuntu-24.04
+  build:
+    needs: test
+    runs-on: ubuntu-24.04
+  fast-feedback:
+    needs: [test, build]
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-24.04
+  integration:
+    name: integracja
+    needs: build
+    if: always()
+    runs-on: ubuntu-24.04
+  half:
+    needs: build
+    if: ${{ always() && needs.build.result == 'success' }}
+    runs-on: ubuntu-24.04
+`
+
+func TestRequiredChecks(t *testing.T) {
+	ci, err := Parse("ci.yml", []byte(requiredWorkflow))
+	if err != nil {
+		t.Fatal(err)
+	}
+	nightly, err := Parse("noc.yml", []byte("on: schedule\njobs:\n  nightly:\n    if: always()\n    runs-on: ubuntu-24.04\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflows := []Workflow{ci, nightly}
+	for _, tt := range []struct {
+		check, want string
+	}{
+		{"fast-feedback", ""},
+		{"integracja", ""},
+		{"test", "warunek bez always()"},
+		{"build", "warunek bez always()"},
+		{"half", "warunek bez always()"},
+		{"integration", "żadne zadanie"},
+		{"nightly", "żadne zadanie"},
+	} {
+		found := RequiredChecks(workflows, []string{tt.check})
+		switch {
+		case tt.want == "" && len(found) > 0:
+			t.Errorf("%s: %v", tt.check, found)
+		case tt.want != "" && (len(found) != 1 || !strings.Contains(found[0], tt.want)):
+			t.Errorf("%s: %v; oczekiwano %q", tt.check, found, tt.want)
+		}
+	}
+}
+
+func TestAlwaysRuns(t *testing.T) {
+	for cond, want := range map[string]bool{
+		"always()": true,
+		"${{ always() && github.event_name == 'pull_request' }}": true,
+		"${{ github.event_name == 'pull_request' && always() }}": true,
+		"${{ always() && needs.build.result == 'success' }}":     false,
+		"${{ !cancelled() }}":          false,
+		"${{ always() || failure() }}": false,
+		"":                             false,
+	} {
+		if got := alwaysRuns(cond); got != want {
+			t.Errorf("alwaysRuns(%q) = %v; oczekiwano %v", cond, got, want)
+		}
+	}
+}

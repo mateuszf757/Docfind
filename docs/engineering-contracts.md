@@ -144,8 +144,8 @@ wersji charta w trakcie → kod 1, bez tagu; kod bramek z niezatwierdzonymi zmia
 
 | Warstwa | Zdarzenia | Zadania i zakres | Budżet (p95, §0.5) | Wymagana |
 |---|---|---|---|---|
-| W1 szybka | PR, push `main`, noc | `test`: wersje, lint, kontrakt, gitleaks na historii, Python, charty z politykami, Go z `-race`, govulncheck; `build` albo `build-publish`: obraz, baza, testy na musl, warunki Etapu 1, warianty negatywne, powtarzalność | 6 min [ŻYCZENIE: zmierzone 2026-10-15 — 15,3 min] | tak: `test`, `build` |
-| W2 integracja przed scaleniem | PR, push `main`, noc | `cluster`: klaster `ci`, wdrożenie, tożsamość, drain każdego węzła, OpenBao, rotacja, TLS, dowody; `vulns`: skan obrazu | 20 min [ŻYCZENIE: zmierzone 2026-10-15 — 23,7 min] | po okresie próbnym (§3.3) |
+| W1 szybka | PR, push `main`, noc | równolegle: `test` — wersje, lint, kontrakt, gitleaks na historii, Python, charty z politykami, Go z `-race`, govulncheck; `build` albo `build-publish` — obraz, baza, testy na musl, warunki Etapu 1, powtarzalność; `negatives` — warianty negatywne; `tools` — powtarzalność narzędzi | 6 min [ŻYCZENIE: zmierzone 2026-10-15, przed zrównolegleniem — 15,3 min] | tak: `fast-feedback` |
+| W2 integracja przed scaleniem | PR, push `main`, noc | po `test` i `build`: `cluster` — klaster `ci`, wdrożenie, tożsamość, drain każdego węzła, OpenBao, rotacja, TLS, dowody; `vulns` — skan obrazu | 20 min [ŻYCZENIE: zmierzone 2026-10-15 — 23,7 min] | tak: `integration` |
 | W3 po scaleniu | push `main` | `attest`, `chart`, `attest-chart`: pochodzenie i SBOM, atestacja, chart OCI z digestem przetestowanym | 30 min (2026-10-15: 24,1 min) | nie (czerwony → §3.6) |
 | W4 noc | `schedule`, `workflow_dispatch` | W1 i W2 na `main`, `vulns-issue` [ŻYCZENIE: negatywy na klastrze, upgrade N-1 → N, dryf ustawień, świeżość, kalendarz dat] | 40 min (2026-10-15: 23,9 min) | nie |
 | W5 wydanie | tag `vX.Y.Z` | `release`, `attest-release`, `vulns` z polityką wydania, `promote` po zgodzie | 10 min do oczekiwania na zgodę (2026-10-15: 2,3 min) | nie (zatwierdza autor) |
@@ -155,16 +155,19 @@ Egzekwuje: [ŻYCZENIE: `dft check workflows` — zadanie bez znacznika warstwy t
 zadanie i zdarzenie]. Warstwa: wszystkie. Wariant negatywny: [ŻYCZENIE: zadanie bez warstwy →
 czerwony `test`; `sleep 400` w kroku W1 → przekroczenie zgłoszone]. Decyzja: 36.
 
-**3.2 Wymagane statusy.** Reguła `main` (`.github/rulesets/main.json`) wymaga dziś `test`
-i `build` z aplikacji GitHub Actions; `cluster` dołącza po okresie próbnym (decyzja 36).
-Pominięte zadanie wymagane raportuje sukces, więc warunek wymaganego zadania jest polem
-chronionym (§8.3) [ŻYCZENIE: dwa zadania zbierające, fast-feedback i integration, zielone tylko
-wtedy, gdy każde zadanie warstwy oczekiwane dla zdarzenia ma wynik success — i tylko one
-wymagane].
-Egzekwuje: ruleset stosowany przez `dft repo-settings`; pola chronione (§8.3) [ŻYCZENIE: noc
-porównuje efektywną regułę z plikiem]. Dowód: efektywne reguły
-`GET /repos/…/rules/branches/main`. Warstwa: W1, W2. Wariant negatywny: zmiana listy statusów
-albo warunku `build` bez wpisu w DECYZJE → czerwony `test`. Decyzja: 22, 36, 38.
+**3.2 Wymagane statusy.** Reguła `main` (`.github/rulesets/main.json`) wymaga dokładnie
+`fast-feedback` i `integration` z aplikacji GitHub Actions. Oba to zadania zbierające
+z `always()`: biegną także wtedy, gdy zadanie warstwy zawiodło, zostało anulowane albo
+pominięte, i przechodzą tylko wtedy, gdy każde zadanie warstwy ma wynik success
+(`ci:require`). Pominięte zadanie wymagane raportuje sukces, więc żadne zadanie, które
+wykonuje bramkę, nie jest wymaganym statusem.
+Egzekwuje: `dft check workflows` — wymagany status to zadanie workflowu na pull_request
+z `always()` w warunku; `ci:require`; ruleset stosowany przez `dft repo-settings`; pola
+chronione (§8.3) [ŻYCZENIE: noc porównuje efektywną regułę z plikiem]. Dowód: efektywne reguły
+`GET /repos/…/rules/branches/main`, log zadań zbierających. Warstwa: W1, W2.
+Wariant negatywny: wynik skipped w `NEEDS` → `ci:require` kod 1; wymagany status bez
+`always()` albo bez zadania → czerwony `test` (testy `core/workflow`, `cmd/dft`).
+Decyzja: 22, 36, 38, 47, 52.
 
 **3.3 Okres próbny.** Nowa bramka wchodzi do wymaganych po 10 kolejnych biegach na `main`
 (push i noc) za pierwszym podejściem. Zadanie, którego tryb na PR-ze różni się od trybu na
@@ -185,14 +188,16 @@ Decyzja: 36.
 
 **3.5 Feedback.** Czas do pierwszego czerwonego sygnału na PR-ze ≤ budżet W1; warstwa W2 nie
 opóźnia sygnału W1.
-Egzekwuje: [ŻYCZENIE: `dft ci budget`]. Dowód: [ŻYCZENIE: podsumowanie nocy].
-Warstwa: W1, W2. Wariant negatywny: [ŻYCZENIE: zadanie W2 przed zadaniem W1 w grafie →
-reguła grafu zgłasza]. Decyzja: 36.
+Egzekwuje: graf zadań — zadania W1 bez needs między sobą, W2 po `test` i `build`; pola
+chronione (§8.3) [ŻYCZENIE: `dft ci budget` mierzy czas do pierwszego czerwonego sygnału].
+Dowód: [ŻYCZENIE: podsumowanie nocy]. Warstwa: W1, W2. Wariant negatywny: [ŻYCZENIE: zadanie
+W2 przed zadaniem W1 w grafie → reguła grafu zgłasza]. Decyzja: 36, 52.
 
 **3.6 Czerwony `main`.** Właściciel naprawia w ≤ 24 h (revert przed poprawką); w tym czasie
 scalane są tylko poprawki, auto-merge Dependabota jest wstrzymany, staging świadomie zamrożony.
-Egzekwuje: graf zadań — `chart` publikuje się tylko po zielonym `cluster`, więc czerwony `main`
-zamraża staging [ŻYCZENIE: `dft ci main-health` w nocy i na push]. Dowód: [ŻYCZENIE: issue].
+Egzekwuje: graf zadań — `chart` publikuje się tylko po zielonych `cluster`, `negatives`
+i `tools`, więc czerwony `main` zamraża staging [ŻYCZENIE: `dft ci main-health` w nocy i na
+push]. Dowód: [ŻYCZENIE: issue].
 Warstwa: W3, W4. Wariant negatywny: [ŻYCZENIE: czerwony `main` dłużej niż 24 h → issue
 i wyłączony auto-merge na otwartych PR-ach Dependabota]. Decyzja: 22, 36, 45.
 
@@ -214,8 +219,8 @@ charta przetestowanego z publikowanym]. Dowód: wyjścia zadań. Warstwa: W2, W3
 Wariant negatywny: podmienione archiwum → `cluster` kod 1 [ŻYCZENIE: chart w rejestrze o innym
 digeście niż przetestowany → `chart` kod 1]. Decyzja: 36, 45.
 
-**4.3 Klaster tylko po zielonym buildzie.** `cluster` biegnie po sukcesie `build` (PR, noc)
-albo `build-publish` i `attest` (push).
+**4.3 Klaster tylko po zielonym buildzie.** `cluster` biegnie po sukcesie `test` i `build`
+(PR, noc) albo `build-publish` i `attest` (push).
 Egzekwuje: warunek zadania `cluster` w `ci.yml` — pole chronione (§8.3). Dowód: graf biegu.
 Warstwa: W2. Wariant negatywny: zmiana warunku bez wpisu w DECYZJE → czerwony `test`.
 Decyzja: 36, 47, 49.

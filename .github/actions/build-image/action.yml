@@ -1,7 +1,7 @@
 name: build obrazu api
 description: >-
   Build obrazu api z HEAD i jego sprawdzenia — baza, testy na musl, warunki
-  Etapu 1, warianty negatywne, powtarzalność — a potem archiwum dla zadania
+  Etapu 1, powtarzalność — a potem archiwum dla zadania
   cluster albo publikacja do GHCR. Wspólne kroki zadań build (PR, noc, token
   tylko do odczytu) i build-publish (push na main, packages: write): te same
   kroki, różne uprawnienia tokenu, bo uprawnienia dostaje zadanie, a nie krok
@@ -78,14 +78,6 @@ runs:
     - name: warunki zakończenia etapu
       shell: bash
       run: ./bin/mise run check:runtime
-
-    # Warianty, które bramki muszą odrzucić, na tym samym obrazie: obraz, który
-    # wstaje bez konfiguracji, PID 1 bez obsługi SIGTERM, żądanie w locie
-    # dłuższe niż limit dokańczania. Bramka, której nie da się oblać, niczego
-    # nie sprawdza.
-    - name: warianty negatywne bramek
-      shell: bash
-      run: ./bin/mise run test:negatives
 
     # Build z pamięcią podręczną i build od zera muszą dać identyczny obraz.
     # Publikowany digest da się wtedy niezależnie odtworzyć z commita, a zmiana

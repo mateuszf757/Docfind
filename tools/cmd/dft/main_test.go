@@ -97,6 +97,7 @@ func TestUsageErrors(t *testing.T) {
 		"test na push z bazą":               func() error { return runTest(ctx, w, []string{"--event", "push", "--base", "abc"}) },
 		"test z dwoma punktami odniesienia": func() error { return runTest(ctx, w, []string{"--base", "a", "--vulns-baseline", "b"}) },
 		"kontrakt bez podpolecenia":         func() error { return runContract(ctx, w, nil) },
+		"ci bez podpolecenia":               func() error { return runCI(ctx, w, nil) },
 		"kontrakt z nieznaną flagą":         func() error { return runContract(ctx, w, []string{"thresholds", "--force"}) },
 		"bramka kontraktu z argumentem":     func() error { return runCheckContract(ctx, w, []string{"origin/main"}) },
 		"bramka Go z nieznaną flagą":        func() error { return runCheckGo(ctx, w, []string{"--baseline-commit", "abc"}) },
@@ -130,6 +131,27 @@ func TestParseTestFlags(t *testing.T) {
 		got, err := parseTestFlags(tt.args)
 		if err != nil || got != tt.want {
 			t.Errorf("parseTestFlags(%q) = %+v, %v; oczekiwano %+v", tt.args, got, err, tt.want)
+		}
+	}
+}
+
+// TestCIRequire: zadanie zbierające zielone tylko przy samych sukcesach;
+// brak NEEDS, zły JSON i puste needs to złe wywołanie, a nie wynik.
+func TestCIRequire(t *testing.T) {
+	quiet(t)
+	w := &workspace{root: t.TempDir(), runner: &proc.Fake{}}
+	ctx := context.Background()
+	for needs, want := range map[string]int{
+		`{"test":{"result":"success","outputs":{}},"build":{"result":"success"}}`: cli.ExitOK,
+		`{"test":{"result":"success"},"build":{"result":"skipped"}}`:              cli.ExitUnmet,
+		`{"test":{"result":"failure"}}`:                                           cli.ExitUnmet,
+		`{}`:                                                                      cli.ExitFailure,
+		`nie JSON`:                                                                cli.ExitFailure,
+		``:                                                                        cli.ExitFailure,
+	} {
+		t.Setenv("NEEDS", needs)
+		if code := cli.ExitCode(runCI(ctx, w, []string{"require"})); code != want {
+			t.Errorf("NEEDS=%s: kod %d, oczekiwano %d", needs, code, want)
 		}
 	}
 }
