@@ -250,7 +250,7 @@ i bez sudo.
 
 Zadania wołają `ci/dft` — program w Go z `tools/`, budowany z bieżącego drzewa
 przy każdym wywołaniu (bez zmian w kodzie nic się nie kompiluje). Bez mise
-działa, jeśli w PATH są Go 1.27.1 i pozostałe narzędzia. Klaster zapisuje dane
+działa, jeśli w PATH są Go 1.27.2 i pozostałe narzędzia. Klaster zapisuje dane
 dostępowe do `.cache/kubeconfig`, nie do `~/.kube/config`; `dft` bierze ścieżkę
 i kontekst z definicji środowiska, a `./bin/mise exec` ustawia `KUBECONFIG`
 sam.
