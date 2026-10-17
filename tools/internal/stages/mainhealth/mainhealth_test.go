@@ -94,3 +94,18 @@ func TestSync(t *testing.T) {
 		})
 	}
 }
+
+func TestSyncDates(t *testing.T) {
+	oldOut, oldErr := cli.Out, cli.Err
+	cli.Out, cli.Err = io.Discard, io.Discard
+	t.Cleanup(func() { cli.Out, cli.Err = oldOut, oldErr })
+	now := func() time.Time { return time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC) }
+	i := &issues{}
+	c := Checker{Runs: runs{run("schedule", "success", "2026-10-20T03:17:00Z")}, Issues: i, Now: now, Dates: []string{"ci/contract-exceptions.yaml: wyjątek od §6.5 (klucz) wygasa 2026-10-25"}}
+	if err := c.Sync(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(i.calls) != 1 || !strings.Contains(i.calls[0], "wygasa 2026-10-25") {
+		t.Errorf("wywołania: %v", i.calls)
+	}
+}

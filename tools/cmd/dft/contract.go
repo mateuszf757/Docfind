@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/contract"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
@@ -98,6 +99,19 @@ func checkContract(ctx context.Context, w *workspace, base string) error {
 	if len(found) == 0 {
 		cli.Step("kontrakt: tabela progów równa kodowi, każda klauzula z polami, strażnicy i decyzje istnieją")
 	}
+	problems, warnings, err := w.contractExceptions(string(text))
+	if err != nil {
+		return err
+	}
+	for _, p := range problems {
+		v.Fail("%s", p)
+	}
+	for _, warning := range warnings {
+		cli.Warn("%s", warning)
+	}
+	if len(problems) == 0 {
+		cli.Step("wyjątki od kontraktu: każdy z uzasadnieniem i datą najdalej za 90 dni (%s)", contract.ExceptionsFile)
+	}
 	if base == "" {
 		return v.Err("kontrakt inżynierski")
 	}
@@ -157,4 +171,19 @@ func (w *workspace) contractKnown() (contract.Known, error) {
 		return contract.Known{}, errors.New("mise.toml bez zadań albo docs/DECYZJE.md bez decyzji — zmienił się format, a kontrakt nie miałby się do czego odwołać")
 	}
 	return known, nil
+}
+
+// contractExceptions — naruszenia i ostrzeżenia rejestru wyjątków od
+// klauzul kontraktu (§0.4, decyzja 64).
+func (w *workspace) contractExceptions(doc string) (problems, warnings []string, err error) {
+	raw, err := os.ReadFile(filepath.Join(w.root, filepath.FromSlash(contract.ExceptionsFile)))
+	if err != nil {
+		return nil, nil, err
+	}
+	list, err := contract.ParseExceptions(raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	problems, warnings = contract.CheckExceptions(list, contract.Clauses(doc), time.Now().UTC())
+	return problems, warnings, nil
 }

@@ -16,7 +16,7 @@ import (
 )
 
 // IssueTitle — tytuł issue; po nim issue jest odnajdywane.
-const IssueTitle = "Zdrowie main: czerwony bieg albo brak nocy"
+const IssueTitle = "Zdrowie main: czerwony bieg, brak nocy, bliskie daty"
 
 // Runs — biegi workflowu (adapters/github).
 type Runs interface {
@@ -37,6 +37,9 @@ type Checker struct {
 	Issues Issues
 	// Now — zegar; nil — time.Now.
 	Now func() time.Time
+	// Dates — obietnice z datą, które wypadają w ciągu tygodnia (wyjątki
+	// od kontraktu, §8.7); każda to ustalenie.
+	Dates []string
 }
 
 // red — wynik biegu, który znaczy czerwony main; anulowany i pominięty bieg
@@ -95,7 +98,7 @@ func (c Checker) Findings(ctx context.Context) ([]string, error) {
 			}
 		}
 	}
-	return found, nil
+	return append(found, c.Dates...), nil
 }
 
 // Sync otwiera, aktualizuje albo zamyka issue według Findings. Błąd tylko
@@ -112,7 +115,7 @@ func (c Checker) Sync(ctx context.Context) error {
 	for _, f := range found {
 		cli.Warn("%s", f)
 	}
-	body := "- " + strings.Join(found, "\n- ") + "\n\nIssue prowadzi `dft ci main-health` z biegów workflowu ci na main (push, noc) — zamknie je sam, gdy main będzie zielony, a noc regularna.\n"
+	body := "- " + strings.Join(found, "\n- ") + "\n\nIssue prowadzi `dft ci main-health` z biegów workflowu ci na main (push, noc) — zamknie je sam, gdy main będzie zielony, noc regularna, a żaden wyjątek od kontraktu nie wygaśnie w ciągu tygodnia.\n"
 	switch {
 	case len(found) > 0 && number == 0:
 		if err := c.Issues.CreateIssue(ctx, IssueTitle, body); err != nil {

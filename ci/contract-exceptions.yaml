@@ -1,0 +1,17 @@
+# Wyjątki od klauzul kontraktu (docs/engineering-contracts.md, §0.4). Każdy
+# ma klauzulę, uzasadnienie, odwołanie do decyzji albo PR-a i datę
+# wygaśnięcia najdalej 90 dni od dziś. Wygasły wyjątek to czerwony
+# `dft test`; 7 dni przed datą przypomina noc (issue „Zdrowie main”).
+# Zmiana pliku to zmiana pola chronionego (§8.3) — wymaga wpisu w DECYZJE.
+exceptions:
+  - clause: "6.5"
+    what: klucz prywatny aplikacji auto-merge (DOCFIND_AUTOMERGE_PRIVATE_KEY) w sekretach Dependabota
+    reason: >-
+      Jedyne poświadczenie w CI poza GITHUB_TOKEN i OIDC: auto-merge łatek
+      Dependabota (decyzja 22) potrzebuje tokenu aplikacji, którego
+      GITHUB_TOKEN z PR-a Dependabota nie zastąpi. Data utworzenia klucza
+      nie jest zapisana w repozytorium, więc pierwsza data to 90 dni od
+      wprowadzenia rejestru: do niej klucz ma być obrócony w ustawieniach
+      aplikacji, a data tutaj przesunięta.
+    expires: "2027-01-15"
+    ref: decyzja 22

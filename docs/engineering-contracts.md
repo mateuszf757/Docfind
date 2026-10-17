@@ -24,9 +24,10 @@ kiedy zmieniam zdanie), strażnika i jego wariant negatywny. Zmiana pola chronio
 (`core/contract`), a tabelę w §10 przepisuje `ci/dft contract thresholds --write` — nigdy
 odwrotnie.
 
-**0.4 Wyjątek.** Wyjątek od klauzuli to wpis w DECYZJE z uzasadnieniem i datą wygaśnięcia nie
-dalej niż 90 dni [ŻYCZENIE: rejestr `ci/contract-exceptions.yaml` z walidacją dat i ostrzeżeniem
-nocy 7 dni przed wygaśnięciem]. Wyjątki podatności: `ci/vuln-exceptions.yaml` — uzasadnienie
+**0.4 Wyjątek.** Wyjątek od klauzuli to wpis w `ci/contract-exceptions.yaml`: klauzula, opis,
+uzasadnienie, odwołanie do decyzji albo PR-a i data wygaśnięcia najdalej za 90 dni. Wygasły
+wyjątek to czerwony `dft check contract`; 7 dni przed datą przypomina noc (issue „Zdrowie
+main”). Rejestr jest polem chronionym (§8.3). Wyjątki podatności: `ci/vuln-exceptions.yaml` — uzasadnienie
 i data najdalej za 90 dni, sprawdzane przez `core/vuln`. Wyjątki skanera sekretów:
 `ci/gitleaks-ignore` — pole chronione (§8.3), bo nie wygasają.
 
@@ -70,10 +71,11 @@ Decyzja: 23.
 
 **1.2 Launcher mise.** `bin/mise` to wygenerowany skrypt startowy mise z przypiętą wersją
 i sumami, nieedytowany ręcznie; narzędzia instaluje z `mise.lock`.
-Egzekwuje: `dft check versions` (spójność wersji narzędzi) [ŻYCZENIE: wersja uruchomionego mise
-równa wersji z `bin/mise`; nadpisania `MISE_VERSION` i `MISE_INSTALL_PATH` w CI jako błąd].
-Dowód: log `test`. Warstwa: W1. Wariant negatywny: [ŻYCZENIE: `MISE_INSTALL_PATH` wskazujący
-inny plik → kod 2]. Decyzja: 23.
+Egzekwuje: `dft check versions` — spójność wersji narzędzi; w CI `MISE_INSTALL_PATH`
+i `MISE_DATA_DIR` inne niż ustawia `bin/mise` dla przypiętej wersji oraz `MISE_VERSION` z otoczenia
+to błąd (`stages/versions`). Dowód: log `test`. Warstwa: W1. Wariant negatywny:
+`MISE_INSTALL_PATH` wskazujący inny plik → kod 1 w CI (testy `stages/versions`).
+Decyzja: 23, 64.
 
 **1.3 Workflowy.** Dozwolone w YAML-u: wyzwalacze, graf `needs`, warunki zdarzeń i wyników,
 klasyfikacja bez uruchamiania kodu z repozytorium (decyzja 22). Zakazane: wybór trybu bramki
@@ -378,22 +380,25 @@ Decyzja: 16, 20, 31, 44, 55.
 **6.5 Poświadczenia w CI.** Tylko `GITHUB_TOKEN` z uprawnieniami na zadanie i OIDC
 w zadaniach atestacji; `persist-credentials: false`; bez `pull_request_target`. Jedyny wyjątek:
 klucz aplikacji auto-merge w sekretach Dependabota.
-Egzekwuje: zizmor i reguła uprawnień w `dft check workflows` (decyzja 49) [ŻYCZENIE: data
-rotacji klucza aplikacji w rejestrze wyjątków, najdalej za 90 dni]. Dowód: log `test`.
-Warstwa: W1. Wariant negatywny: prawo zapisu w zadaniu osiągalnym z PR-a → czerwony `test`.
-Decyzja: 22, 49.
+Egzekwuje: zizmor i reguła uprawnień w `dft check workflows` (decyzja 49); klucz aplikacji
+jako wyjątek z datą rotacji w `ci/contract-exceptions.yaml`, sprawdzaną przez `dft check
+contract`. Dowód: log `test`. Warstwa: W1. Wariant negatywny: prawo zapisu w zadaniu osiągalnym
+z PR-a → czerwony `test`; wyjątek po dacie rotacji → czerwony `test` (testy `core/contract`).
+Decyzja: 22, 49, 64.
 
 **6.6 Łańcuch dostaw.** Wszystko z zewnątrz niezmiennie: akcje pełnym SHA (wymuszone przez
 GitHuba), obrazy digestem, narzędzia z `mise.lock` (`locked = true`), charty sumą, moduły Go
 z `go.sum` i tylko z `proxy.golang.org`; cooldown Dependabota 7 dni (major 14).
 Egzekwuje: mise, ustawienie `sha_pinning_required` (`dft repo-settings`), `core/policy`
 (digest), `dft check versions`; obrazy systemowe k3s z archiwum airgap przypiętego sumą
-i bramka obrazów na klastrze w `dft cluster` (`stages/deploy`) [ŻYCZENIE: nadpisania z otoczenia
-w CI — `MISE_*`, `GOPROXY`, `GOFLAGS`, `GONOSUMDB`, `GOINSECURE` — jako błąd; obraz
-równoważnika obciążenia k3d po tagu]. Dowód: log `test`, log `cluster` (obrazy na klastrze).
-Warstwa: W1, W2. Wariant negatywny: obraz z zewnątrz bez `@sha256:` w charcie → czerwony
-`test`; obraz systemowy spoza archiwum albo z archiwum, ale pobierany z sieci → `dft cluster`
-kod 1 (testy `core/cluster`, `stages/deploy`). Decyzja: 20, 22, 23, 56.
+i bramka obrazów na klastrze w `dft cluster` (`stages/deploy`); nadpisania z otoczenia w CI —
+`GOPROXY` i `GOTOOLCHAIN` inne niż w `mise.toml`, `GOFLAGS`, `GONOSUMDB`, `GOINSECURE`,
+`GOPRIVATE`, `GOSUMDB` inny niż `sum.golang.org`, podmiana mise — jako błąd w `dft check
+versions` [ŻYCZENIE: obraz równoważnika obciążenia k3d po tagu]. Dowód: log `test`, log
+`cluster` (obrazy na klastrze). Warstwa: W1, W2. Wariant negatywny: obraz z zewnątrz bez
+`@sha256:` w charcie → czerwony `test`; obraz systemowy spoza archiwum albo z archiwum, ale
+pobierany z sieci → `dft cluster` kod 1; `GONOSUMDB=*` w CI → kod 1 (testy `core/cluster`,
+`stages/deploy`, `stages/versions`). Decyzja: 20, 22, 23, 56, 64.
 
 **6.7 Ustawienia repozytorium.** Reguły `main` i tagów, środowiska, auto-merge, push
 protection i wymóg SHA — jako kod w `.github/`, stosowane przez `dft repo-settings`; zmiana
@@ -452,6 +457,7 @@ sonda bez `securityContext` → odrzucona przez API server. Decyzja: 31, 40, 45.
 **8.3 Pola chronione.** Zmiana któregoś z tych pól idzie w jednym PR-ze ze zmianą
 `docs/DECYZJE.md`:
 - progi bramek (`core/contract`, tabela w §10) i ten dokument;
+- rejestr wyjątków od kontraktu (`ci/contract-exceptions.yaml`);
 - konfiguracja skanera sekretów i jego wyjątki (`ci/gitleaks.toml`, `ci/gitleaks-ignore`);
 - reguły repozytorium, środowiska GitHuba i konfiguracja Dependabota (`.github/rulesets/`,
   `.github/environments/`, `.github/dependabot.yml`);
@@ -491,12 +497,13 @@ Decyzja: 36, 50, 57.
 
 **8.7 Daty.** Każda obietnica z datą (wyjątki, klucze, wsparcie wersji, certyfikaty) jest
 w kalendarzu danych; noc ostrzega 7 dni przed datą.
-Egzekwuje: walidacja dat wyjątków podatności (`core/vuln`); wyjątek wygasający w ciągu progu
-z §10 trafia do issue nocnego i trzyma je otwarte (`vulns:issue`) [ŻYCZENIE: kalendarz
-pozostałych dat — klucz aplikacji auto-merge, wsparcie wersji, certyfikaty]. Dowód: log `test`,
-issue nocne. Warstwa: W1, W4. Wariant negatywny: wyjątek z datą dalej niż 90 dni → czerwony
-`test`; wyjątek wygasający za 7 dni → issue, za 8 dni → brak (testy `core/vuln`,
-`stages/vulns`). Decyzja: 37, 54.
+Egzekwuje: walidacja dat wyjątków podatności (`core/vuln`) i wyjątków od kontraktu
+(`core/contract`, w tym data rotacji klucza aplikacji auto-merge); wyjątek wygasający w ciągu
+progu z §10 trafia do issue nocnego — podatności do `vulns:issue`, kontrakt do `ci:main-health`
+[ŻYCZENIE: kalendarz wsparcia wersji i certyfikatów]. Dowód: log `test`, issue nocne.
+Warstwa: W1, W4. Wariant negatywny: wyjątek z datą dalej niż 90 dni albo po terminie →
+czerwony `test`; wyjątek wygasający za 7 dni → issue, za 8 dni → brak (testy `core/vuln`,
+`core/contract`, `stages/vulns`, `stages/mainhealth`). Decyzja: 37, 54, 64.
 
 **8.8 Czas feedbacku** jest ważniejszy niż kompletność warstwy szybkiej; kompletność przed
 scaleniem zapewnia W2.
