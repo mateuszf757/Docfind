@@ -4,14 +4,17 @@
 package host
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // Host — bieżąca maszyna.
@@ -56,4 +59,32 @@ func (Host) PortFree(port int) (bool, error) {
 		return false, err
 	}
 	return true, l.Close()
+}
+
+// GitHubAPI — serwer, z którego nagłówkiem Date porównuje się zegar.
+const GitHubAPI = "https://api.github.com"
+
+// ClockSkew — różnica między zegarem maszyny a nagłówkiem Date odpowiedzi
+// serwera url na HEAD; dodatnia — zegar maszyny się spieszy. Nagłówek ma
+// rozdzielczość sekundy, a odpowiedź idzie chwilę, więc wynik ma błąd
+// rzędu sekundy — progi liczy się w dziesiątkach sekund.
+func (Host) ClockSkew(ctx context.Context, url string) (time.Duration, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	if err != nil {
+		return 0, err
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	sent := time.Now()
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("czas serwera %s: %w", url, err)
+	}
+	resp.Body.Close()
+	received := time.Now()
+	date, err := http.ParseTime(resp.Header.Get("Date"))
+	if err != nil {
+		return 0, fmt.Errorf("czas serwera %s: nagłówek Date %q: %w", url, resp.Header.Get("Date"), err)
+	}
+	local := sent.Add(received.Sub(sent) / 2)
+	return local.Sub(date), nil
 }
