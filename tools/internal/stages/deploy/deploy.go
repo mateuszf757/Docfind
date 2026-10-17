@@ -149,6 +149,10 @@ type Deployer struct {
 	// Download — plik spoza repozytorium w pamięci podręcznej, po sprawdzeniu
 	// sumy z ci/pins.env (kit/fetch): archiwum airgap i lista obrazów k3s.
 	Download func(ctx context.Context, url, sha string) (string, error)
+	// Package — chart aplikacji spakowany dla obrazu (repozytorium@digest)
+	// jak do publikacji (stages/chartpub): ścieżka archiwum i digest
+	// manifestu OCI (decyzja 61).
+	Package func(ctx context.Context, image string) (archive, digest string, err error)
 	// Poll i DeliveryTimeout — odstęp sprawdzania stanu Argo CD i limit
 	// czekania na wdrożenie; zero — 5 s i 10 min.
 	Poll, DeliveryTimeout time.Duration
@@ -156,6 +160,11 @@ type Deployer struct {
 
 // Source — skąd wziąć obraz.
 type Source struct {
+	// PackageChart — chart z obrazem z rejestru spakowany jak do publikacji
+	// i zainstalowany z archiwum, zamiast z katalogu z --set obrazu: na
+	// klastrze stoi wtedy ten sam artefakt, który zadanie chart opublikuje
+	// (decyzja 61). Tylko z Kind = SourceRegistry.
+	PackageChart bool
 	// Kind — environment.SourceLocal, SourceArchive albo SourceRegistry;
 	// pusty — bez wskazania: build z drzewa, a w środowisku z Argo CD obraz
 	// z charta, który Argo wybierze.
@@ -294,7 +303,7 @@ func (d Deployer) Up(ctx context.Context, src Source) error {
 	if d.Env.GitOps() {
 		return d.deliver(ctx, c, rel)
 	}
-	return d.app(ctx, c, img)
+	return d.app(ctx, c, img, src.PackageChart)
 }
 
 // requireACMEEmail: wydawca Let's Encrypt potrzebuje adresu konta ACME,

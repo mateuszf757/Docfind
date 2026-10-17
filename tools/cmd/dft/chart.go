@@ -35,17 +35,18 @@ func (w *workspace) chartPublisher() chartpub.Publisher {
 // obrazu; wyjścia kroku — repozytorium, digest i wersja charta dla
 // atestacji.
 func runChart(ctx context.Context, w *workspace, args []string) error {
-	const usage = "dft chart publish --image <obraz@sha256:…>"
+	const usage = "dft chart publish --image <obraz@sha256:…> [--tested <digest charta z zadania cluster>]"
 	if len(args) == 0 || args[0] != "publish" {
 		return cli.Usage("użycie: %s", usage)
 	}
 	fs := flag.NewFlagSet("chart publish", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	image := fs.String("image", "", "")
+	tested := fs.String("tested", "", "")
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() > 0 || *image == "" {
 		return cli.Usage("użycie: %s", usage)
 	}
-	pub, err := w.chartPublisher().Publish(ctx, *image)
+	pub, err := w.chartPublisher().Publish(ctx, *image, *tested)
 	if err != nil {
 		return err
 	}

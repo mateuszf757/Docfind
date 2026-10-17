@@ -1755,6 +1755,10 @@ wtedy obserwowanie katalogu (`..data`) zamiast odczytu przy każdym użyciu.
 
 ## 45. GitOps przez chart OCI: CI publikuje chart, Argo CD śledzi wersje
 
+> Uzupełnione decyzją 61: na push zadanie `cluster` instaluje chart
+> spakowany jak do publikacji, a `chart` publikuje tylko artefakt o tym
+> samym digeście.
+
 > Pierwszy krok Etapu 5. Rozstrzyga pytanie z planu przed Etapem 5: jak
 > nowy digest trafia do środowiska, skoro reguła `main` blokuje push z CI,
 > a push tokenem `GITHUB_TOKEN` i tak nie uruchamia workflowów.
@@ -2481,6 +2485,34 @@ cofnęłaby restart.
 
 **Kiedy zmieniam zdanie:** gdy zmieni się format konfiguracji między
 wersjami (Etap 6) — wtedy prawdziwy upgrade N-1 → N z rejestru w nocy.
+
+## 61. Chart przetestowany na klastrze to chart opublikowany
+
+> Uzupełnia decyzję 45 (GitOps przez chart OCI).
+
+**Wybieram instalację spakowanego charta w zadaniu `cluster` i porównanie
+digestu przy publikacji.** Na push klaster `ci` dostawał chart z katalogu
+z obrazem w `--set`, a zadanie `chart` pakowało go od nowa: obraz
+i wersję wdrożenia w `values.yaml`, adnotacje, metadane. Na staging szedł
+więc artefakt, którego żaden klaster w CI nie zainstalował. Teraz
+`dft cluster up --image … --chart-package` pakuje chart tym samym kodem co
+publikacja (`stages/chartpub`) i instaluje go z archiwum. Digest manifestu
+OCI trafia do wyjść kroku. `dft chart publish --tested <digest>` składa
+chart jeszcze raz i odmawia publikacji, gdy digest jest inny. Pakowanie
+jest powtarzalne (ten sam commit, ten sam digest — decyzja 45), więc różnica
+znaczy zmianę w drodze, a nie szum.
+
+**Co tracę:**
+
+- **Tylko na push.** Na PR-ach i nocą klaster dalej instaluje chart
+  z katalogu, bo obrazu nie ma w rejestrze, a archiwum ma tag bez digestu.
+  Tam nic się nie publikuje.
+- **Lokalnie bez zmian.** Bez `--chart-package` `cluster up --image` działa
+  jak dotąd — lokalnie można wdrożyć obraz innego commita niż drzewo.
+
+**Kiedy zmieniam zdanie:** gdy zadanie `cluster` przejmie publikację charta
+(jedno zadanie z prawem zapisu po bramkach klastra) — wtedy przekazanie
+digestu niepotrzebne.
 
 ## Czego bym dziś nie powtórzył
 

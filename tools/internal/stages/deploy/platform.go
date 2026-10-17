@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -222,7 +223,7 @@ func (d Deployer) appSecrets(ctx context.Context, c Cluster) (string, error) {
 // app instaluje chart aplikacji z obrazem img i sprawdza, że to, co stoi na
 // klastrze, zgadza się z tym, co wdrażano — obraz, wersja i commit na każdym
 // podzie, a liczba podów z liczbą replik.
-func (d Deployer) app(ctx context.Context, c Cluster, img image) error {
+func (d Deployer) app(ctx context.Context, c Cluster, img image, packaged bool) error {
 	release := d.Env.App.Release
 	caBundle, err := d.appSecrets(ctx, c)
 	if err != nil {
@@ -236,8 +237,22 @@ func (d Deployer) app(ctx context.Context, c Cluster, img image) error {
 	if img.digest != "" {
 		image = append(image, "api.image.digest="+img.digest)
 	}
+	chartSource := d.path("deploy/charts/docfind")
+	if packaged {
+		// Ten sam artefakt co do publikacji: obraz i wersja wdrożenia są
+		// w wartościach archiwum, nie w --set (decyzja 61).
+		if img.digest == "" {
+			return cli.Usage("spakowany chart tylko z obrazem z rejestru (--image)")
+		}
+		archive, digest, err := d.Package(ctx, d.Image+"@"+img.digest)
+		if err != nil {
+			return err
+		}
+		cli.Step("chart spakowany jak do publikacji: %s (%s)", filepath.Base(archive), digest)
+		chartSource, image = archive, nil
+	}
 	if err := d.Releases.Install(ctx, d.target(), cluster.Release{
-		Name: release, Chart: d.path("deploy/charts/docfind"), Namespace: d.Env.App.Namespace,
+		Name: release, Chart: chartSource, Namespace: d.Env.App.Namespace,
 		Set: d.Env.AppValues(caBundle), SetString: image, Timeout: 3 * time.Minute,
 	}); err != nil {
 		return err

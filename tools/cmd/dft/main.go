@@ -81,7 +81,7 @@ var commands = map[string]command{
 		run:   runContract,
 	},
 	"cluster": {
-		usage: "dft cluster <up [--image <obraz>@sha256:… | --image-archive <plik> --config-digest sha256:…]|down|evidence>",
+		usage: "dft cluster <up [--image <obraz>@sha256:… [--chart-package] | --image-archive <plik> --config-digest sha256:…]|down|evidence>",
 		help:  "klaster środowiska (DOCFIND_ENV, domyślnie dev): utworzenie, platforma, obraz, chart, tożsamość; dowody do .cache/reports",
 		run:   runCluster,
 	},
@@ -101,7 +101,7 @@ var commands = map[string]command{
 		run:   runTrial,
 	},
 	"chart": {
-		usage: "dft chart publish --image <obraz@sha256:…>",
+		usage: "dft chart publish --image <obraz@sha256:…> [--tested <digest>]",
 		help:  "chart aplikacji z tym obrazem w rejestrze OCI: wersja z commita, powtarzalny artefakt, sprawdzony po wysłaniu (decyzja 45)",
 		run:   runChart,
 	},

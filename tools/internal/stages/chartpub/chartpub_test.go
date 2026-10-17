@@ -64,14 +64,14 @@ const image = "ghcr.io/mateuszf757/docfind-api@sha256:733c718c4c1ed725f2b5f24724
 func TestPublish(t *testing.T) {
 	quiet(t)
 	p := publisher(t, repo{})
-	got, err := p.Publish(context.Background(), image)
+	got, err := p.Publish(context.Background(), image, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.Version != "0.4.1-dev.3" || !strings.HasPrefix(got.Digest, "sha256:") {
 		t.Errorf("publikacja: %+v", got)
 	}
-	again, err := p.Publish(context.Background(), image)
+	again, err := p.Publish(context.Background(), image, "")
 	if err != nil || again.Digest != got.Digest {
 		t.Errorf("ponowna publikacja: %s, %v; pierwsza %s", again.Digest, err, got.Digest)
 	}
@@ -84,18 +84,40 @@ func TestPublish(t *testing.T) {
 // TestPublishRefuses: brudne drzewo i obraz spoza repozytorium charta.
 func TestPublishRefuses(t *testing.T) {
 	quiet(t)
-	if _, err := publisher(t, repo{dirty: true}).Publish(context.Background(), image); cli.ExitCode(err) != cli.ExitUnmet {
+	if _, err := publisher(t, repo{dirty: true}).Publish(context.Background(), image, ""); cli.ExitCode(err) != cli.ExitUnmet {
 		t.Errorf("brudne drzewo: %v", err)
 	}
 	// Obraz z innego commita — chart opisałby go tagiem swojego.
 	p := publisher(t, repo{})
 	p.Images = images{"0123456789ab" + commit[12:]}
-	if _, err := p.Publish(context.Background(), image); cli.ExitCode(err) != cli.ExitUnmet || !strings.Contains(err.Error(), "zbudowano z commita") {
+	if _, err := p.Publish(context.Background(), image, ""); cli.ExitCode(err) != cli.ExitUnmet || !strings.Contains(err.Error(), "zbudowano z commita") {
 		t.Errorf("obraz z innego commita: %v", err)
 	}
 	other := "ghcr.io/ktos/inny@sha256:" + strings.Repeat("b", 64)
-	_, err := publisher(t, repo{}).Publish(context.Background(), other)
+	_, err := publisher(t, repo{}).Publish(context.Background(), other, "")
 	if cli.ExitCode(err) != cli.ExitUnmet || !strings.Contains(err.Error(), "spoza repozytorium") {
 		t.Errorf("obraz z innego repozytorium: %v", err)
+	}
+}
+
+// TestPackageIsPublished: archiwum zainstalowane w zadaniu cluster to ten sam
+// artefakt, który zadanie chart publikuje; inny digest przetestowany —
+// odmowa publikacji (decyzja 61).
+func TestPackageIsPublished(t *testing.T) {
+	quiet(t)
+	p := publisher(t, repo{})
+	archive, tested, err := p.Package(context.Background(), image, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(archive, "docfind-0.4.1-dev.3.tgz") {
+		t.Errorf("archiwum: %s", archive)
+	}
+	got, err := p.Publish(context.Background(), image, tested)
+	if err != nil || got.Digest != tested {
+		t.Fatalf("publikacja przetestowanego: %+v, %v (przetestowany %s)", got, err, tested)
+	}
+	if _, err := p.Publish(context.Background(), image, "sha256:"+strings.Repeat("0", 64)); cli.ExitCode(err) != cli.ExitUnmet || !strings.Contains(err.Error(), "to nie chart przetestowany") {
+		t.Errorf("inny chart przetestowany: %v", err)
 	}
 }

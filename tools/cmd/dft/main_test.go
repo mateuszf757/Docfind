@@ -31,6 +31,7 @@ func TestSourceArgs(t *testing.T) {
 		{nil, ""},
 		{[]string{"--image", "ghcr.io/x/api@" + digest}, environment.SourceRegistry},
 		{[]string{"--image-archive", "obraz.tar", "--config-digest", digest}, environment.SourceArchive},
+		{[]string{"--image", "ghcr.io/x/api@" + digest, "--chart-package"}, environment.SourceRegistry},
 	}
 	for _, tt := range tests {
 		got, err := sourceArgs(tt.args)
@@ -43,6 +44,9 @@ func TestSourceArgs(t *testing.T) {
 		{"--image", "x@" + digest, "--image-archive", "obraz.tar", "--config-digest", digest},
 		{"pozycyjny"},
 		{"--nieznana"},
+		// Spakowany chart tylko z obrazem z rejestru.
+		{"--chart-package"},
+		{"--image-archive", "obraz.tar", "--config-digest", digest, "--chart-package"},
 	} {
 		if _, err := sourceArgs(bad); cli.ExitCode(err) != cli.ExitFailure {
 			t.Errorf("%v: przyjęte (%v)", bad, err)
