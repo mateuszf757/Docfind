@@ -19,6 +19,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/osv"
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/registry"
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/uv"
+	"github.com/mateuszf757/Docfind/tools/internal/core/ci"
 	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
 	"github.com/mateuszf757/Docfind/tools/internal/core/reposettings"
 	"github.com/mateuszf757/Docfind/tools/internal/core/vuln"
@@ -140,6 +141,20 @@ func checkWorkflows(ctx context.Context, w *workspace) error {
 	checks := workflow.RequiredChecks(workflows, required)
 	for _, found := range checks {
 		v.Fail("%s", found)
+	}
+	layers := map[string]string{}
+	for job, layer := range ci.Layers {
+		layers[job] = string(layer)
+	}
+	var layerless int
+	for _, wf := range workflows {
+		for _, found := range workflow.Layerless(wf, layers) {
+			v.Fail("%s", found)
+			layerless++
+		}
+	}
+	if layerless == 0 {
+		cli.Step("warstwy: każde zadanie workflowu ci ma warstwę i budżet (decyzja 57)")
 	}
 	if skips == 0 {
 		cli.Step("graf zadań: każde zadanie za warunkowym przodkiem patrzy na wyniki jawnie (decyzja 47)")

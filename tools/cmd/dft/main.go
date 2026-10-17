@@ -72,7 +72,7 @@ var commands = map[string]command{
 	},
 	"ci": {
 		usage: ciUsage,
-		help:  "require — wynik zadania zbierającego warstwę z NEEDS (decyzja 52); main-health — czerwony main ponad dobę i brak nocy do issue (decyzja 54)",
+		help:  "require — wynik zadania zbierającego warstwę z NEEDS (decyzja 52); main-health — czerwony main ponad dobę i brak nocy do issue (decyzja 54); budget — p50/p95 warstw (decyzja 57)",
 		run:   runCI,
 	},
 	"contract": {

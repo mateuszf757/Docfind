@@ -235,6 +235,16 @@ func TestBranchRules(t *testing.T) {
 	}
 }
 
+func TestRunsByEvent(t *testing.T) {
+	c := CLI{Runner: &proc.Fake{Responses: map[string]proc.FakeResponse{
+		"gh api repos/{owner}/{repo}/actions/workflows/ci.yml/runs?event=schedule&status=completed&per_page=100": {Stdout: `{"workflow_runs":[{"id":3,"event":"schedule","created_at":"2026-10-15T03:17:00Z"}]}`},
+	}}}
+	runs, err := c.RunsByEvent(context.Background(), "ci.yml", "schedule", 500)
+	if err != nil || len(runs) != 1 || runs[0].CreatedAt != "2026-10-15T03:17:00Z" {
+		t.Errorf("biegi: %+v, %v", runs, err)
+	}
+}
+
 func TestReleaseTag(t *testing.T) {
 	f := &proc.Fake{Responses: map[string]proc.FakeResponse{
 		"gh api repos/{owner}/{repo}/git/ref/tags/v0.4.0": {Stdout: `{"ref":"refs/tags/v0.4.0","object":{"sha":"t1","type":"tag"}}`},

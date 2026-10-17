@@ -2353,6 +2353,44 @@ sprawdzają tożsamość i przyjęcie, nie ta reguła.
 dla przypiętej wersji — wtedy `--disable=servicelb,local-storage,metrics-server`
 i własne charty z digestem, jak CoreDNS (decyzja 18).
 
+## 57. Warstwa przy każdym zadaniu i budżety mierzone z biegów
+
+> Uzupełnia decyzję 52 (warstwy CI). Budżety z kontraktu (§3.1) były
+> liczbami bez pomiaru, a przynależność zadań do warstw — opisem.
+
+**Wybieram mapę zadań na warstwy w kodzie i pomiar z API zamiast tabeli
+w dokumencie.** `core/ci.Layers` przypisuje każde zadanie workflowu `ci`
+do warstwy W1–W5. `dft check workflows` odrzuca zadanie bez warstwy i wpis
+dla zadania, którego już nie ma — nowa funkcja CI zaczyna od miejsca
+w budżecie (§8.6). `dft ci budget` (zadanie `budget`, noc) liczy p50 i p95
+wall-clock każdej warstwy z 20 ostatnich zielonych biegów pierwszego
+podejścia, osobno dla PR-ów, push i nocy, a kolejkę i czasy zadań —
+osobno.
+
+Pierwszy pomiar (2026-10-17, biegi sprzed zrównoleglenia z decyzji 52):
+
+| Warstwa | Zdarzenie | p95 | Budżet |
+|---|---|---|---|
+| W1 | PR | 15,3 min | 6 min |
+| W1 | push | 15,6 min | 6 min |
+| W2 | PR | 23,1 min | 20 min |
+| W3 | push | 27,9 min | 30 min |
+| W4 | noc | 17,1 min | 40 min |
+
+**Co tracę:**
+
+- **Bez `--enforce` noc nie czerwienieje przez budżet.** Budżet W1 jest
+  życzeniem (20 z 20 przekroczeń), a czerwona noc z założonego z góry
+  powodu uczy ignorować czerwień. Przekroczenia są ostrzeżeniem
+  w podsumowaniu.
+- **Tylko zielone biegi.** Czas do pierwszego czerwonego sygnału (§3.5)
+  zostaje `[ŻYCZENIE]`: czerwony bieg kończy się wcześniej i zaniżałby p95.
+- **Jedna warstwa na zadanie.** `vulns` na tagu liczy się jako W2, a nie
+  W5.
+
+**Kiedy zmieniam zdanie:** gdy p95 W1 na PR-ach zejdzie do budżetu
+w 20 kolejnych biegach — wtedy `--enforce` w nocy.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

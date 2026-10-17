@@ -21,8 +21,34 @@ type Run struct {
 
 // Job — zadanie w biegu.
 type Job struct {
-	Name       string `json:"name"`
-	Conclusion string `json:"conclusion"`
+	Name        string `json:"name"`
+	Conclusion  string `json:"conclusion"`
+	StartedAt   string `json:"started_at,omitempty"`
+	CompletedAt string `json:"completed_at,omitempty"`
+}
+
+// Layer — warstwa CI (§3.1 kontraktu).
+type Layer string
+
+// Warstwy CI.
+const (
+	W1 Layer = "W1" // szybka: PR, push, noc
+	W2 Layer = "W2" // integracja przed scaleniem
+	W3 Layer = "W3" // po scaleniu
+	W4 Layer = "W4" // noc
+	W5 Layer = "W5" // wydanie
+)
+
+// Layers — warstwa każdego zadania workflowu ci (decyzja 57). Zadanie
+// bez warstwy to błąd `dft check workflows` (§3.1, §8.6 kontraktu): nowa
+// funkcja CI zaczyna od miejsca w warstwach i budżetu. Zadanie, które biegnie
+// w kilku zdarzeniach, ma warstwę zdarzenia, dla którego powstało.
+var Layers = map[string]Layer{
+	"test": W1, "build": W1, "build-publish": W1, "tools": W1, "negatives": W1, "fast-feedback": W1,
+	"cluster": W2, "vulns": W2, "integration": W2,
+	"attest": W3, "chart": W3, "attest-chart": W3,
+	"vulns-issue": W4, "settings-drift": W4, "main-health": W4, "budget": W4,
+	"release": W5, "attest-release": W5, "promote": W5,
 }
 
 // PullRequest — scalony PR: ostatni commit (ten, na którym CI dało wynik
