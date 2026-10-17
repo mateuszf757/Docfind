@@ -109,7 +109,8 @@ Decyzja: 35, 38, 40, 45, 46.
 `refs/heads/main` i atestacją wydania z tagu `vX.Y.Z`, po zgodzie autora; każda promocja zostawia
 Deployment.
 Egzekwuje: `dft promote`; zadanie `promote` biegnie tylko po jawnym sukcesie `release`,
-`attest-release` i `vulns` (decyzja 47) [ŻYCZENIE: ćwiczenie promocji w repozytorium próbnym].
+`attest-release` i `vulns` (decyzja 47) [ŻYCZENIE: ćwiczenie promocji w repozytorium próbnym
+przed pierwszym wydaniem — procedura w `docs/RUNBOOK.md`, wykonuje autor].
 Dowód: Deployment `production` [ŻYCZENIE: pakiet dowodów, §7.1]. Warstwa: W5.
 Wariant negatywny: środowisko bez wymaganej zgody → `dft promote` kod 1. Decyzja: 38, 40, 47.
 
