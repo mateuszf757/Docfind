@@ -35,6 +35,11 @@ const (
 	// handshake'u z nowym numerem seryjnym. Zmierzone w CI z własnym CA:
 	// ok. 2 s; 60 s to ~30× zapasu (§5.4).
 	TLSPropagation = 60 * time.Second
+	// TLSConfirmHandshakes — tyle kolejnych pełnych handshake'ów (nowe
+	// połączenie, bez wznawiania sesji) przez bramę musi podać nowy numer
+	// seryjny w czasie Y. Przy dwóch replikach proxy szansa, że jedna nie
+	// dostanie żadnego z nich, to 2⁻¹⁹ (§5.4).
+	TLSConfirmHandshakes = 20
 	// RotationPhaseBudget — faza rotacji sekretu na jednym podzie:
 	// refreshInterval ExternalSecret (1 min) + synchronizacja poda przez
 	// kubelet (1 min) z zapasem; zmierzone do 84 s w CI (§5.5).
@@ -111,7 +116,7 @@ func Thresholds() []Threshold {
 		{"§5.2", "`kubectl drain` jednego węzła", fmt.Sprintf("≤ %v", DrainTimeout), "cmd/dft (drain)"},
 		{"§5.2", "zakończenie eksmitowanego poda ≤ X ≤ okres łaski", "X = preStopSleepSeconds + shutdown_grace_seconds + 1 s (dziś 5 + 3 + 1 = 9 s; okres łaski 15 s), bez SIGKILL", "chart docfind (adnotacja X, render); stages/drain (pomiar)"},
 		{"§5.4", "żądania HTTPS w trakcie odnowienia", fmt.Sprintf("≥ %d, 0 nieudanych, 0 restartów proxy", TLSMinRequests), "cmd/dft (tls)"},
-		{"§5.4", "nowy certyfikat na proxy (Y)", fmt.Sprintf("≤ %v od odnowienia", TLSPropagation), "stages/ingress"},
+		{"§5.4", "nowy certyfikat na proxy (Y)", fmt.Sprintf("≤ %v od odnowienia, potwierdzony %d kolejnymi pełnymi handshake'ami", TLSPropagation, TLSConfirmHandshakes), "stages/ingress"},
 		{"§5.5", "faza rotacji sekretu na podzie", fmt.Sprintf("≤ %v", RotationPhaseBudget), "cmd/dft (rotation)"},
 		{"§5.6", "samonaprawa jednej zmiany", fmt.Sprintf("≤ %v", SelfHealBudget), "cmd/dft (selfheal)"},
 		{"§6.2", "punkt odniesienia skanu obrazu na PR-ze", fmt.Sprintf("obraz commita bazowego albo najbliższego z %d przodków", VulnsBaselineAncestors), "stages/vulns"},

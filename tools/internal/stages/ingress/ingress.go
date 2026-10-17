@@ -14,6 +14,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"math/big"
 	"regexp"
 	"slices"
 	"strconv"
@@ -71,6 +72,11 @@ type Config struct {
 	// Settle — jak długo pętla żądań biegnie przed odnowieniem i po
 	// podmianie certyfikatu; zero — 3 s.
 	Settle time.Duration
+	// Propagation i ConfirmInterval — okno Y na nowy certyfikat na każdej
+	// replice i odstęp handshake'ów potwierdzenia; zero —
+	// contract.TLSPropagation i 100 ms. Krótsze tylko w testach.
+	Propagation     time.Duration
+	ConfirmInterval time.Duration
 }
 
 func (c Config) settle() time.Duration {
@@ -80,15 +86,31 @@ func (c Config) settle() time.Duration {
 	return c.Settle
 }
 
+func (c Config) propagation() time.Duration {
+	if c.Propagation == 0 {
+		return contract.TLSPropagation
+	}
+	return c.Propagation
+}
+
+func (c Config) confirmInterval() time.Duration {
+	if c.ConfirmInterval == 0 {
+		return 100 * time.Millisecond
+	}
+	return c.ConfirmInterval
+}
+
 // Report — wynik bramki w JSON.
 type Report struct {
-	Hostname        string         `json:"hostname"`
-	Issuer          string         `json:"issuer"`
-	RequestID       string         `json:"request_id"`
-	ProxyNodes      []string       `json:"proxy_nodes"`
-	RenewalSkipped  string         `json:"renewal_skipped,omitempty"`
-	SerialBefore    string         `json:"serial_before,omitempty"`
-	SerialAfter     string         `json:"serial_after,omitempty"`
+	Hostname       string   `json:"hostname"`
+	Issuer         string   `json:"issuer"`
+	RequestID      string   `json:"request_id"`
+	ProxyNodes     []string `json:"proxy_nodes"`
+	RenewalSkipped string   `json:"renewal_skipped,omitempty"`
+	SerialBefore   string   `json:"serial_before,omitempty"`
+	SerialAfter    string   `json:"serial_after,omitempty"`
+	// Confirmed — kolejne pełne handshake'i z nowym numerem seryjnym.
+	Confirmed       int            `json:"confirmed_handshakes,omitempty"`
 	RevisionBefore  int64          `json:"revision_before,omitempty"`
 	RevisionAfter   int64          `json:"revision_after,omitempty"`
 	Requests        int            `json:"requests"`
@@ -381,21 +403,46 @@ func (c *Checker) renewUnderTraffic(ctx context.Context, rep *Report, secret str
 
 	// Proxy podaje nowy certyfikat sam — Envoy Gateway śledzi Secret
 	// i przekazuje go proxy przez SDS, bez restartu podów.
-	err = poll.Until(ctx, contract.TLSPropagation, time.Second, func(ctx context.Context) (bool, error) {
+	propagation := c.Cfg.propagation()
+	deadline := time.Now().Add(propagation)
+	var renewed *big.Int
+	err = poll.Until(ctx, propagation, time.Second, func(ctx context.Context) (bool, error) {
 		after, err := c.Edge.Certificate(ctx, version)
 		if err != nil || after.SerialNumber.Cmp(before.SerialNumber) == 0 {
 			return false, nil
 		}
+		renewed = after.SerialNumber
 		rep.SerialAfter = after.SerialNumber.Text(16)
 		return true, nil
 	})
 	if errors.Is(err, poll.ErrTimeout) {
-		return cli.Unmet("proxy nadal podaje stary certyfikat %v po odnowieniu", contract.TLSPropagation)
+		return cli.Unmet("proxy nadal podaje stary certyfikat %v po odnowieniu", propagation)
 	}
 	if err != nil {
 		return err
 	}
 	cli.Step("proxy podaje nowy certyfikat: numer seryjny %s", rep.SerialAfter)
+
+	// Każda replika: pierwszy nowy certyfikat mógł przyjść z jednej z nich.
+	// Kolejne pełne handshake'i — każdy nowym połączeniem, bez wznawiania
+	// sesji — muszą podać nowy numer w tym samym oknie Y; stary numer zeruje
+	// licznik (decyzja 59).
+	err = poll.Until(ctx, time.Until(deadline), c.Cfg.confirmInterval(), func(ctx context.Context) (bool, error) {
+		after, err := c.Edge.Certificate(ctx, version)
+		if err != nil || after.SerialNumber.Cmp(renewed) != 0 {
+			rep.Confirmed = 0
+			return false, nil
+		}
+		rep.Confirmed++
+		return rep.Confirmed >= contract.TLSConfirmHandshakes, nil
+	})
+	if errors.Is(err, poll.ErrTimeout) {
+		return cli.Unmet("w %v od odnowienia tylko %d z %d kolejnych handshake'ów z nowym certyfikatem — któraś replika proxy podaje stary", propagation, rep.Confirmed, contract.TLSConfirmHandshakes)
+	}
+	if err != nil {
+		return err
+	}
+	cli.Step("nowy certyfikat w %d kolejnych pełnych handshake'ach przez bramę (repliki proxy na: %s)", rep.Confirmed, strings.Join(rep.ProxyNodes, ", "))
 
 	if err := poll.Sleep(ctx, c.Cfg.settle()); err != nil {
 		return err

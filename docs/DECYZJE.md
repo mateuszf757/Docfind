@@ -2424,6 +2424,32 @@ kontenera. Kod 137 albo OOMKilled, czas ponad X, brak adnotacji i drain bez
 **Kiedy zmieniam zdanie:** gdy kubelet zacznie raportować czas zakończenia
 w zdarzeniach poda — wtedy zdarzenia zamiast watcha.
 
+## 59. Nowy certyfikat potwierdzony kolejnymi handshake'ami, nie pierwszym
+
+> Uzupełnia decyzje 4 i 11 (TLS na wejściu, Envoy Gateway).
+
+**Wybieram potwierdzenie statystyczne przez bramę zamiast handshake'u do
+każdego poda.** Bramka TLS kończyła się na pierwszym handshake'u z nowym
+numerem seryjnym. Proxy ma dwie repliki, a ruch z hosta przechodzi przez
+równoważnik k3d i Service — pierwszy nowy certyfikat mógł przyjść z jednej
+repliki, gdy druga podawała stary. Teraz po pierwszym nowym numerze bramka
+wymaga 20 kolejnych pełnych handshake'ów z tym numerem w tym samym oknie Y
+(60 s od odnowienia). Każdy handshake idzie nowym połączeniem bez
+wznawiania sesji, a stary numer zeruje licznik. Przy dwóch replikach
+szansa, że jedna nie dostanie żadnego z 20 połączeń, to 2⁻¹⁹. Wymóg proxy
+na co najmniej dwóch węzłach już był.
+
+**Co tracę:**
+
+- **Pewność statystyczna, nie per pod.** Handshake do każdego poda osobno
+  (port-forward z nazwą hosta bramy) zostaje `[ŻYCZENIE]` — tego nie
+  sprawdzę bez klastra.
+- **Kilka sekund więcej.** 20 handshake'ów co 100 ms.
+
+**Kiedy zmieniam zdanie:** gdy proxy będzie miało więcej niż trzy repliki —
+wtedy 20 handshake'ów przestaje wystarczać statystycznie i trzeba
+handshake'ów per pod.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta
