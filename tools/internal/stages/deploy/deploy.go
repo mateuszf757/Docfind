@@ -78,6 +78,8 @@ type Cluster interface {
 	RefreshApplication(ctx context.Context, namespace, name string) error
 	HelmReleaseRecords(ctx context.Context, namespace, release string) ([]string, error)
 	DeleteSecret(ctx context.Context, namespace, name string) error
+	// PullEvents — obrazy ze zdarzeń Pulling we wszystkich przestrzeniach.
+	PullEvents(ctx context.Context) ([]string, error)
 }
 
 // Connect łączy się z klastrem przez strażnika kontekstu (kube.Connect).
@@ -144,6 +146,9 @@ type Deployer struct {
 	DNSTokens func(t cluster.Target) (DNSToken, error)
 	// ChartRegistry — chart aplikacji w rejestrze, który śledzi Argo CD.
 	ChartRegistry ChartRegistry
+	// Download — plik spoza repozytorium w pamięci podręcznej, po sprawdzeniu
+	// sumy z ci/pins.env (kit/fetch): archiwum airgap i lista obrazów k3s.
+	Download func(ctx context.Context, url, sha string) (string, error)
 	// Poll i DeliveryTimeout — odstęp sprawdzania stanu Argo CD i limit
 	// czekania na wdrożenie; zero — 5 s i 10 min.
 	Poll, DeliveryTimeout time.Duration
@@ -272,6 +277,9 @@ func (d Deployer) Up(ctx context.Context, src Source) error {
 		return err
 	}
 	if err := d.platform(ctx, c); err != nil {
+		return err
+	}
+	if err := d.systemImages(ctx, c); err != nil {
 		return err
 	}
 	if img.load != "" {

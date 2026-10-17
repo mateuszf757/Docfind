@@ -45,6 +45,8 @@ type rule struct {
 const (
 	KubernetesVersion        = "DF_KUBERNETES_VERSION"
 	K3sImage                 = "DF_K3S_IMAGE"
+	K3sAirgapSHA256          = "DF_K3S_AIRGAP_SHA256"
+	K3sImagesSHA256          = "DF_K3S_IMAGES_SHA256"
 	CoreDNSChartVersion      = "DF_COREDNS_CHART_VERSION"
 	CoreDNSChartURL          = "DF_COREDNS_CHART_URL"
 	CoreDNSChartSHA256       = "DF_COREDNS_CHART_SHA256"
@@ -75,6 +77,8 @@ const (
 var rules = map[string]rule{
 	KubernetesVersion:        {semver, "wersja X.Y.Z"},
 	K3sImage:                 {pinnedImage, "obraz z digestem"},
+	K3sAirgapSHA256:          {sha256Hex, "suma SHA-256"},
+	K3sImagesSHA256:          {sha256Hex, "suma SHA-256"},
 	CoreDNSChartVersion:      {semver, "wersja X.Y.Z"},
 	CoreDNSChartURL:          {regexp.MustCompile(`^https://`), "adres https"},
 	CoreDNSChartSHA256:       {sha256Hex, "suma SHA-256"},
@@ -184,6 +188,27 @@ func (p Pins) validate() error {
 		return fmt.Errorf("%s", strings.Join(problems, "; "))
 	}
 	return nil
+}
+
+// Pliki wydania k3s: obrazy systemowe do importu na węzłach i ich lista
+// (decyzja 56).
+const (
+	K3sAirgapImages = "k3s-airgap-images-amd64.tar.zst"
+	K3sImageList    = "k3s-images.txt"
+)
+
+// k3sTag — tag obrazu k3s: v1.36.4-k3s1.
+var k3sTag = regexp.MustCompile(`^rancher/k3s:(v[0-9]+\.[0-9]+\.[0-9]+)-(k3s[0-9]+)@`)
+
+// K3sAsset zwraca adres pliku z wydania k3s tej samej wersji co obraz
+// z DF_K3S_IMAGE: tag v1.36.4-k3s1 to wydanie v1.36.4+k3s1. Adres wynika
+// z obrazu, a nie stoi obok niego, więc nie może się z nim rozjechać.
+func (p Pins) K3sAsset(name string) (string, error) {
+	m := k3sTag.FindStringSubmatch(p.Get(K3sImage))
+	if m == nil {
+		return "", fmt.Errorf("%s=%s — tag spoza postaci vX.Y.Z-k3sN", K3sImage, p.Get(K3sImage))
+	}
+	return "https://github.com/k3s-io/k3s/releases/download/" + m[1] + "%2B" + m[2] + "/" + name, nil
 }
 
 // Get zwraca przypięcie o kluczu z tego pakietu. Load i Parse gwarantują,

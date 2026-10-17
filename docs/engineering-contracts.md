@@ -365,11 +365,13 @@ Decyzja: 22, 49.
 GitHuba), obrazy digestem, narzędzia z `mise.lock` (`locked = true`), charty sumą, moduły Go
 z `go.sum` i tylko z `proxy.golang.org`; cooldown Dependabota 7 dni (major 14).
 Egzekwuje: mise, ustawienie `sha_pinning_required` (`dft repo-settings`), `core/policy`
-(digest), `dft check versions` [ŻYCZENIE: obrazy systemowe k3s z archiwum airgap z sumą;
-nadpisania z otoczenia w CI — `MISE_*`, `GOPROXY`, `GOFLAGS`, `GONOSUMDB`, `GOINSECURE` — jako
-błąd]. Dowód: log `test` [ŻYCZENIE: lista obrazów z klastra `ci`]. Warstwa: W1, W2.
-Wariant negatywny: obraz z zewnątrz bez `@sha256:` w charcie → czerwony `test`.
-Decyzja: 20, 22, 23.
+(digest), `dft check versions`; obrazy systemowe k3s z archiwum airgap przypiętego sumą
+i bramka obrazów na klastrze w `dft cluster` (`stages/deploy`) [ŻYCZENIE: nadpisania z otoczenia
+w CI — `MISE_*`, `GOPROXY`, `GOFLAGS`, `GONOSUMDB`, `GOINSECURE` — jako błąd; obraz
+równoważnika obciążenia k3d po tagu]. Dowód: log `test`, log `cluster` (obrazy na klastrze).
+Warstwa: W1, W2. Wariant negatywny: obraz z zewnątrz bez `@sha256:` w charcie → czerwony
+`test`; obraz systemowy spoza archiwum albo z archiwum, ale pobierany z sieci → `dft cluster`
+kod 1 (testy `core/cluster`, `stages/deploy`). Decyzja: 20, 22, 23, 56.
 
 **6.7 Ustawienia repozytorium.** Reguły `main` i tagów, środowiska, auto-merge, push
 protection i wymóg SHA — jako kod w `.github/`, stosowane przez `dft repo-settings`; zmiana
