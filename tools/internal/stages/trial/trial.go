@@ -17,8 +17,10 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/ci"
+	"github.com/mateuszf757/Docfind/tools/internal/core/contract"
 )
 
 // Runs — biegi workflowów (adapters/github).
@@ -52,6 +54,8 @@ type Checker struct {
 	Events []string
 	// Limit — ile ostatnich biegów przeglądać.
 	Limit int
+	// Now — zegar dla świeżości nocy; nil — time.Now.
+	Now func() time.Time
 }
 
 // Streak przegląda biegi od najnowszego. Bieg, w którym zadanie nie ruszyło
@@ -64,9 +68,24 @@ func (c Checker) Streak(ctx context.Context) (Result, error) {
 		return Result{}, err
 	}
 	var r Result
+	now := time.Now
+	if c.Now != nil {
+		now = c.Now
+	}
+	// Seria mierzy migotanie na kolejnych nocach: noc bez biegu (GitHub
+	// pomija harmonogram w szczycie, wyłącza go po 60 dniach bez aktywności)
+	// to dziura w pomiarze, a nie zielony bieg (§3.3 kontraktu).
+	night := now()
 	for _, run := range runs {
 		if !slices.Contains(c.Events, run.Event) {
 			continue
+		}
+		if at, err := time.Parse(time.RFC3339, run.CreatedAt); err == nil && run.Event == "schedule" {
+			if gap := night.Sub(at); gap > contract.NightlyGap {
+				r.Broken, r.Reason = &run, fmt.Sprintf("przerwa w nocach: %s bez biegu nocnego po %s (dłużej niż %v)", gap.Round(time.Hour), at.Format(time.DateOnly), contract.NightlyGap)
+				return r, nil
+			}
+			night = at
 		}
 		if run.Attempt > 1 {
 			r.Broken, r.Reason = &run, fmt.Sprintf("bieg ponowiony (podejście %d)", run.Attempt)

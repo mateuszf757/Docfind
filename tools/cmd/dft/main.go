@@ -72,7 +72,7 @@ var commands = map[string]command{
 	},
 	"ci": {
 		usage: ciUsage,
-		help:  "wynik zadania zbierającego warstwę CI z wyników jego needs (NEEDS = toJSON(needs)); pominięte to nie zaliczone (decyzja 52)",
+		help:  "require — wynik zadania zbierającego warstwę z NEEDS (decyzja 52); main-health — czerwony main ponad dobę i brak nocy do issue (decyzja 54)",
 		run:   runCI,
 	},
 	"contract": {
@@ -111,8 +111,8 @@ var commands = map[string]command{
 		run:   runDNSToken,
 	},
 	"repo-settings": {
-		usage: "dft repo-settings [--dry-run]",
-		help:  "rulesety, środowiska GitHuba, auto-merge i przypinanie akcji SHA w ustawieniach repozytorium (admin)",
+		usage: "dft repo-settings [--dry-run | --check]",
+		help:  "rulesety, środowiska GitHuba, auto-merge i przypinanie akcji SHA w ustawieniach repozytorium (admin); --check tylko porównuje reguły main i środowiska z plikami",
 		run:   runRepoSettings,
 	},
 	"test-image": {

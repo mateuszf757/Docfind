@@ -145,6 +145,32 @@ func policiesPath(repo, env string) string {
 	return "repos/" + repo + "/environments/" + env + "/deployment-branch-policies"
 }
 
+// BranchRules zwraca reguły działające na gałęzi — ze wszystkich rulesetów,
+// tak jak je stosuje GitHub. Endpoint jest czytelny dla każdego z dostępem
+// do odczytu repozytorium, więc noc sprawdza go tokenem zadania.
+func (c CLI) BranchRules(ctx context.Context, repo, branch string) ([]reposettings.Rule, error) {
+	var raw []struct {
+		Type       string `json:"type"`
+		Parameters struct {
+			Checks []struct {
+				Context string `json:"context"`
+			} `json:"required_status_checks"`
+		} `json:"parameters"`
+	}
+	if err := c.api(ctx, &raw, fmt.Sprintf("repos/%s/rules/branches/%s?per_page=100", repo, branch)); err != nil {
+		return nil, err
+	}
+	rules := make([]reposettings.Rule, 0, len(raw))
+	for _, r := range raw {
+		rule := reposettings.Rule{Type: r.Type}
+		for _, c := range r.Parameters.Checks {
+			rule.Checks = append(rule.Checks, c.Context)
+		}
+		rules = append(rules, rule)
+	}
+	return rules, nil
+}
+
 // BranchPolicies zwraca gałęzie i tagi dopuszczone do środowiska:
 // polityka → identyfikator.
 func (c CLI) BranchPolicies(ctx context.Context, repo, env string) (map[reposettings.Policy]int64, error) {

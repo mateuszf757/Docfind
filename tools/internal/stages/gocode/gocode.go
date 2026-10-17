@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/artifact"
+	"github.com/mateuszf757/Docfind/tools/internal/core/contract"
 	"github.com/mateuszf757/Docfind/tools/internal/core/layers"
 	"github.com/mateuszf757/Docfind/tools/internal/core/vuln"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
@@ -276,6 +277,10 @@ func (c Checker) vulnReport(ctx context.Context) (vuln.Report, error) {
 	}
 
 	rep.Findings, rep.Unused = policy.Evaluate(findings)
+	rep.Expiring = vuln.Expiring(c.Exceptions, c.Today, contract.ExceptionWarning)
+	for _, e := range rep.Expiring {
+		cli.Warn("wyjątek %s — popraw albo przedłuż z uzasadnieniem w %s", e, vuln.ExceptionsFile)
+	}
 	for _, f := range rep.Findings {
 		mark := "  "
 		if f.Blocking {

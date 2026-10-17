@@ -53,6 +53,10 @@ on:
   # szczytu; w repozytorium publicznym wyłącza go po 60 dniach bez aktywności.
   schedule:
     - cron: "17 3 * * *"
+  # Noc na żądanie (decyzja 54): to samo co harmonogram, uruchamiane z UI albo
+  # `gh workflow run ci.yml --ref main` — po zmianie nocnych zadań i gdy GitHub
+  # pominął harmonogram.
+  workflow_dispatch:
 
 # Akcje przypięte pełnym SHA commita, nie tagiem. Tag akcji jest przesuwalny —
 # tak w 2025 roku skompromitowano tj-actions/changed-files: napastnik przesunął
@@ -91,7 +95,7 @@ concurrency:
   group: >-
     ${{
       (github.event_name == 'pull_request' && format('ci-pr-{0}', github.ref))
-      || (github.event_name == 'schedule' && 'ci-nightly')
+      || ((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'ci-nightly')
       || (github.ref_type == 'tag' && format('ci-tag-{0}', github.ref))
       || format('ci-main-{0}', github.sha)
     }}
@@ -498,7 +502,7 @@ jobs:
         run: ./bin/mise run check:vulns -- --image-archive "$IMAGE_ARCHIVE" --config-digest "$CONFIG_DIGEST" --baseline-commit "$BASE_SHA"
 
       - name: skan nocny obrazu z main (raport)
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         env:
           IMAGE_ARCHIVE: ${{ runner.temp }}/obraz/image-api.tar
           CONFIG_DIGEST: ${{ needs.build.outputs.config }}
@@ -542,7 +546,10 @@ jobs:
   # i wynikiem niespełnionym, a issue nie zamyka.
   vulns-issue:
     needs: [test, vulns]
-    if: ${{ !cancelled() && github.event_name == 'schedule' }}
+    # Noc: harmonogram albo uruchomienie ręczne — jedyne zdarzenia poza PR-em
+    # i push. Koniunkcja wykluczeń, a nie alternatywa: regułę uprawnień
+    # (decyzja 49) przekonuje tylko jawne wykluczenie pull_request.
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -878,3 +885,58 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: ./bin/mise run ci:require
+
+  # Dryf ustawień repozytorium (decyzja 54): reguły działające na main
+  # i środowiska GitHuba porównane z plikami w .github. Zmiana w UI albo plik
+  # niezastosowany po scaleniu — czerwona noc. Endpointy reguł i środowisk
+  # czyta każdy z dostępem do repozytorium, więc wystarcza token zadania
+  # tylko do odczytu.
+  settings-drift:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Go i gh (mise)
+        run: ./bin/mise install go gh
+
+      - name: ustawienia w GitHubie zgodne z plikami
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: ./bin/mise run repo:settings -- --check
+
+  # Zdrowie main (decyzja 54): czerwony main dłużej niż doba i noc, która nie
+  # przyszła, w jednym issue — nie na czerwono, bo czerwony bieg zgłaszający
+  # czerwony main podtrzymywałby czerwień. Także na push: noc, która przestała
+  # przychodzić, sama tego nie zgłosi.
+  main-health:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # Biegi workflowu ci na main.
+      actions: read
+      # Issue „Zdrowie main” — otwarcie, aktualizacja, zamknięcie.
+      issues: write
+    env:
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Go i gh (mise)
+        run: ./bin/mise install go gh
+
+      - name: zdrowie main do issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: ./bin/mise run ci:main-health

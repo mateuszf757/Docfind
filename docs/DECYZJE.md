@@ -2234,6 +2234,53 @@ wymaga atestacji pakietu z tym samym digestem i sprawdza go jeszcze raz.
 organizacji pokryją okres wsparcia wydania — wtedy pakiet może wskazywać
 bieg zamiast go streszczać.
 
+## 54. Straże nocne: dryf ustawień, zdrowie main, wygasające wyjątki
+
+> Uzupełnia decyzje 22, 36, 37 i 38. Wszystkie odczyty robi token zadania:
+> reguły działające na gałęzi, środowiska i ich polityki czyta każdy
+> z dostępem do odczytu repozytorium publicznego (sprawdzone bez
+> uwierzytelnienia, 2026-10-17).
+
+**Wybieram cztery straże w nocy zamiast obietnic bez strażnika.**
+
+- **Dryf ustawień.** `dft repo-settings --check` (zadanie `settings-drift`)
+  porównuje z plikami w `.github` reguły działające na `main` (typy
+  i wymagane statusy) oraz środowiska (czy wymagają zgody, skąd wolno
+  wdrażać). Zmiana w UI albo plik niezastosowany po scaleniu to czerwona
+  noc. Pierwszy wynik na żywo: wymagane statusy w GitHubie `test` i `build`,
+  w pliku `fast-feedback` i `integration` — decyzja 52 czeka na
+  `repo:settings`.
+- **Zdrowie main.** `dft ci main-health` (zadanie `main-health`, noc i każdy
+  push na `main`) prowadzi jedno issue: `main` czerwony dłużej niż doba
+  i noc starsza niż 48 h. Nie czerwieni biegu — czerwony bieg, który
+  zgłasza czerwony `main`, sam podtrzymywałby czerwień. Na push, bo noc,
+  która przestała przychodzić, sama tego nie zgłosi.
+- **Wygasające wyjątki.** Wyjątek podatności, który wygaśnie w ciągu
+  tygodnia, trafia do raportu, ostrzeżenia i issue nocnego i trzyma je
+  otwarte jak blokująca podatność — za tydzień nią będzie.
+- **Przerwy w nocach.** Seria okresu próbnego kończy się na przerwie
+  dłuższej niż 48 h między biegami nocnymi: dziura w pomiarze to nie
+  zielony bieg.
+
+Noc da się też uruchomić ręcznie (`workflow_dispatch`) i zachowuje się wtedy
+jak harmonogram.
+
+**Co tracę:**
+
+- **Częściowy dryf.** Auto-merge, push protection, wymóg SHA i retencja nie
+  są porównywane — ich odczyt wymaga uprawnień administratora, a token
+  zadania ich nie ma. Zostają `[ŻYCZENIE]` w §6.7 i §7.2 kontraktu.
+- **Issue zamiast blokady.** Czerwony `main` po dobie daje issue, a nie
+  wstrzymany auto-merge Dependabota — to wymagałoby prawa zapisu do PR-ów
+  w nocy.
+- **Warunek `vulns-issue` jako wykluczenia.** Reguła uprawnień
+  (decyzja 49) nie rozumie alternatywy zdarzeń, więc warunek mówi „nie PR
+  i nie push” zamiast „noc albo ręcznie”.
+
+**Kiedy zmieniam zdanie:** gdy repozytorium przejdzie do organizacji
+z aplikacją GitHuba o uprawnieniu do odczytu administracji — wtedy dryf
+obejmie resztę ustawień i retencję.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

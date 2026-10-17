@@ -116,3 +116,20 @@ func LoadExceptions(path string, today time.Time) ([]Exception, error) {
 	}
 	return file.Exceptions, nil
 }
+
+// Expiring — wyjątki, które przestaną działać w ciągu within od dziś (a dziś
+// jeszcze działają), jako „ID (pakiet) wygasa RRRR-MM-DD”. Noc ostrzega
+// z wyprzedzeniem, zamiast dowiedzieć się z czerwonego biegu w dniu
+// wygaśnięcia (§8.7 kontraktu).
+func Expiring(exceptions []Exception, today time.Time, within time.Duration) []string {
+	var out []string
+	limit := today.Add(within)
+	for _, e := range exceptions {
+		expires, err := time.Parse(time.DateOnly, e.Expires)
+		if err != nil || !today.Before(expires) || expires.After(limit) {
+			continue
+		}
+		out = append(out, fmt.Sprintf("%s (%s) wygasa %s", e.ID, e.Package, e.Expires))
+	}
+	return out
+}

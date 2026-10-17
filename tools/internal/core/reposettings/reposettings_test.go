@@ -95,15 +95,40 @@ func TestRequiredChecks(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	ruleset := `{"name":"main","rules":[{"type":"deletion"},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"fast-feedback","integration_id":15368},{"context":"integration"}]}}]}`
+	ruleset := `{"name":"main","target":"branch","rules":[{"type":"deletion"},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"fast-feedback","integration_id":15368},{"context":"integration"}]}}]}`
 	if err := os.WriteFile(filepath.Join(dir, "main.json"), []byte(ruleset), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "tags.json"), []byte(`{"name":"tagi","rules":[{"type":"update"}]}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "tags.json"), []byte(`{"name":"tagi","target":"tag","rules":[{"type":"update"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	checks, err = RequiredChecks(root)
 	if err != nil || !slices.Equal(checks, []string{"fast-feedback", "integration"}) {
 		t.Errorf("statusy: %v, %v", checks, err)
+	}
+}
+
+func TestRulesDrift(t *testing.T) {
+	want := []Rule{{Type: "deletion"}, {Type: "required_status_checks", Checks: []string{"fast-feedback", "integration"}}}
+	for _, tt := range []struct {
+		name string
+		got  []Rule
+		want []string
+	}{
+		{"zgodne, inna kolejność", []Rule{{Type: "required_status_checks", Checks: []string{"integration", "fast-feedback"}}, {Type: "deletion"}}, nil},
+		{"plik niezastosowany", []Rule{{Type: "deletion"}, {Type: "required_status_checks", Checks: []string{"test", "build"}}}, []string{"wymagane statusy: w pliku [fast-feedback integration], w GitHubie [build test]"}},
+		{"reguła usunięta w UI", []Rule{{Type: "required_status_checks", Checks: []string{"fast-feedback", "integration"}}}, []string{"reguła deletion z pliku nie działa w GitHubie"}},
+		{"reguła dodana w UI", append([]Rule{{Type: "update"}}, want...), []string{"reguła update działa w GitHubie, a nie ma jej w .github/rulesets"}},
+	} {
+		got := RulesDrift(want, tt.got)
+		if len(got) != len(tt.want) {
+			t.Errorf("%s: %q", tt.name, got)
+			continue
+		}
+		for i := range got {
+			if !strings.HasPrefix(got[i], tt.want[i]) {
+				t.Errorf("%s: %q, oczekiwano %q", tt.name, got[i], tt.want[i])
+			}
+		}
 	}
 }

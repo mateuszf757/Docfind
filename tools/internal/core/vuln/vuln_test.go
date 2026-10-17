@@ -139,3 +139,20 @@ func TestIssueBody(t *testing.T) {
 		}
 	}
 }
+
+func TestExpiring(t *testing.T) {
+	today := time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)
+	exceptions := []Exception{
+		{ID: "CVE-1", Package: "zlib", Expires: "2026-10-28"},
+		{ID: "CVE-2", Package: "pip", Expires: "2026-10-29"},
+		{ID: "CVE-3", Package: "musl", Expires: "2026-10-21"},
+		{ID: "CVE-4", Package: "x", Expires: "2026-10-20"},
+		{ID: "CVE-5", Package: "y", Expires: "jutro"},
+	}
+	got := Expiring(exceptions, today, 7*24*time.Hour)
+	// Za tydzień — tak; za osiem dni — jeszcze nie; dziś już nie działa,
+	// więc to nie ostrzeżenie, tylko blokada.
+	if want := "CVE-1 (zlib) wygasa 2026-10-28"; len(got) != 1 || got[0] != want {
+		t.Errorf("Expiring = %q; oczekiwano [%q]", got, want)
+	}
+}

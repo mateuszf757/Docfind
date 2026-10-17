@@ -21,6 +21,16 @@ type github struct {
 	policies map[reposettings.Policy]int64
 	// noEnvironment — środowiska jeszcze nie ma (odczyt polityk zawodzi).
 	noEnvironment bool
+	// rules, approval — stan w GitHubie dla Check.
+	rules    []reposettings.Rule
+	approval bool
+}
+
+func (g *github) BranchRules(context.Context, string, string) ([]reposettings.Rule, error) {
+	return g.rules, nil
+}
+func (g *github) RequiresApproval(context.Context, string, string) (bool, error) {
+	return g.approval, nil
 }
 
 func (g *github) change(format string, args ...any) error {
@@ -74,8 +84,8 @@ func repo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	files := map[string]string{
-		".github/rulesets/main.json": `{"name":"main"}`,
-		".github/rulesets/tags.json": `{"name":"tagi wydań"}`,
+		".github/rulesets/main.json": `{"name":"main","target":"branch","rules":[{"type":"deletion"},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"fast-feedback"},{"context":"integration"}]}}]}`,
+		".github/rulesets/tags.json": `{"name":"tagi wydań","target":"tag","rules":[{"type":"update"}]}`,
 		".github/environments/production.json": `{"name":"production","wait_timer":0,"prevent_self_review":false,"reviewers":["autor"],` +
 			`"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true},"policies":[{"name":"v*","type":"tag"}]}`,
 	}
@@ -123,5 +133,39 @@ func TestApply(t *testing.T) {
 	}
 	if len(g.changes) != 0 {
 		t.Errorf("tryb próbny zmienił: %v", g.changes)
+	}
+}
+
+func TestCheck(t *testing.T) {
+	var out bytes.Buffer
+	oldOut, oldErr := cli.Out, cli.Err
+	cli.Out, cli.Err = &out, &out
+	defer func() { cli.Out, cli.Err = oldOut, oldErr }()
+	inSync := func() *github {
+		return &github{
+			rules:    []reposettings.Rule{{Type: "deletion"}, {Type: "required_status_checks", Checks: []string{"integration", "fast-feedback"}}},
+			approval: true,
+			policies: map[reposettings.Policy]int64{{Name: "v*", Type: "tag"}: 1},
+		}
+	}
+	g := inSync()
+	if err := (Settings{Root: repo(t), GitHub: g}).Check(context.Background()); err != nil {
+		t.Fatalf("zgodne ustawienia: %v", err)
+	}
+	for name, change := range map[string]func(*github){
+		"plik niezastosowany":          func(g *github) { g.rules[1].Checks = []string{"test", "build"} },
+		"zgoda zdjęta w UI":            func(g *github) { g.approval = false },
+		"dodana gałąź w UI":            func(g *github) { g.policies[reposettings.Policy{Name: "main", Type: "branch"}] = 2 },
+		"reguła usunięcia zdjęta w UI": func(g *github) { g.rules = g.rules[1:] },
+	} {
+		g := inSync()
+		change(g)
+		err := (Settings{Root: repo(t), GitHub: g}).Check(context.Background())
+		if cli.ExitCode(err) != cli.ExitUnmet {
+			t.Errorf("%s: %v", name, err)
+		}
+		if len(g.changes) != 0 {
+			t.Errorf("%s: sprawdzenie zmieniło %v", name, g.changes)
+		}
 	}
 }
