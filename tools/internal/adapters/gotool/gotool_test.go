@@ -112,8 +112,8 @@ func TestExitCodes(t *testing.T) {
 
 func TestTestRaceAndBuild(t *testing.T) {
 	f := &proc.Fake{Responses: map[string]proc.FakeResponse{
-		"go test -race ./...": {},
-		"go env CC":           {Stdout: "gcc -m64\n"},
+		"go test -race -coverpkg=./... -coverprofile=/tmp/c.out ./...": {},
+		"go env CC": {Stdout: "gcc -m64\n"},
 		"go build -mod=readonly -trimpath -o /out/drain-probe ./cmd/drain-probe": {},
 		"go test -tags cluster -count=1 -run Rejected$ ./...":                    {Code: 1},
 	}}
@@ -124,7 +124,7 @@ func TestTestRaceAndBuild(t *testing.T) {
 		return "/usr/bin/gcc", nil
 	}}
 	ctx := context.Background()
-	if err := g.Test(ctx, true); err != nil || !strings.Contains(strings.Join(f.Calls[0].Env, " "), "CGO_ENABLED=1") {
+	if err := g.Test(ctx, true, "/tmp/c.out"); err != nil || !strings.Contains(strings.Join(f.Calls[0].Env, " "), "CGO_ENABLED=1") {
 		t.Errorf("-race bez CGO_ENABLED=1: %v, %v", f.Calls[0].Env, err)
 	}
 	if cc, ok := g.CCompiler(ctx); !ok || cc != "gcc -m64" {

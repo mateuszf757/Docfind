@@ -87,6 +87,15 @@ const (
 	// wygaśnięciem wyjątku podatności (§8.7): tydzień na poprawkę albo
 	// przedłużenie z uzasadnieniem.
 	ExceptionWarning = 7 * 24 * time.Hour
+	// CoverageStages, CoverageCore, CoverageAdapters, CoverageKit — minimum
+	// pokrycia instrukcji per pakiet warstwy, liczone z -coverpkg (kod
+	// wykonany przez jakikolwiek test). Pomiar 2026-10-17: stages 70,0,
+	// core 75,0, adapters 59,3, kit 62,5; progi zaokrąglone w dół do 5 pp,
+	// cmd poza regułą (§6.1).
+	CoverageStages   = 70.0
+	CoverageCore     = 70.0
+	CoverageAdapters = 55.0
+	CoverageKit      = 60.0
 	// BudgetW1 … BudgetW5 — budżet wall-clock warstwy, p95 z BudgetRuns
 	// biegów danego zdarzenia (§3.1, §0.5).
 	BudgetW1 = 6 * time.Minute
@@ -126,6 +135,7 @@ func Thresholds() []Threshold {
 		{"§5.5", "faza rotacji sekretu na podzie", fmt.Sprintf("≤ %v", RotationPhaseBudget), "cmd/dft (rotation)"},
 		{"§5.7", "przestój w rolling update przez bramę (Z)", fmt.Sprintf("≤ %v, ≥ %d żądań, 0 nieudanych", RolloutMaxGap, RolloutMinRequests), "stages/ingress (rollout)"},
 		{"§5.6", "samonaprawa jednej zmiany", fmt.Sprintf("≤ %v", SelfHealBudget), "cmd/dft (selfheal)"},
+		{"§6.1", "pokrycie pakietu: stages / core / adapters / kit", fmt.Sprintf("≥ %.0f%% / %.0f%% / %.0f%% / %.0f%% instrukcji (z -coverpkg)", CoverageStages, CoverageCore, CoverageAdapters, CoverageKit), "stages/gocode"},
 		{"§6.2", "punkt odniesienia skanu obrazu na PR-ze", fmt.Sprintf("obraz commita bazowego albo najbliższego z %d przodków", VulnsBaselineAncestors), "stages/vulns"},
 		{"§3.1", "budżet warstw W1 / W2 / W3 / W4 / W5 (p95)", fmt.Sprintf("%v / %v / %v / %v / %v", BudgetW1, BudgetW2, BudgetW3, BudgetW4, BudgetW5), "stages/budget"},
 		{"§0.5", "przekroczenia budżetu w ostatnich biegach", fmt.Sprintf("z %d: ostrzeżenie od %d, czerwona noc od %d", BudgetRuns, BudgetWarn, BudgetFail), "stages/budget"},

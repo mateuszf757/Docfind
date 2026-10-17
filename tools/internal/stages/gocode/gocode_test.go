@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/artifact"
+	"github.com/mateuszf757/Docfind/tools/internal/core/coverage"
 	"github.com/mateuszf757/Docfind/tools/internal/core/vuln"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 )
@@ -98,12 +99,17 @@ type toolchain struct {
 	baselineDB string
 	// builds — zawartość binarki dft po GOCACHE (od zera) i bez.
 	cached, fresh string
+	// profile — profil pokrycia zapisywany przez Test.
+	profile string
 }
 
 func (f *toolchain) Vet(context.Context) error         { return nil }
 func (f *toolchain) Staticcheck(context.Context) error { return nil }
-func (f *toolchain) Test(_ context.Context, race bool) error {
+func (f *toolchain) Test(_ context.Context, race bool, coverprofile string) error {
 	f.tested = append(f.tested, race)
+	if coverprofile != "" {
+		return os.WriteFile(coverprofile, []byte(f.profile), 0o644)
+	}
 	return nil
 }
 func (f *toolchain) CCompiler(context.Context) (string, bool) { return "gcc", f.cc }
@@ -271,3 +277,35 @@ func TestAll(t *testing.T) {
 type brokenToolchain struct{ toolchain }
 
 func (*brokenToolchain) Vet(context.Context) error { return errors.New("brak go") }
+
+// TestCoverage: pokrycie z profilu trafia do raportu, a pakiet poniżej
+// minimum swojej warstwy to NIESPEŁNIONE (decyzja 62).
+func TestCoverage(t *testing.T) {
+	silence(t)
+	dir := t.TempDir()
+	const m = "example.com/narzedzia"
+	write(t, dir, "go.mod", "module "+m+"\n\ngo 1.27\n")
+	profile := "mode: atomic\n" +
+		m + "/internal/stages/a/a.go:1.1,2.2 10 1\n" +
+		m + "/internal/kit/b/b.go:1.1,2.2 10 0\n" +
+		m + "/cmd/x/main.go:1.1,2.2 10 0\n"
+	var got map[string]float64
+	c := Checker{ModuleDir: dir, Go: &toolchain{cc: true, profile: profile}, Coverage: func(packages map[string]coverage.Stat, total coverage.Stat) error {
+		got = map[string]float64{"total": total.Percent()}
+		for pkg, s := range packages {
+			got[pkg] = s.Percent()
+		}
+		return nil
+	}}
+	err := c.Test(context.Background())
+	if cli.ExitCode(err) != cli.ExitUnmet || !strings.Contains(err.Error(), "pokrycie pakietów poniżej minimum") {
+		t.Fatalf("kit z 0%%: %v", err)
+	}
+	if got["internal/stages/a"] != 100 || got["cmd/x"] != 0 || got["total"] < 33 || got["total"] > 34 {
+		t.Errorf("raport pokrycia: %v", got)
+	}
+	c.Go = &toolchain{cc: true, profile: "mode: atomic\n" + m + "/internal/kit/b/b.go:1.1,2.2 10 1\n"}
+	if err := c.Test(context.Background()); err != nil {
+		t.Errorf("pokrycie powyżej minimum: %v", err)
+	}
+}

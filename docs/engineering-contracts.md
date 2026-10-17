@@ -332,13 +332,14 @@ Decyzja: 21, 23.
 
 ## 6. Jakość i bezpieczeństwo
 
-**6.1 Pokrycie.** Go: per pakiet warstwy stages ≥ 70%, core ≥ 70%, adapters ≥ 55%,
-kit ≥ 60% (minimum z pomiaru 2026-10-15 zaokrąglone w dół do 5 pp); cały moduł nie spada
-o więcej niż 0,5 pp względem commita bazowego; cmd — tylko zapadka. Python: próg = pierwszy
-pomiar − 5 pp.
-Egzekwuje: [ŻYCZENIE: zapadka pokrycia w `dft check go`]. Dowód: [ŻYCZENIE:
-`coverage-go.json`]. Warstwa: W1. Wariant negatywny: [ŻYCZENIE: PR usuwający test etapu →
-czerwony]. Decyzja: 39.
+**6.1 Pokrycie.** Go: każdy pakiet warstw kit, core, adapters i stages ma pokrycie instrukcji
+co najmniej minimum swojej warstwy (§10), liczone z `-coverpkg=./...` — kod wykonany przez
+jakikolwiek test; cmd — raportowany, bez minimum. Cały moduł nie spada o więcej niż 0,5 pp
+względem commita bazowego [ŻYCZENIE]. Python: próg = pierwszy pomiar − 5 pp [ŻYCZENIE].
+Egzekwuje: `dft check go` i `dft test` (`stages/gocode`, profil z `go test -race`)
+[ŻYCZENIE: zapadka modułu względem commita bazowego; pokrycie Pythona]. Dowód: `coverage-go.json`,
+podsumowanie biegu. Warstwa: W1. Wariant negatywny: pakiet warstwy poniżej minimum → kod 1
+(testy `core/coverage`, `stages/gocode`). Decyzja: 39, 62.
 
 **6.2 Podatności.** Blokuje podatność naprawialna o wadze HIGH, CRITICAL albo nieznanej, bez
 ważnego wyjątku (§10): na PR-ze — tylko nowa względem obrazu i kodu `tools/` z commita
@@ -532,6 +533,7 @@ docelowe bez strażnika (budżety warstw, Z, pokrycie) stoją w klauzulach, w zn
 | §5.5 | faza rotacji sekretu na podzie | ≤ 4m0s | cmd/dft (rotation) |
 | §5.7 | przestój w rolling update przez bramę (Z) | ≤ 1s, ≥ 100 żądań, 0 nieudanych | stages/ingress (rollout) |
 | §5.6 | samonaprawa jednej zmiany | ≤ 1m0s | cmd/dft (selfheal) |
+| §6.1 | pokrycie pakietu: stages / core / adapters / kit | ≥ 70% / 70% / 55% / 60% instrukcji (z -coverpkg) | stages/gocode |
 | §6.2 | punkt odniesienia skanu obrazu na PR-ze | obraz commita bazowego albo najbliższego z 10 przodków | stages/vulns |
 | §3.1 | budżet warstw W1 / W2 / W3 / W4 / W5 (p95) | 6m0s / 20m0s / 30m0s / 40m0s / 10m0s | stages/budget |
 | §0.5 | przekroczenia budżetu w ostatnich biegach | z 20: ostrzeżenie od 3, czerwona noc od 5 | stages/budget |

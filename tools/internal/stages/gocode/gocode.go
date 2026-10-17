@@ -25,6 +25,7 @@ import (
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/artifact"
 	"github.com/mateuszf757/Docfind/tools/internal/core/contract"
+	"github.com/mateuszf757/Docfind/tools/internal/core/coverage"
 	"github.com/mateuszf757/Docfind/tools/internal/core/layers"
 	"github.com/mateuszf757/Docfind/tools/internal/core/vuln"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
@@ -34,7 +35,9 @@ import (
 type Toolchain interface {
 	Vet(ctx context.Context) error
 	Staticcheck(ctx context.Context) error
-	Test(ctx context.Context, race bool) error
+	// Test — testy modułu; coverprofile niepusty — z profilem pokrycia
+	// wszystkich pakietów (-coverpkg=./...).
+	Test(ctx context.Context, race bool, coverprofile string) error
 	CCompiler(ctx context.Context) (string, bool)
 	// Vulncheck skanuje moduł w dir (pusty — ModuleDir) i podaje migawkę
 	// bazy, z której jest wynik.
@@ -70,6 +73,16 @@ type Checker struct {
 	// Publish dostaje raport govulncheck, także przy wyniku negatywnym
 	// (plik raportu, podsumowanie biegu); nil — bez raportu.
 	Publish func(vuln.Report) error
+	// Coverage dostaje pokrycie pakietów i modułu (decyzja 62); nil —
+	// testy bez profilu pokrycia.
+	Coverage func(packages map[string]coverage.Stat, total coverage.Stat) error
+}
+
+// CoverageMinimum — minimum pokrycia pakietu według warstwy (rejestr
+// progów); cmd poza regułą.
+var CoverageMinimum = map[string]float64{
+	"stages": contract.CoverageStages, "core": contract.CoverageCore,
+	"adapters": contract.CoverageAdapters, "kit": contract.CoverageKit,
 }
 
 // All uruchamia wszystkie bramki poza powtarzalnością i zgłasza
@@ -230,13 +243,53 @@ func (c Checker) Test(ctx context.Context) error {
 	cc, available := c.Go.CCompiler(ctx)
 	switch {
 	case available:
-		return c.Go.Test(ctx, true)
 	case c.RequireRace:
 		return fmt.Errorf("brak kompilatora C (CC=%s) — w CI testy muszą biec z -race", cc)
 	default:
 		cli.Warn("brak kompilatora C (CC=%s) — testy bez -race; w CI biegną z -race", cc)
-		return c.Go.Test(ctx, false)
 	}
+	if c.Coverage == nil {
+		return c.Go.Test(ctx, available, "")
+	}
+	tmp, err := os.MkdirTemp("", "dft-cover-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	profile := filepath.Join(tmp, "cover.out")
+	if err := c.Go.Test(ctx, available, profile); err != nil {
+		return err
+	}
+	return c.coverage(profile)
+}
+
+// coverage — pokrycie z profilu: raport i minimum warstwy dla każdego
+// pakietu (§6.1 kontraktu, decyzja 62).
+func (c Checker) coverage(profile string) error {
+	raw, err := os.ReadFile(profile)
+	if err != nil {
+		return fmt.Errorf("profil pokrycia: %w", err)
+	}
+	module, err := modulePath(filepath.Join(c.ModuleDir, "go.mod"))
+	if err != nil {
+		return err
+	}
+	packages, total, err := coverage.Parse(raw, module)
+	if err != nil {
+		return err
+	}
+	if err := c.Coverage(packages, total); err != nil {
+		return err
+	}
+	cli.Step("pokrycie modułu %.1f%% (%d pakietów)", total.Percent(), len(packages))
+	if found := coverage.Below(packages, CoverageMinimum); len(found) > 0 {
+		v := &cli.Verdict{}
+		for _, f := range found {
+			v.Fail("%s", f)
+		}
+		return v.Err("pokrycie pakietów poniżej minimum warstwy (decyzja 62)")
+	}
+	return nil
 }
 
 // Vulncheck ocenia podatności w kodzie osiągalnym (govulncheck) tą samą
