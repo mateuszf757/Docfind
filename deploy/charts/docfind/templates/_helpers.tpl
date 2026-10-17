@@ -42,6 +42,16 @@ Zabezpieczenie przed zbyt krótkim okresem łaski: preStop plus dokańczanie
 {{- end -}}
 
 {{/*
+Nazwa ConfigMapy z sumą treści konfiguracji (decyzja 63). Nowa konfiguracja
+to nowa ConfigMapa: stary pod restartowany w trakcie rolloutu albo po helm
+rollback czyta swoją, a nie klucz, którego jego obraz nie zna (extra=forbid
+odmówiłby startu). Zmiana nazwy w specyfikacji poda sama wywołuje rollout.
+*/}}
+{{- define "docfind.api.configName" -}}
+{{- printf "%s-config-%s" (include "docfind.api.fullname" .) (toYaml .Values.api.config | sha256sum | trunc 10) -}}
+{{- end -}}
+
+{{/*
 X — najdłuższe zakończenie poda: preStop, dokańczanie żądań i 1 s zapasu.
 Bramka drainu porównuje z nim zmierzone zakończenie każdego eksmitowanego
 poda (decyzja 58); okres łaski musi je pokryć (validateGracePeriod).

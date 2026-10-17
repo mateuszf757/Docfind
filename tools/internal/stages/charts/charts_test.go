@@ -84,7 +84,9 @@ type helm struct {
 	projectWithout string
 	// writableRoot — chart aplikacji z zapisywalnym systemem plików.
 	writableRoot bool
-	renders      []string
+	// mutableConfig — ConfigMapa aplikacji bez immutable.
+	mutableConfig bool
+	renders       []string
 }
 
 func (h *helm) Lint(context.Context, string, ...string) error { return nil }
@@ -123,7 +125,7 @@ func (h *helm) Template(_ context.Context, r cluster.Release, includeCRDs bool, 
 		if h.badConfig {
 			config = "service: {port: 0}"
 		}
-		out = app(`"ghcr.io/x/docfind-api:`+tag+digest+`"`, version, !h.writableRoot) + "---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: c}\ndata:\n  app.yml: \"" + config + "\"\n"
+		out = app(`"ghcr.io/x/docfind-api:`+tag+digest+`"`, version, !h.writableRoot) + "---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: c}\nimmutable: " + fmt.Sprint(!h.mutableConfig) + "\ndata:\n  app.yml: \"" + config + "\"\n"
 	case strings.HasSuffix(r.Chart, "platform"):
 		out = "apiVersion: v1\nkind: Namespace\nmetadata: {name: n}\n"
 	case strings.HasSuffix(r.Chart, "delivery"):
@@ -216,6 +218,7 @@ func TestRunRejects(t *testing.T) {
 		{"limit CPU w charcie platformy", &helm{cpuLimit: "100m"}, appConfig{}, "render coredns łamie polityki"},
 		{"zła konfiguracja w renderze", &helm{}, rejectingConfig{}, "konfiguracja w renderze docfind-ci jest nieprawidłowa"},
 		{"zapisywalny system plików aplikacji", &helm{writableRoot: true}, appConfig{}, "render docfind-ci łamie polityki"},
+		{"zmienna ConfigMapa aplikacji", &helm{mutableConfig: true}, appConfig{}, "render docfind-ci łamie polityki"},
 		// Nowy rodzaj zasobu w charcie aplikacji bez dopisania do projektu:
 		// Argo odmówiłby synchronizacji dopiero na stagingu.
 		{"projekt Argo CD bez rodzaju z charta", &helm{projectWithout: "ConfigMap"}, appConfig{}, "projekt Argo CD środowiska staging nie dopuszcza"},

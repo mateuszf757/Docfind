@@ -2553,6 +2553,39 @@ i wiersz w podsumowaniu biegu podają też pokrycie modułu (71,9%).
 trzyma się progu tylko dzięki testom innych pakietów — wtedy minimum
 z testów własnego pakietu.
 
+## 63. ConfigMapa z sumą treści w nazwie i niezmienna
+
+> Rozwiązuje H34 kontraktem zamiast instrukcją w opisie PR-a
+> (`docs/pr/19-rotacja.md`, „Uwaga przy stagingu”).
+
+**Wybieram nową ConfigMapę dla każdej konfiguracji zamiast podmiany treści
+pod stałą nazwą.** ConfigMapa aplikacji nazywała się zawsze
+`docfind-api-config`, a rollout wywoływała suma w adnotacji poda. Nowa
+treść była od razu widoczna dla starych podów. Stary pod restartowany
+w trakcie rolloutu (OOM, sonda, drain) czytał klucz, którego jego obraz
+nie zna, i `extra="forbid"` odmawiał startu. Po `helm rollback` było
+odwrotnie. Teraz nazwa ma sumę treści `.Values.api.config`
+(`…-config-<10 znaków>`), a ConfigMapa ma `immutable: true`. Nowa
+konfiguracja to nowa ConfigMapa i nowa nazwa w wolumenie poda — rollout
+wywołuje sama specyfikacja poda, więc adnotacja z sumą zniknęła. Zmieniała
+się z każdą wersją charta przez etykiety, więc wywoływała rollouty bez
+zmiany konfiguracji. Starą ConfigMapę usuwa Helm albo Argo CD (prune) po
+wdrożeniu. `core/policy` odrzuca ConfigMapę charta aplikacji bez
+`immutable: true`.
+
+**Co tracę:**
+
+- **Nowy pod starej wersji po usunięciu jej ConfigMapy nie wstanie.**
+  Dotyczy podów tworzonych przez starą ReplicaSet po wdrożeniu. Rolling
+  update tylko ją zmniejsza, a rollback odtwarza starą ConfigMapę z wydania
+  — prawdziwy test tego zostaje `[ŻYCZENIE]` w §5.7 (upgrade N-1 → N
+  z restartem starego poda).
+- **Rollout przy wdrożeniu tej zmiany.** Nazwa ConfigMapy w podzie się
+  zmienia.
+
+**Kiedy zmieniam zdanie:** gdy aplikacja zacznie przyjmować nieznane klucze
+(wersjonowany format konfiguracji, Etap 10) — wtedy stała nazwa wystarczy.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

@@ -1,9 +1,13 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ include "docfind.api.fullname" . }}-config
+  # Nazwa z sumą treści i immutable (decyzja 63): treść pod tą nazwą nie
+  # zmienia się nigdy — nowa konfiguracja to nowa ConfigMapa, a starą
+  # usuwa Helm albo Argo CD (prune) po wdrożeniu.
+  name: {{ include "docfind.api.configName" . }}
   labels:
     {{- include "docfind.api.labels" . | nindent 4 }}
+immutable: true
 data:
   app.yml: |
     {{- toYaml .Values.api.config | nindent 4 }}

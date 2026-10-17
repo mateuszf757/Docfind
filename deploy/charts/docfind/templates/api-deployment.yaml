@@ -23,9 +23,8 @@ spec:
       labels:
         {{- include "docfind.api.labels" . | nindent 8 }}
       annotations:
-        # Zmiana konfiguracji nie zmienia specyfikacji poda, więc bez tej
-        # sumy pody działałyby dalej na starym app.yml aż do restartu.
-        checksum/config: {{ include (print $.Template.BasePath "/api-configmap.yaml") . | sha256sum }}
+        # Zmiana konfiguracji zmienia nazwę ConfigMapy w wolumenie niżej, więc
+        # sama wywołuje rollout (decyzja 63) — bez osobnej sumy w adnotacji.
         # X: preStop + dokańczanie żądań + 1 s. Bramka drainu mierzy
         # zakończenie eksmitowanego poda i porównuje je z tą liczbą.
         docfind.io/termination-budget-seconds: {{ include "docfind.api.terminationBudget" . | quote }}
@@ -112,7 +111,7 @@ spec:
       volumes:
         - name: config
           configMap:
-            name: {{ include "docfind.api.fullname" . }}-config
+            name: {{ include "docfind.api.configName" . }}
         # System plików kontenera jest tylko do odczytu; /tmp to jedyne
         # miejsce zapisu, ograniczone rozmiarem.
         - name: tmp
