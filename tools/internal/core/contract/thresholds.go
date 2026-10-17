@@ -109,7 +109,7 @@ func Thresholds() []Threshold {
 		{"§5.1", "bramka na wariancie negatywnym obrazu", fmt.Sprintf("≤ %v", NegativeVariantBudget), "stages/lifecycle (testy z tagiem docker)"},
 		{"§5.2", "żądania na jeden drain", fmt.Sprintf("≥ %d, 0 odpowiedzi innych niż 200", DrainMinRequests), "cmd/dft (drain)"},
 		{"§5.2", "`kubectl drain` jednego węzła", fmt.Sprintf("≤ %v", DrainTimeout), "cmd/dft (drain)"},
-		{"§5.2", "okres łaski poda ≥ X", "X = preStopSleepSeconds + shutdown_grace_seconds + 1 s (dziś 5 + 3 + 1 = 9 s; okres łaski 15 s)", "chart docfind, _helpers.tpl (render)"},
+		{"§5.2", "zakończenie eksmitowanego poda ≤ X ≤ okres łaski", "X = preStopSleepSeconds + shutdown_grace_seconds + 1 s (dziś 5 + 3 + 1 = 9 s; okres łaski 15 s), bez SIGKILL", "chart docfind (adnotacja X, render); stages/drain (pomiar)"},
 		{"§5.4", "żądania HTTPS w trakcie odnowienia", fmt.Sprintf("≥ %d, 0 nieudanych, 0 restartów proxy", TLSMinRequests), "cmd/dft (tls)"},
 		{"§5.4", "nowy certyfikat na proxy (Y)", fmt.Sprintf("≤ %v od odnowienia", TLSPropagation), "stages/ingress"},
 		{"§5.5", "faza rotacji sekretu na podzie", fmt.Sprintf("≤ %v", RotationPhaseBudget), "cmd/dft (rotation)"},

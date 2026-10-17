@@ -65,6 +65,9 @@ type Cluster interface {
 	// Drain — eksmisja z poszanowaniem PDB i ponawianiem przy 429, jak
 	// `kubectl drain` (decyzja 33).
 	Drain(ctx context.Context, node string, timeout time.Duration) error
+	// WatchTerminations — zakończenia kontenerów usuwanych podów, od
+	// wywołania do wywołania zwróconej funkcji (decyzja 58).
+	WatchTerminations(ctx context.Context, namespace, selector string) (func() []cluster.Termination, error)
 }
 
 // Config — parametry bramki.
@@ -128,6 +131,9 @@ type DrainResult struct {
 	ReplicasMove []string      `json:"replicas_after"`
 	DrainSeconds float64       `json:"drain_seconds"`
 	Summary      probe.Summary `json:"requests"`
+	// Terminations — zakończenia eksmitowanych podów aplikacji: czas od
+	// prośby o usunięcie do końca kontenera i kod wyjścia (§5.2, X).
+	Terminations []cluster.Termination `json:"terminations"`
 }
 
 // Run przeprowadza bramkę i zwraca raport. Stan zewnętrzny — cordon,
@@ -247,17 +253,27 @@ func (g *Gate) drainOne(ctx context.Context, target string, replicaNodes []strin
 		return result, err
 	}
 
+	// Zakończenia podów aplikacji obserwowane od przed cordonem do końca
+	// rolloutu: eksmitowany pod ma skończyć w X bez SIGKILL (§5.2).
+	stopWatch, err := g.Cluster.WatchTerminations(ctx, g.Cfg.Namespace, g.selector)
+	if err != nil {
+		return result, err
+	}
 	started := time.Now()
 	if err := g.cordon(ctx, target); err != nil {
+		stopWatch()
 		return result, err
 	}
 	cli.Step("kubectl drain %s", target)
 	if err := g.Cluster.Drain(ctx, target, g.Cfg.DrainTimeout); err != nil {
+		stopWatch()
 		return result, err
 	}
 	if err := g.waitRollout(ctx); err != nil {
+		stopWatch()
 		return result, err
 	}
+	result.Terminations = stopWatch()
 	result.DrainSeconds = time.Since(started).Seconds()
 	cli.Step("drain zakończony, repliki odtworzone w %.1f s", result.DrainSeconds)
 
@@ -306,7 +322,28 @@ func (g *Gate) drainOne(ctx context.Context, target string, replicaNodes []strin
 		fmt.Fprintf(cli.Err, "Z tego bez nawiązanego połączenia (DNS albo brak trasy): %d\n", s.NotConnected)
 		return result, cli.Unmet("drain %s: %d z %d żądań nie powiodło się", target, s.Failed, s.Total)
 	}
-	return result, nil
+	return result, terminations(target, result.Terminations)
+}
+
+// terminations — eksmitowane pody aplikacji skończyły w X, bez SIGKILL
+// (§5.2 kontraktu, decyzja 58). Drain węzła z repliką bez żadnego
+// zaobserwowanego zakończenia to pomiar, który nie zadziałał.
+func terminations(target string, terms []cluster.Termination) error {
+	if len(terms) == 0 {
+		return cli.Unmet("drain %s: nie zaobserwowano zakończenia żadnego poda aplikacji — pomiar X nie zadziałał", target)
+	}
+	var problems []string
+	for _, t := range terms {
+		if p := t.Problem(); p != "" {
+			problems = append(problems, p)
+			continue
+		}
+		cli.Step("pod %s zakończony w %v (X = %v), kod %d", t.Pod, t.Took(), t.Budget, t.ExitCode)
+	}
+	if len(problems) > 0 {
+		return cli.Unmet("drain %s: %s", target, strings.Join(problems, "; "))
+	}
+	return nil
 }
 
 // probeNode wybiera węzeł dla sondy: gotowy, przyjmujący pody, inny niż

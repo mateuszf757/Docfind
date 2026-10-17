@@ -251,13 +251,17 @@ grace, obraz, który bez konfiguracji wstaje — każdy odrzucony i każdy w bud
 (§10). Decyzja: 32.
 
 **5.2 Drain i rolling update.** Drain każdego węzła z repliką: minimum żądań na drain,
-0 odpowiedzi innych niż 200 w pętli do Service, czas `kubectl drain` — progi w §10. Okres łaski
-poda pokrywa X (§10), co sprawdza render charta.
-Egzekwuje: `cluster:drain` (`stages/drain`); relacja X — `fail` w szablonie charta
-[ŻYCZENIE: pomiar zakończenia każdego eksmitowanego poda w ≤ X bez SIGKILL, kod wyjścia różny
-od 137; pętla przez Gateway]. Dowód: `drain-<env>.json`, `drain-probe-*.jsonl`. Warstwa: W2;
-staging przy wydaniu. Wariant negatywny: okres łaski krótszy niż X → render odrzucony
-[ŻYCZENIE: opóźnienie zaślepki 5 s przy grace 3 s → drain czerwony]. Decyzja: 6, 32, 34.
+0 odpowiedzi innych niż 200 w pętli do Service, czas `kubectl drain` — progi w §10. Każdy
+eksmitowany pod kończy pracę w ≤ X (§10) bez SIGKILL; okres łaski poda pokrywa X, co sprawdza
+render charta.
+Egzekwuje: `cluster:drain` (`stages/drain`) — pętla do Service i zakończenia eksmitowanych
+podów z watcha (X z adnotacji `docfind.io/termination-budget-seconds`, liczone przez chart);
+relacja okresu łaski z X — `fail` w szablonie charta [ŻYCZENIE: pętla przez Gateway].
+Dowód: `drain-<env>.json` (`terminations`), `drain-probe-*.jsonl`. Warstwa: W2; staging przy
+wydaniu. Wariant negatywny: okres łaski krótszy niż X → render odrzucony; pod zabity SIGKILL
+albo kończący się dłużej niż X, i drain bez zaobserwowanego zakończenia → kod 1 (testy
+`stages/drain`) [ŻYCZENIE: opóźnienie zaślepki 5 s przy grace 3 s → drain czerwony na klastrze].
+Decyzja: 6, 32, 34, 58.
 
 **5.3 Gotowość.** Niegotowy pod nie dostaje żądań; `/readyz` nie zależy od zależności wspólnych
 dla wszystkich replik (od Etapu 6).
@@ -514,7 +518,7 @@ docelowe bez strażnika (budżety warstw, Z, pokrycie) stoją w klauzulach, w zn
 | §5.1 | bramka na wariancie negatywnym obrazu | ≤ 2m0s | stages/lifecycle (testy z tagiem docker) |
 | §5.2 | żądania na jeden drain | ≥ 100, 0 odpowiedzi innych niż 200 | cmd/dft (drain) |
 | §5.2 | `kubectl drain` jednego węzła | ≤ 3m0s | cmd/dft (drain) |
-| §5.2 | okres łaski poda ≥ X | X = preStopSleepSeconds + shutdown_grace_seconds + 1 s (dziś 5 + 3 + 1 = 9 s; okres łaski 15 s) | chart docfind, _helpers.tpl (render) |
+| §5.2 | zakończenie eksmitowanego poda ≤ X ≤ okres łaski | X = preStopSleepSeconds + shutdown_grace_seconds + 1 s (dziś 5 + 3 + 1 = 9 s; okres łaski 15 s), bez SIGKILL | chart docfind (adnotacja X, render); stages/drain (pomiar) |
 | §5.4 | żądania HTTPS w trakcie odnowienia | ≥ 50, 0 nieudanych, 0 restartów proxy | cmd/dft (tls) |
 | §5.4 | nowy certyfikat na proxy (Y) | ≤ 1m0s od odnowienia | stages/ingress |
 | §5.5 | faza rotacji sekretu na podzie | ≤ 4m0s | cmd/dft (rotation) |

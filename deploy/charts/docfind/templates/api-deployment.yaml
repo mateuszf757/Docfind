@@ -26,6 +26,9 @@ spec:
         # Zmiana konfiguracji nie zmienia specyfikacji poda, więc bez tej
         # sumy pody działałyby dalej na starym app.yml aż do restartu.
         checksum/config: {{ include (print $.Template.BasePath "/api-configmap.yaml") . | sha256sum }}
+        # X: preStop + dokańczanie żądań + 1 s. Bramka drainu mierzy
+        # zakończenie eksmitowanego poda i porównuje je z tą liczbą.
+        docfind.io/termination-budget-seconds: {{ include "docfind.api.terminationBudget" . | quote }}
     spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: {{ .Values.api.terminationGracePeriodSeconds }}

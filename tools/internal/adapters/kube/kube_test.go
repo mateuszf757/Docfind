@@ -459,3 +459,32 @@ func TestPullEvents(t *testing.T) {
 		t.Errorf("PullEvents = %q; oczekiwano %q", got, want)
 	}
 }
+
+// TestWatchTerminations: ostatni stan usuwanego poda z watcha — prośba
+// o usunięcie to deletionTimestamp minus okres łaski, X z adnotacji.
+func TestWatchTerminations(t *testing.T) {
+	cs := fake.NewClientset()
+	c := New(cs, nil, nil, cluster.Target{})
+	ctx := context.Background()
+	stop, err := c.WatchTerminations(ctx, "docfind", "app=api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api-1", Namespace: "docfind", Labels: map[string]string{"app": "api"},
+		Annotations: map[string]string{cluster.TerminationBudgetAnnotation: "9"}}}
+	if _, err := cs.CoreV1().Pods("docfind").Create(ctx, pod, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 10, 17, 10, 0, 0, 0, time.UTC)
+	deleted, grace := metav1.NewTime(at.Add(15*time.Second)), int64(15)
+	pod.DeletionTimestamp, pod.DeletionGracePeriodSeconds = &deleted, &grace
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "api", State: corev1.ContainerState{
+		Terminated: &corev1.ContainerStateTerminated{ExitCode: 0, Reason: "Completed", FinishedAt: metav1.NewTime(at.Add(6 * time.Second))}}}}
+	if _, err := cs.CoreV1().Pods("docfind").Update(ctx, pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	terms := stop()
+	if len(terms) != 1 || terms[0].Took() != 6*time.Second || terms[0].Budget != 9*time.Second || terms[0].Problem() != "" {
+		t.Errorf("zakończenia: %+v", terms)
+	}
+}

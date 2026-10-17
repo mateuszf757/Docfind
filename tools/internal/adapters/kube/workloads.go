@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
+	"strconv"
+	"sync"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -226,4 +230,59 @@ func (c *Cluster) PullEvents(ctx context.Context) ([]string, error) {
 		}
 	}
 	return images, nil
+}
+
+// WatchTerminations obserwuje pody przestrzeni nazw pasujące do selektora
+// i zwraca funkcję, która kończy obserwację i oddaje zakończenia kontenerów
+// usuwanych podów (decyzja 58). Watch, a nie odpytywanie: usunięty pod
+// znika z API zaraz po końcu kontenerów, a ostatni stan niesie tylko
+// zdarzenie watcha.
+func (c *Cluster) WatchTerminations(ctx context.Context, namespace, selector string) (func() []cluster.Termination, error) {
+	w, err := c.core.CoreV1().Pods(namespace).Watch(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return nil, err
+	}
+	var mu sync.Mutex
+	seen := map[string]cluster.Termination{}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for ev := range w.ResultChan() {
+			pod, ok := ev.Object.(*corev1.Pod)
+			if !ok || pod.DeletionTimestamp == nil {
+				continue
+			}
+			var grace time.Duration
+			if pod.DeletionGracePeriodSeconds != nil {
+				grace = time.Duration(*pod.DeletionGracePeriodSeconds) * time.Second
+			}
+			var budget time.Duration
+			if v, err := strconv.Atoi(pod.Annotations[cluster.TerminationBudgetAnnotation]); err == nil {
+				budget = time.Duration(v) * time.Second
+			}
+			for _, cs := range pod.Status.ContainerStatuses {
+				t := cs.State.Terminated
+				if t == nil {
+					continue
+				}
+				mu.Lock()
+				seen[pod.Name+"/"+cs.Name] = cluster.Termination{
+					Pod: pod.Name, Container: cs.Name, Requested: pod.DeletionTimestamp.Add(-grace),
+					Finished: t.FinishedAt.Time, ExitCode: t.ExitCode, Reason: t.Reason, Budget: budget,
+				}
+				mu.Unlock()
+			}
+		}
+	}()
+	return func() []cluster.Termination {
+		w.Stop()
+		<-done
+		mu.Lock()
+		defer mu.Unlock()
+		out := make([]cluster.Termination, 0, len(seen))
+		for _, key := range slices.Sorted(maps.Keys(seen)) {
+			out = append(out, seen[key])
+		}
+		return out
+	}, nil
 }

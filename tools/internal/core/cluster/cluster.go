@@ -274,3 +274,37 @@ func FullImage(ref string) string {
 		return "docker.io/" + first + "/" + rest
 	}
 }
+
+// TerminationBudgetAnnotation — adnotacja poda aplikacji z X w sekundach:
+// preStop, dokańczanie żądań i 1 s zapasu, liczone przez chart (decyzja 58).
+const TerminationBudgetAnnotation = "docfind.io/termination-budget-seconds"
+
+// Termination — zakończenie kontenera usuniętego poda: prośba o usunięcie
+// (deletionTimestamp minus okres łaski), koniec kontenera, kod wyjścia
+// i budżet X z adnotacji poda (zero — bez adnotacji).
+type Termination struct {
+	Pod       string        `json:"pod"`
+	Container string        `json:"container"`
+	Requested time.Time     `json:"requested"`
+	Finished  time.Time     `json:"finished"`
+	ExitCode  int32         `json:"exit_code"`
+	Reason    string        `json:"reason,omitempty"`
+	Budget    time.Duration `json:"budget"`
+}
+
+// Took — od prośby o usunięcie do końca kontenera.
+func (t Termination) Took() time.Duration { return t.Finished.Sub(t.Requested) }
+
+// Problem — zakończenie, które łamie §5.2 kontraktu: SIGKILL (kod 137
+// albo OOMKilled), czas ponad X, brak X na podzie. Pusty — w porządku.
+func (t Termination) Problem() string {
+	switch {
+	case t.ExitCode == 137 || t.Reason == "OOMKilled":
+		return fmt.Sprintf("pod %s (%s) zabity SIGKILL (kod %d, %s) — nie zmieścił się w okresie łaski", t.Pod, t.Container, t.ExitCode, t.Reason)
+	case t.Budget <= 0:
+		return fmt.Sprintf("pod %s bez adnotacji %s — chart nie podaje X", t.Pod, TerminationBudgetAnnotation)
+	case t.Took() > t.Budget:
+		return fmt.Sprintf("pod %s (%s) kończył się %v, a X = %v (preStop + dokańczanie + 1 s)", t.Pod, t.Container, t.Took(), t.Budget)
+	}
+	return ""
+}

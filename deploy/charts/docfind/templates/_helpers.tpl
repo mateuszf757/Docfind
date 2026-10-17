@@ -42,6 +42,15 @@ Zabezpieczenie przed zbyt krótkim okresem łaski: preStop plus dokańczanie
 {{- end -}}
 
 {{/*
+X — najdłuższe zakończenie poda: preStop, dokańczanie żądań i 1 s zapasu.
+Bramka drainu porównuje z nim zmierzone zakończenie każdego eksmitowanego
+poda (decyzja 58); okres łaski musi je pokryć (validateGracePeriod).
+*/}}
+{{- define "docfind.api.terminationBudget" -}}
+{{- add .Values.api.preStopSleepSeconds (.Values.api.config.service.shutdown_grace_seconds | int) 1 -}}
+{{- end -}}
+
+{{/*
 Proxy musi zamykać bezczynne połączenia do backendu wcześniej niż backend.
 Inaczej proxy wysyła żądanie połączeniem, które uvicorn właśnie zamyka,
 i zwraca klientowi błąd — sporadyczny, a więc najtrudniejszy do znalezienia.
