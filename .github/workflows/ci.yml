@@ -733,6 +733,18 @@ jobs:
       - name: tożsamość na podach po drainach
         run: ./bin/mise run cluster:identity
 
+      # Noc (decyzja 60): rolling update pod ruchem przez bramę — przestój
+      # ≤ Z, zero nieudanych — i warianty, które API server ma odrzucić
+      # (sonda bez securityContext). Na PR-ach koszt bez nowego sygnału:
+      # zmiana charta albo aplikacji przechodzi drain na tej samej ścieżce.
+      - name: rolling update pod ruchem (noc)
+        if: github.event_name != 'pull_request' && github.event_name != 'push'
+        run: ./bin/mise run cluster:rollout
+
+      - name: warianty negatywne na klastrze (noc)
+        if: github.event_name != 'pull_request' && github.event_name != 'push'
+        run: ./bin/mise run test:cluster
+
       # Także po porażce — klaster znika z maszyną runnera, a przyczyna jest
       # w jego stanie: zdarzenia, logi (także sprzed restartu), zasoby
       # platformy, logi kontenerów węzłów.

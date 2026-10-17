@@ -44,6 +44,27 @@ type fakeIngress struct {
 	// (replika bez nowego); 0 — żaden.
 	stale     int
 	handshake int
+	// restarted — chwila restartu Deploymentu; outage — okno błędów po nim;
+	// stall — jedno żądanie po restarcie czeka tyle, zanim odpowie.
+	restarted time.Time
+	outage    time.Duration
+	stall     time.Duration
+	stalled   bool
+}
+
+func (f *fakeIngress) RestartDeployment(context.Context, string, string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.restarted = time.Now()
+	return nil
+}
+
+func (f *fakeIngress) Rollout(context.Context, string, string) (cluster.Rollout, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	done := !f.restarted.IsZero()
+	r := cluster.Rollout{Wanted: 2, Updated: 2, Available: 2, Total: 2, Observed: done}
+	return r, nil
 }
 
 func newIngress() *fakeIngress {
@@ -102,7 +123,17 @@ func (f *fakeIngress) RenewCertificate(context.Context, string, string) error {
 
 func (f *fakeIngress) Get(_ context.Context, r loopback.Request) (loopback.Response, error) {
 	f.mu.Lock()
+	if !f.restarted.IsZero() && f.stall > 0 && !f.stalled {
+		f.stalled = true
+		stall := f.stall
+		f.mu.Unlock()
+		time.Sleep(stall)
+		f.mu.Lock()
+	}
 	defer f.mu.Unlock()
+	if !f.restarted.IsZero() && time.Since(f.restarted) < f.outage {
+		return loopback.Response{}, errors.New("connection refused")
+	}
 	if r.TLS == nil {
 		return loopback.Response{Status: 301, Header: map[string]string{"Location": f.redirect}}, nil
 	}
@@ -204,5 +235,46 @@ func TestRunRejects(t *testing.T) {
 				t.Errorf("raport bez powodu: %v", rep.Unmet)
 			}
 		})
+	}
+}
+
+func TestRollout(t *testing.T) {
+	quiet(t)
+	f := newIngress()
+	rep, err := checker(f).Rollout(context.Background(), "docfind-api", 10*time.Second)
+	if err != nil {
+		t.Fatalf("%v (%+v)", err, rep)
+	}
+	if rep.Requests < 100 || rep.Failed != 0 || rep.MaxGapSeconds > 0.5 || rep.Codes["200"] != rep.Requests {
+		t.Errorf("raport %+v", rep)
+	}
+	for name, tt := range map[string]struct {
+		prepare func(*fakeIngress, *Checker)
+		want    string
+	}{
+		"błędy w trakcie rolloutu": {func(f *fakeIngress, _ *Checker) { f.outage = 200 * time.Millisecond }, "nie powiodło się w trakcie rolloutu"},
+		// Odpowiedź wraca po 1,2 s, zanim pętla się zatrzyma: przerwa bez
+		// błędu, ale dłuższa niż Z.
+		"przerwa dłuższa niż Z bez błędu": {func(f *fakeIngress, c *Checker) {
+			f.stall, c.Cfg.Settle = 1200*time.Millisecond, 1500*time.Millisecond
+		}, "przestój 1.2"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newIngress()
+			c := checker(f)
+			tt.prepare(f, c)
+			rep, err := c.Rollout(context.Background(), "docfind-api", 10*time.Second)
+			if cli.ExitCode(err) != cli.ExitUnmet || !strings.Contains(err.Error(), tt.want) || len(rep.Unmet) != 1 {
+				t.Errorf("oczekiwano niespełnionego z %q, jest %v (%+v)", tt.want, err, rep)
+			}
+		})
+	}
+}
+
+func TestMaxGap(t *testing.T) {
+	at := time.Date(2026, 10, 17, 10, 0, 0, 0, time.UTC)
+	samples := []sample{{at, true}, {at.Add(100 * time.Millisecond), false}, {at.Add(700 * time.Millisecond), true}, {at.Add(800 * time.Millisecond), true}}
+	if gap, failed := maxGap(samples); gap != 700*time.Millisecond || failed != 1 {
+		t.Errorf("maxGap = %v, %d", gap, failed)
 	}
 }

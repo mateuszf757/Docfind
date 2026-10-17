@@ -240,6 +240,32 @@ func runCheckTLS(ctx context.Context, w *workspace, args []string) error {
 	return err
 }
 
+// runCheckRollout — rolling update aplikacji pod ruchem przez bramę: Z
+// i zero nieudanych żądań (decyzja 60). Na środowisku z Argo CD restart
+// cofnęłaby samonaprawa, więc tam odmowa.
+func runCheckRollout(ctx context.Context, w *workspace, args []string) error {
+	if err := expectArgs(args, 0, 0, "dft check rollout"); err != nil {
+		return err
+	}
+	def, err := w.environmentOf()
+	if err != nil {
+		return err
+	}
+	if def.GitOps() {
+		return cli.Unmet("środowisko %s wdraża Argo CD z samonaprawą — restart Deploymentu zostałby cofnięty; rollout pod ruchem sprawdza się na ci i dev", def.Name)
+	}
+	c, err := w.connect(def)
+	if err != nil {
+		return err
+	}
+	checker := &ingress.Checker{Cluster: c, Edge: httpclient.Client{}, Cfg: ingress.Config{
+		GatewayNamespace: def.Gateway.Namespace, Gateway: def.Gateway.Name, AppNamespace: def.App.Namespace,
+		Route: def.App.Release + "-api", HTTPPort: def.Cluster.Ports.HTTP, HTTPSPort: def.Cluster.Ports.HTTPS,
+	}}
+	report, err := checker.Rollout(ctx, def.App.Release+"-api", 3*time.Minute)
+	return w.withReport("rollout-"+def.Name, report, err)
+}
+
 // ingressGate składa i uruchamia bramkę wejścia (TLS i odnowienie
 // certyfikatu pod ruchem) na klastrze środowiska.
 func (w *workspace) ingressGate(ctx context.Context, def environment.Definition, c *kube.Cluster) (ingress.Report, error) {

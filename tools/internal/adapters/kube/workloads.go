@@ -286,3 +286,14 @@ func (c *Cluster) WatchTerminations(ctx context.Context, namespace, selector str
 		return out
 	}, nil
 }
+
+// RestartDeployment wymusza rolling update Deploymentu jak `kubectl rollout
+// restart`: znacznik czasu w adnotacji szablonu poda.
+func (c *Cluster) RestartDeployment(ctx context.Context, namespace, name string) error {
+	patch := fmt.Sprintf(`{"spec":{"template":{"metadata":{"annotations":{"kubectl.kubernetes.io/restartedAt":%q}}}}}`, time.Now().UTC().Format(time.RFC3339))
+	_, err := c.core.AppsV1().Deployments(namespace).Patch(ctx, name, types.StrategicMergePatchType, []byte(patch), metav1.PatchOptions{})
+	if err != nil {
+		return fmt.Errorf("restart Deploymentu %s/%s: %w", namespace, name, err)
+	}
+	return nil
+}

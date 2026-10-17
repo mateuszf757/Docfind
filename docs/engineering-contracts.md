@@ -149,7 +149,7 @@ wersji charta w trakcie → kod 1, bez tagu; kod bramek z niezatwierdzonymi zmia
 | W1 szybka | PR, push `main`, noc | równolegle: `test` — wersje, lint, kontrakt, gitleaks na historii, Python, charty z politykami, Go z `-race`, govulncheck; `build` albo `build-publish` — obraz, baza, testy na musl, warunki Etapu 1, powtarzalność; `negatives` — warianty negatywne; `tools` — powtarzalność narzędzi | 6 min [ŻYCZENIE: p95 2026-10-17 — 15,3 min na PR-ach, 15,6 na push; biegi sprzed zrównoleglenia] | tak: `fast-feedback` |
 | W2 integracja przed scaleniem | PR, push `main`, noc | po `test` i `build`: `cluster` — klaster `ci`, wdrożenie, tożsamość, drain każdego węzła, OpenBao, rotacja, TLS, dowody; `vulns` — skan obrazu | 20 min [ŻYCZENIE: p95 2026-10-17 — 23,1 min na PR-ach, 22,5 na push] | tak: `integration` |
 | W3 po scaleniu | push `main` | `attest`, `chart`, `attest-chart`: pochodzenie i SBOM, atestacja, chart OCI z digestem przetestowanym | 30 min (p95 2026-10-17: 27,9 min) | nie (czerwony → §3.6) |
-| W4 noc | `schedule`, `workflow_dispatch` | W1 i W2 na `main`; `vulns-issue` z wyjątkami wygasającymi w ciągu tygodnia; `settings-drift`; `main-health` (także na push) [ŻYCZENIE: negatywy na klastrze, upgrade N-1 → N] | 40 min (p95 2026-10-17: 17,1 min) | nie |
+| W4 noc | `schedule`, `workflow_dispatch` | W1 i W2 na `main`; `vulns-issue` z wyjątkami wygasającymi w ciągu tygodnia; `settings-drift`; `main-health` (także na push); w `cluster`: rolling update pod ruchem i negatywy na klastrze [ŻYCZENIE: upgrade N-1 → N] | 40 min (p95 2026-10-17: 17,1 min) | nie |
 | W5 wydanie | tag `vX.Y.Z` | `release`, `attest-release`, `vulns` z polityką wydania, `promote` po zgodzie | 10 min do oczekiwania na zgodę (jeden bieg: 1,4 min) | nie (zatwierdza autor) |
 
 Egzekwuje: `dft check workflows` — zadanie workflowu ci bez warstwy w `core/ci` to błąd;
@@ -293,13 +293,17 @@ Egzekwuje: `cluster:selfheal` (`stages/selfheal`) [ŻYCZENIE: pętla ruchu i prz
 w §5.7]. Dowód: `selfheal-staging.json`. Warstwa: staging. Wariant negatywny: Application bez
 samonaprawy — zmiana nie wraca w budżecie → NIESPEŁNIONE. Decyzja: 46.
 
-**5.7 Upgrade bez przestoju.** `helm upgrade` z N-1 do N i synchronizacja Argo CD: przestój
-≤ Z = 1 s, 0 nieudanych żądań w pętli 15–20 żądań/s przez Gateway (w drainach zmierzono
-najdłuższą przerwę 0,17–0,25 s); rollback przez przypięcie wersji ≤ 15 min od decyzji do
-`Synced`.
-Egzekwuje: [ŻYCZENIE: `stages/upgrade` w nocy i na stagingu]. Dowód: [ŻYCZENIE: raport
-`upgrade-<env>.json`]. Warstwa: W4, staging. Wariant negatywny: [ŻYCZENIE: chart N
-z opóźnieniem zaślepki dłuższym niż grace → czerwony]. Decyzja: 13, 45, 46.
+**5.7 Upgrade bez przestoju.** Rolling update aplikacji pod ruchem przez Gateway: przestój
+(najdłuższa przerwa między udanymi odpowiedziami) ≤ Z, 0 nieudanych żądań — progi w §10
+(w drainach zmierzono najdłuższą przerwę 0,17–0,25 s). Upgrade charta N-1 → N i synchronizacja
+Argo CD idą tą samą ścieżką rolling update; rollback przez przypięcie wersji ≤ 15 min od
+decyzji do `Synced`.
+Egzekwuje: `cluster:rollout` (`stages/ingress`) — restart Deploymentu pod pętlą HTTPS przez
+bramę, w nocy w zadaniu `cluster` [ŻYCZENIE: upgrade z charta N-1 z rejestru do N; synchronizacja
+Argo CD na stagingu]. Dowód: `rollout-<env>.json`. Warstwa: W4. Wariant negatywny: błędy
+w trakcie rolloutu albo przerwa 1,2 s bez błędu → kod 1 (testy `stages/ingress`)
+[ŻYCZENIE: chart N z opóźnieniem zaślepki dłuższym niż grace → czerwony na klastrze].
+Decyzja: 13, 45, 46, 60.
 
 **5.8 Tożsamość artefaktu.** Każdy pod aplikacji ma obraz z Deploymentu, commit z obrazu
 i `DOCFIND_VERSION` z Deploymentu; liczba podów = repliki.
@@ -357,9 +361,8 @@ CPU, obrazy z zewnątrz po digeście, sekrety jako wolumen bez subPath. Przestrz
 seccomp `RuntimeDefault` — w API serverze.
 Egzekwuje: `core/policy` w `dft check charts` — w charcie aplikacji także readOnlyRootFilesystem,
 allowPrivilegeEscalation false, drop ALL, runAsNonRoot, runAsUser różny od 0, seccomp
-RuntimeDefault i automountServiceAccountToken false; PSA w API serverze, `test:cluster` lokalnie
-[ŻYCZENIE: `test:cluster` w nocy]. Dowód: log `test`, log `test:cluster`. Warstwa: W1 (render)
-[ŻYCZENIE: W4 (klaster)]. Wariant negatywny: limit CPU w charcie → czerwony `test`;
+RuntimeDefault i automountServiceAccountToken false; PSA w API serverze, `test:cluster` w nocy
+w zadaniu `cluster`. Dowód: log `test`, log `test:cluster`. Warstwa: W1 (render), W4 (klaster). Wariant negatywny: limit CPU w charcie → czerwony `test`;
 readOnlyRootFilesystem false w charcie aplikacji → czerwony `test` (testy `core/policy`,
 `stages/charts`); sonda bez `securityContext` → odrzucona przez API server.
 Decyzja: 16, 20, 31, 44, 55.
@@ -425,10 +428,9 @@ Wariant negatywny: [ŻYCZENIE: retencja 30 dni → noc czerwona]. Decyzja: 37, 4
 **8.1 Wariant, który może zawieść.** Każda bramka ma wariant negatywny na prawdziwym obrazie
 albo klastrze i jest deterministyczny: zawodzi zawsze, nie „zwykle”, i w budżecie (§10), a nie
 po limicie czasu.
-Egzekwuje: `test:negatives` (budżet wariantu w testach `stages/lifecycle`), `test:cluster`,
-testy etapów [ŻYCZENIE: `dft check contract` — każda klauzula bramki wskazuje istniejący test
-wariantu; w nocy kod 1 od każdego wariantu na klastrze]. Dowód: log `test:negatives`.
-Warstwa: W1 [ŻYCZENIE: W4]. Wariant negatywny: wariant zaliczony po limicie bramki → czerwony
+Egzekwuje: `test:negatives` (budżet wariantu w testach `stages/lifecycle`), `test:cluster`
+w nocy, testy etapów [ŻYCZENIE: `dft check contract` — każda klauzula bramki wskazuje istniejący
+test wariantu]. Dowód: log `test:negatives`, log `test:cluster`. Warstwa: W1, W4. Wariant negatywny: wariant zaliczony po limicie bramki → czerwony
 test. Decyzja: 32, 36.
 
 **8.2 Dowód z systemu wykonującego.** Twierdzenie o artefakcie, ustawieniu albo konfiguracji
@@ -525,6 +527,7 @@ docelowe bez strażnika (budżety warstw, Z, pokrycie) stoją w klauzulach, w zn
 | §5.4 | żądania HTTPS w trakcie odnowienia | ≥ 50, 0 nieudanych, 0 restartów proxy | cmd/dft (tls) |
 | §5.4 | nowy certyfikat na proxy (Y) | ≤ 1m0s od odnowienia, potwierdzony 20 kolejnymi pełnymi handshake'ami | stages/ingress |
 | §5.5 | faza rotacji sekretu na podzie | ≤ 4m0s | cmd/dft (rotation) |
+| §5.7 | przestój w rolling update przez bramę (Z) | ≤ 1s, ≥ 100 żądań, 0 nieudanych | stages/ingress (rollout) |
 | §5.6 | samonaprawa jednej zmiany | ≤ 1m0s | cmd/dft (selfheal) |
 | §6.2 | punkt odniesienia skanu obrazu na PR-ze | obraz commita bazowego albo najbliższego z 10 przodków | stages/vulns |
 | §3.1 | budżet warstw W1 / W2 / W3 / W4 / W5 (p95) | 6m0s / 20m0s / 30m0s / 40m0s / 10m0s | stages/budget |

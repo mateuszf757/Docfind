@@ -31,7 +31,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/stages/vulns"
 )
 
-const checkUsage = "dft check <versions|reproducible-tools|workflows|secrets|python|charts> | contract [--base <commit>] | <runtime|base|reproducible|negatives> [usługa] | <drain|tls|identity|cluster-negatives|openbao|rotation|selfheal> | published <obraz@digest> <digest konfiguracji> | attestation <obraz@digest> | go [--vulns-baseline <commit>] [--vulns-report-only] | vulns [źródło obrazu]"
+const checkUsage = "dft check <versions|reproducible-tools|workflows|secrets|python|charts> | contract [--base <commit>] | <runtime|base|reproducible|negatives> [usługa] | <drain|tls|rollout|identity|cluster-negatives|openbao|rotation|selfheal> | published <obraz@digest> <digest konfiguracji> | attestation <obraz@digest> | go [--vulns-baseline <commit>] [--vulns-report-only] | vulns [źródło obrazu]"
 
 // checks — bramki `dft check <nazwa>`.
 var checks = map[string]func(ctx context.Context, w *workspace, args []string) error{
@@ -52,6 +52,7 @@ var checks = map[string]func(ctx context.Context, w *workspace, args []string) e
 	"vulns":              runCheckVulns,
 	"drain":              runCheckDrain,
 	"tls":                runCheckTLS,
+	"rollout":            runCheckRollout,
 	"identity":           runCheckIdentity,
 	"cluster-negatives":  runCheckClusterNegatives,
 	"openbao":            runCheckOpenBao,
