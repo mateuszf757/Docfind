@@ -47,6 +47,16 @@ func (c Client) ImageSize(ctx context.Context, ref string) (int64, error) {
 	return size, nil
 }
 
+// ImageUser zwraca użytkownika obrazu (USER z konfiguracji); pusty —
+// root, jak domyślnie w Dockerze.
+func (c Client) ImageUser(ctx context.Context, ref string) (string, error) {
+	out, err := c.output(ctx, "image", "inspect", ref, "--format", "{{.Config.User}}")
+	if err != nil {
+		return "", fmt.Errorf("użytkownik obrazu %s: %w", ref, err)
+	}
+	return out, nil
+}
+
 // ReadFiles zwraca treść plików z obrazu, sklejoną jak w `cat a b`.
 // Przez `cat` z obrazu, a nie powłokę: nic w obrazie nie interpretuje
 // skryptu, a wynik parsuje Go.

@@ -48,14 +48,23 @@ func TestDefaultLimits(t *testing.T) {
 // engine — silnik kontenerów w pamięci: obraz odmawia startu bez poprawnej
 // konfiguracji, a z poprawną odpowiada na HTTP.
 type engine struct {
-	mu      sync.Mutex
-	size    int64
+	mu   sync.Mutex
+	size int64
+	// user — USER obrazu; pusty w atrapie znaczy 10001.
+	user    string
 	refuse  container.Exit
 	running map[string]container.Spec
 	removed []string
 }
 
 func (e *engine) ImageSize(context.Context, string) (int64, error) { return e.size, nil }
+
+func (e *engine) ImageUser(context.Context, string) (string, error) {
+	if e.user == "" {
+		return "10001", nil
+	}
+	return e.user, nil
+}
 
 func (e *engine) RunToExit(_ context.Context, s container.Spec, _ time.Duration) (container.Exit, error) {
 	if !s.NoNetwork {
@@ -150,6 +159,8 @@ func TestRunRejects(t *testing.T) {
 		want   string
 	}{
 		{"obraz za duży", &engine{size: 250_000_000, refuse: container.Exit{Code: 1, Stderr: "BŁĄD KONFIGURACJI"}}, web{status: 200}, "limit 200000000 B"},
+		{"obraz jako root", &engine{size: 1, user: "root", refuse: container.Exit{Code: 1, Stderr: "BŁĄD KONFIGURACJI"}}, web{status: 200}, "obraz uruchamia się jako root"},
+		{"obraz jako 0:0", &engine{size: 1, user: "0:0", refuse: container.Exit{Code: 1, Stderr: "BŁĄD KONFIGURACJI"}}, web{status: 200}, "obraz uruchamia się jako root"},
 		{"wstaje bez konfiguracji", &engine{size: 1, refuse: container.Exit{Code: -1, TimedOut: true}}, web{status: 200}, "brak konfiguracji: kontener wstał i działał"},
 		{"odmowa bez komunikatu", &engine{size: 1, refuse: container.Exit{Code: 1, Stderr: "Traceback"}}, web{status: 200}, "odmowa startu bez czytelnego komunikatu"},
 		{"nie odpowiada na /healthz", &engine{size: 1, refuse: container.Exit{Code: 1, Stderr: "BŁĄD KONFIGURACJI"}}, web{status: 503}, "nie odpowiedział 200 na /healthz"},

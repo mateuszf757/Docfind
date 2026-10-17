@@ -2281,6 +2281,37 @@ jak harmonogram.
 z aplikacją GitHuba o uprawnieniu do odczytu administracji — wtedy dryf
 obejmie resztę ustawień i retencję.
 
+## 55. Pody utwardzone ponad PSA i obraz nie jako root — wymuszone
+
+> Uzupełnia decyzję 31 (PSA `restricted`).
+
+**Wybieram reguły w renderze zamiast polegania na tym, że chart dziś je
+ma.** Chart aplikacji ustawiał wszystko: `readOnlyRootFilesystem`,
+`allowPrivilegeEscalation: false`, `drop: [ALL]`, `runAsNonRoot`
+i `runAsUser: 10001`, seccomp `RuntimeDefault`,
+`automountServiceAccountToken: false`. Nic tego nie pilnowało. PSA
+`restricted` w API serverze sprawdza część dopiero na klastrze, a system
+plików tylko do odczytu i token konta usługi — wcale. Teraz `core/policy`
+z opcją `Hardened` odrzuca render charta aplikacji, w którym któregoś
+z tych pól brakuje (`dft check charts`, w `dft test`).
+
+`check:runtime` odrzuca obraz z pustym `USER`, `0` albo `root`: chart
+wymusza `runAsNonRoot`, ale obraz uruchomiony u klienta przez `docker run`
+tej ochrony nie ma.
+
+**Co tracę:**
+
+- **Komponent, który musi pisać do rootfs, potrzebuje wyjątku.** Taki
+  komponent w charcie aplikacji wymaga wyjątku z datą, a nie wyłączenia
+  reguły.
+- **Tylko chart aplikacji.** Charty z zewnątrz (platforma, Argo, OpenBao)
+  ocenia dalej tylko PSA. Ich utwardzenie to wartości ich chartów,
+  zmieniane razem z wersją.
+
+**Kiedy zmieniam zdanie:** gdy klaster dostanie admission z polityką
+(Kyverno albo ValidatingAdmissionPolicy) dla tych pól — wtedy ta sama
+reguła w API serverze, a render tylko ją powtarza.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

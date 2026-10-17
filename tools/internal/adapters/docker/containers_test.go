@@ -167,6 +167,7 @@ func TestEngineAndImages(t *testing.T) {
 		"docker image inspect img:1 --format {{.Id}}":               {Stdout: "sha256:" + strings.Repeat("a", 64) + "\n"},
 		"docker image inspect zly --format {{.Id}}":                 {Stdout: "sha256:abc\n"},
 		"docker image inspect img:1 --format {{.Size}}":             {Stdout: "121701125\n"},
+		"docker image inspect img:1 --format {{.Config.User}}":      {Stdout: "10001\n"},
 		"docker tag img:1 img:local-aaaaaaaaaaaa":                   {},
 		"docker run -d --rm --name app -p 127.0.0.1::8000 img:1":    {Stdout: "id\n"},
 		"docker stop --timeout 3 app":                               {},
@@ -188,6 +189,9 @@ func TestEngineAndImages(t *testing.T) {
 	}
 	if size, err := c.ImageSize(ctx, "img:1"); err != nil || size != 121701125 {
 		t.Errorf("rozmiar: %d, %v", size, err)
+	}
+	if user, err := c.ImageUser(ctx, "img:1"); err != nil || user != "10001" {
+		t.Errorf("użytkownik: %q, %v", user, err)
 	}
 	if err := c.Tag(ctx, "img:1", "img:local-aaaaaaaaaaaa"); err != nil {
 		t.Error(err)

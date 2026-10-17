@@ -91,3 +91,59 @@ func TestRotatableSecrets(t *testing.T) {
 		})
 	}
 }
+
+// TestHardened: pod naszego charta utwardzony ponad PSA restricted — każde
+// pole z osobna, bo PSA części z nich nie sprawdza wcale (decyzja 55).
+func TestHardened(t *testing.T) {
+	hardened := `
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: docfind-api}
+spec:
+  template:
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: api
+          image: x@sha256:abc
+          resources: {requests: {cpu: 10m, memory: 64Mi}, limits: {memory: 128Mi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+`
+	check := func(src string) string {
+		docs, err := manifest.Parse(strings.NewReader(src))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.Join(Check(docs, Options{Hardened: true}), "; ")
+	}
+	if got := check(hardened); got != "" {
+		t.Fatalf("utwardzony pod odrzucony: %s", got)
+	}
+	for _, tt := range []struct{ name, old, new, want string }{
+		{"token konta usługi", "automountServiceAccountToken: false", "automountServiceAccountToken: true", "automountServiceAccountToken"},
+		{"token domyślny", "      automountServiceAccountToken: false\n", "", "automountServiceAccountToken"},
+		{"zapisywalny system plików", "readOnlyRootFilesystem: true", "readOnlyRootFilesystem: false", "readOnlyRootFilesystem"},
+		{"eskalacja uprawnień", "allowPrivilegeEscalation: false", "allowPrivilegeEscalation: true", "allowPrivilegeEscalation"},
+		{"capabilities bez drop ALL", "capabilities: {drop: [ALL]}", "capabilities: {drop: [NET_RAW]}", "capabilities.drop"},
+		{"bez runAsNonRoot", "runAsNonRoot: true, ", "", "runAsNonRoot"},
+		{"root w kontenerze", "readOnlyRootFilesystem: true,", "readOnlyRootFilesystem: true, runAsUser: 0,", "runAsUser 0"},
+		{"seccomp Unconfined w kontenerze", "readOnlyRootFilesystem: true,", "readOnlyRootFilesystem: true, seccompProfile: {type: Unconfined},", "seccompProfile"},
+		{"bez seccomp", ", seccompProfile: {type: RuntimeDefault}", "", "seccompProfile"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			src := strings.Replace(hardened, tt.old, tt.new, 1)
+			if src == hardened {
+				t.Fatalf("zamiana %q nie zmieniła manifestu", tt.old)
+			}
+			if got := check(src); !strings.Contains(got, tt.want) {
+				t.Errorf("naruszenia %q, oczekiwano %q", got, tt.want)
+			}
+		})
+	}
+	// Bez opcji (charty z zewnątrz) te reguły nie obowiązują.
+	docs, _ := manifest.Parse(strings.NewReader(strings.Replace(hardened, "readOnlyRootFilesystem: true", "readOnlyRootFilesystem: false", 1)))
+	if got := Check(docs, Options{}); len(got) > 0 {
+		t.Errorf("chart z zewnątrz oceniony regułami utwardzenia: %v", got)
+	}
+}
