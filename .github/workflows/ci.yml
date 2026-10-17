@@ -362,12 +362,17 @@ jobs:
       packages: write
       # Odczyt atestacji GitHuba obrazu z main (gh attestation verify).
       attestations: read
+      # Biegi main commita wydania, ich zadania i artefakty — pakiet dowodów
+      # (decyzja 53).
+      actions: read
     outputs:
       image: ${{ steps.release.outputs.image }}
       digest: ${{ steps.release.outputs.digest }}
       version: ${{ steps.release.outputs.version }}
       predicate-type: ${{ steps.release.outputs.predicate-type }}
       predicate: ${{ steps.release.outputs.predicate }}
+      evidence-predicate-type: ${{ steps.release.outputs.evidence-predicate-type }}
+      evidence-predicate: ${{ steps.release.outputs.evidence-predicate }}
     env:
       MISE_AUTO_INSTALL: "false"
     steps:
@@ -395,11 +400,11 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: ./bin/mise run release:image -- "$TAG"
 
-  # Atestacja wydania (Sigstore): digest z main jest wydaniem X.Y.Z, a zapis
-  # akceptacji na stagingu jest w predykacie. Podpis wiąże ją z tagiem
-  # vX.Y.Z tego workflowu — promocja wymaga właśnie jej (stages/admission),
-  # więc obraz z main bez wydania na prod nie wejdzie. Osobne zadanie z tych
-  # samych powodów co attest.
+  # Atestacje wydania (Sigstore): digest z main jest wydaniem X.Y.Z, a zapis
+  # akceptacji na stagingu jest w predykacie; druga to pakiet dowodów. Podpis
+  # wiąże je z tagiem vX.Y.Z tego workflowu — promocja wymaga obu
+  # (stages/admission), więc obraz z main bez wydania na prod nie wejdzie.
+  # Osobne zadanie z tych samych powodów co attest.
   attest-release:
     needs: release
     if: ${{ !cancelled() && needs.release.result == 'success' }}
@@ -430,6 +435,19 @@ jobs:
           subject-digest: ${{ needs.release.outputs.digest }}
           predicate-type: ${{ needs.release.outputs.predicate-type }}
           predicate: ${{ needs.release.outputs.predicate }}
+          push-to-registry: true
+          create-storage-record: false
+
+      # Pakiet dowodów wydania (decyzja 53): bieg main commita z wynikami
+      # zadań i skrótami artefaktów, wersje narzędzi. Biegi, checki
+      # i artefakty Actions znikają najpóźniej po 90 dniach; podpisany pakiet
+      # obok obrazu żyje tyle co obraz. Promocja go wymaga.
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ needs.release.outputs.image }}
+          subject-digest: ${{ needs.release.outputs.digest }}
+          predicate-type: ${{ needs.release.outputs.evidence-predicate-type }}
+          predicate: ${{ needs.release.outputs.evidence-predicate }}
           push-to-registry: true
           create-storage-record: false
 

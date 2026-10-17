@@ -9,6 +9,7 @@ package admission
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/artifact"
 	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
@@ -28,6 +29,7 @@ type Registry interface {
 type Attestations interface {
 	Verify(ctx context.Context, ref, sourceRef string) (artifact.Provenance, error)
 	VerifyRelease(ctx context.Context, ref, version string) (artifact.Release, artifact.Provenance, error)
+	VerifyEvidence(ctx context.Context, ref, version string) (artifact.Evidence, artifact.Provenance, error)
 }
 
 // Policy — czego środowisko wymaga od obrazu z rejestru.
@@ -40,7 +42,8 @@ type Policy struct {
 	// Attested — pochodzenie i SBOM w atestacji BuildKitu oraz atestacja
 	// GitHuba z main (decyzje 37 i 40).
 	Attested bool
-	// ReleasesOnly — tylko wydanie Release z atestacją wydania.
+	// ReleasesOnly — tylko wydanie Release z atestacją wydania i atestacją
+	// pakietu dowodów (decyzja 53).
 	ReleasesOnly bool
 	// Release — numer wydania X.Y.Z, gdy ReleasesOnly.
 	Release string
@@ -62,6 +65,9 @@ type Admitted struct {
 	Provenance *artifact.Provenance `json:"github,omitempty"`
 	// Release — zweryfikowana atestacja wydania; nil poza wydaniami.
 	Release *artifact.Release `json:"release,omitempty"`
+	// EvidenceRun — bieg main z pakietu dowodów wydania; puste poza
+	// wydaniami.
+	EvidenceRun string `json:"evidence_run,omitempty"`
 }
 
 // Gate sprawdza obrazy.
@@ -131,6 +137,21 @@ func (g Gate) Admit(ctx context.Context, ref string, p Policy) (Admitted, error)
 		admitted.Release = &release
 		admitted.Publication.Release = p.Release
 		cli.Step("atestacja wydania %s: tag %s (%s), akceptacja na stagingu %s", p.Release, signed.SourceRef, artifact.ShortCommit(signed.SourceCommit), release.AcceptedAt)
+		// Pakiet dowodów: wydanie, którego biegu main za 90 dni już nie będzie,
+		// nadal ma podpisany zapis, że digest przeszedł W1–W3 (decyzja 53).
+		e, _, err := g.Attestations.VerifyEvidence(ctx, plain, p.Release)
+		if err != nil {
+			return Admitted{}, err
+		}
+		_, evidenceDigest, _ := artifact.ParseRef(e.Release.Image)
+		if evidenceDigest != digest || e.Release.Commit != commit {
+			return Admitted{}, cli.Unmet("pakiet dowodów wydania %s dotyczy %s (commit %s), a obraz to %s", p.Release, e.Release.Image, artifact.ShortCommit(e.Release.Commit), plain)
+		}
+		if found := e.Check(); len(found) > 0 {
+			return Admitted{}, cli.Unmet("pakiet dowodów wydania %s: %s", p.Release, strings.Join(found, "; "))
+		}
+		admitted.EvidenceRun = e.Main[0].URL
+		cli.Step("pakiet dowodów %s: bieg main %s, %d artefaktów", p.Release, admitted.EvidenceRun, len(e.Main[0].Artifacts))
 	}
 	cli.Step("rejestr: %s, atestacja %v, commit %s", published.Digest, published.Predicates, artifact.ShortCommit(commit))
 	return admitted, nil

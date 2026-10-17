@@ -375,14 +375,21 @@ z plikami]. Dowód: log `test` [ŻYCZENIE: raport nocy]. Warstwa: W1 (pliki) [Ż
 
 ## 7. Dowody i retencja
 
-**7.1 Pakiet dowodów wydania.** Przy digeście każdego wydania atestacja z wynikami: digest
-i commit; identyfikatory biegów `main` z wynikami W1–W3; skróty raportów bramek; wersje
-narzędzi (`mise.lock`, `vcs.revision` programu `dft`) i baz skanerów; akceptacja na stagingu
-z `Gates-Commit` i wersją charta; zgoda na promocję.
-Egzekwuje: atestacja wydania w `attest-release` i adnotacja tagu (§2.5) [ŻYCZENIE: predykat
-pakietu dowodów `…/attestations/evidence/v1` przy digeście wydania]. Dowód: [ŻYCZENIE:
-weryfikacja atestacji z tym predykatem]. Warstwa: W5. Wariant negatywny: [ŻYCZENIE: digest
-z `main` bez wydania → weryfikacja różna od 0]. Decyzja: 37, 40, 48.
+**7.1 Pakiet dowodów wydania.** Przy digeście każdego wydania atestacja pakietu dowodów
+z predykatem `…/attestations/evidence/v1`: zapis wydania (digest, commit, akceptacja na
+stagingu z `Gates-Commit`); biegi `ci` po push na `main` dla commita wydania z wynikami
+wszystkich zadań i skrótami SHA-256 artefaktów; wersje narzędzi (skrót `mise.lock`, commit
+kodu `dft`, Go). Ostatni bieg `main` commita wydania jest zielony, a `test`, `build-publish`,
+`attest`, `cluster` i `chart` mają w nim wynik success — inaczej wydanie nie dostaje numeru
+w rejestrze.
+Egzekwuje: `dft release-image` (`stages/release`, przed tagiem w rejestrze), atestacja
+w `attest-release`, `dft promote` (`stages/admission` wymaga pakietu z tym digestem i zielonym
+biegiem) [ŻYCZENIE: raporty bramek jako artefakty OCI w referrerach digestu; raporty
+akceptacji na stagingu w pakiecie; zgoda na promocję w osobnym zapisie]. Dowód: atestacja
+z tym predykatem obok obrazu w GHCR i w Rekorze. Warstwa: W5. Wariant negatywny: digest
+z `main` bez wydania albo wydanie bez pakietu → `dft promote` kod 1; czerwony bieg `main`
+commita wydania → `dft release-image` kod 1 (testy `stages/release`, `stages/admission`).
+Decyzja: 37, 40, 48, 53.
 
 **7.2 Retencja.** Artefakty Actions (≤ 90 dni w repozytorium publicznym; biegi, checki
 i statusy — od 2026-10-01 tak samo) to nośnik roboczy, nie dowód. Dowody wydań żyją

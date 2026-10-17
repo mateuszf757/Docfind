@@ -79,6 +79,24 @@ func (a Attestations) VerifyRelease(ctx context.Context, ref, version string) (a
 	return release, prov, nil
 }
 
+// VerifyEvidence sprawdza atestację pakietu dowodów wydania version obrazu
+// ref (decyzja 53): predykat z workflowu tego repozytorium, wystawiony na
+// tagu vX.Y.Z, z wydaniem tego numeru.
+func (a Attestations) VerifyEvidence(ctx context.Context, ref, version string) (artifact.Evidence, artifact.Provenance, error) {
+	var e artifact.Evidence
+	prov, raw, err := a.verify(ctx, ref, artifact.EvidencePredicate, "refs/tags/v"+version, func(p json.RawMessage) bool {
+		var e artifact.Evidence
+		return json.Unmarshal(p, &e) == nil && e.Release.Version == version
+	})
+	if err != nil {
+		return artifact.Evidence{}, artifact.Provenance{}, err
+	}
+	if err := json.Unmarshal(raw, &e); err != nil {
+		return artifact.Evidence{}, artifact.Provenance{}, fmt.Errorf("predykat pakietu dowodów: %w", err)
+	}
+	return e, prov, nil
+}
+
 // verify uruchamia `gh attestation verify` dla typu predykatu i zwraca
 // pierwszą atestację tego digestu, której predykat przyjmuje accept.
 func (a Attestations) verify(ctx context.Context, ref, predicateType, sourceRef string, accept func(json.RawMessage) bool) (artifact.Provenance, json.RawMessage, error) {

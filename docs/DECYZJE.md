@@ -1383,6 +1383,10 @@ a nie wyjątku w regule.
 
 ## 40. Jeden build na commit, wydanie bez builda
 
+> Uzupełnione decyzją 53: wydanie niesie też pakiet dowodów (biegi main
+> commita z wynikami zadań i skrótami artefaktów) w drugiej atestacji,
+> a promocja go wymaga.
+
 > Zmienione decyzją 48: akceptacja zapisuje cel (obraz i wersję charta
 > Argo CD) i sprawdza go po każdej bramce, a biegnie tylko kodem bramek
 > z zatwierdzonego commita ze scalonego main.
@@ -2177,6 +2181,52 @@ W1 przestaje być kolejką:
 przekroczy 6 min (budżet W1 w kontrakcie, §3.1) — wtedy cache warstw albo
 mniej osobnych zadań. Gdy repozytorium dostanie kolejkę scalania — wtedy
 `integration` biegnie w kolejce, a nie na każdym PR-ze.
+
+## 53. Pakiet dowodów wydania w atestacji obok obrazu
+
+> Uzupełnia decyzję 40 (wydanie bez builda) i 48 (akceptacja na przypiętym
+> celu). Od 2026-10-01 biegi, checki i statusy podlegają tej samej retencji
+> co artefakty Actions — w repozytorium publicznym najwyżej 90 dni.
+
+**Wybieram drugą atestację wydania z pakietem dowodów zamiast polegania na
+historii Actions.** Za 90 dni nie dałoby się wykazać, że digest wydania
+przeszedł `cluster` na `main`: bieg znika, artefakty znikają wcześniej
+(obraz 1 dzień, dowody klastra 7, raporty 30). Tag wydania mówi tylko:
+obraz, commit, akceptacja na stagingu i commit kodu bramek. Teraz `dft
+release-image` na tagu składa pakiet:
+
+- zapis wydania;
+- biegi `ci` po push na `main` dla commita wydania, z wynikami wszystkich
+  zadań i skrótami SHA-256 artefaktów, które liczy GitHub (bez pobierania
+  treści);
+- skrót `mise.lock`, commit kodu `dft` i wersję Go.
+
+`attest-release` podpisuje pakiet jako drugą atestację
+(`…/attestations/evidence/v1`) obok obrazu w GHCR i w Rekorze. Pakiet
+żyje tyle co obraz.
+
+Pakiet jest też bramką. Gdy ostatni bieg `main` commita wydania nie jest
+zielony albo `test`, `build-publish`, `attest`, `cluster` i `chart` nie
+mają w nim wyniku success, wydanie nie dostaje numeru w rejestrze. Bieg
+zielony z pominiętym klastrem nie jest dowodem (decyzja 47). `dft promote`
+wymaga atestacji pakietu z tym samym digestem i sprawdza go jeszcze raz.
+
+**Co tracę:**
+
+- **Skróty bez treści.** Raport, który zniknął po retencji, potwierdzi
+  tylko kopia, którą ktoś zachował. Raporty jako artefakty OCI
+  w referrerach digestu (H15) czekają (`[ŻYCZENIE]` w §7.1 kontraktu).
+- **Większe uprawnienia.** Zadanie `release` dostaje `actions: read`;
+  biegnie tylko na tagu.
+- **Wymóg dla starszych wydań.** Wydanie sprzed tej decyzji (v0.3.1) nie
+  ma pakietu, więc `dft promote` go nie wpuści. v0.3.1 nie było promowane
+  (F26), a następne wydanie powstanie już z tym kodem.
+- **Akceptacja bez raportów.** Raporty akceptacji na stagingu zostają
+  u autora; pakiet ma tylko ich podsumowanie z tagu.
+
+**Kiedy zmieniam zdanie:** gdy retencja i rekordy przechowywania
+organizacji pokryją okres wsparcia wydania — wtedy pakiet może wskazywać
+bieg zamiast go streszczać.
 
 ## Czego bym dziś nie powtórzył
 

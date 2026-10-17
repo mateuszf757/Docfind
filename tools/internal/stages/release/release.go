@@ -7,8 +7,9 @@
 // akceptacji na tym właśnie wdrożeniu i zapisuje wynik w tagu z adnotacją na
 // commicie obrazu. Publish biegnie w CI na wypchniętym tagu: czyta zapis
 // z tagu, sprawdza obraz jeszcze raz i dopisuje w rejestrze tag z numerem
-// wydania — ten sam digest, bez builda. Atestację wydania wystawia potem
-// workflow, a promocja na prod wymaga jej (stages/admission).
+// wydania — ten sam digest, bez builda — razem z pakietem dowodów (decyzja
+// 53). Atestacje wydania i pakietu wystawia potem workflow, a promocja na
+// prod wymaga obu (stages/admission).
 package release
 
 import (
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/artifact"
+	"github.com/mateuszf757/Docfind/tools/internal/core/ci"
 	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
 	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
@@ -276,43 +278,87 @@ type Registry interface {
 	Tag(ctx context.Context, ref, tag string) error
 }
 
+// CI — biegi i artefakty workflowu ci (adapters/github).
+type CI interface {
+	RunsForCommit(ctx context.Context, workflow, sha, event string) ([]ci.Run, error)
+	Jobs(ctx context.Context, runID int64) ([]ci.Job, error)
+	RunArtifacts(ctx context.Context, runID int64) ([]artifact.EvidenceArtifact, error)
+}
+
 // Publisher — wydanie w CI na wypchniętym tagu.
 type Publisher struct {
 	Repository string
 	Tags       Tags
 	Admission  Admission
 	Registry   Registry
+	// CI i Tools — źródła pakietu dowodów wydania (decyzja 53).
+	CI    CI
+	Tools artifact.EvidenceTools
 }
 
 // Publish czyta wydanie z tagu (zapis z Accept), sprawdza, że tag wskazuje
-// na commit obrazu, a obraz pochodzi z main z tego commita, i dopisuje
-// w rejestrze tag z numerem wydania. head — commit, na którym biegnie
-// workflow (GITHUB_SHA).
-func (p Publisher) Publish(ctx context.Context, tag, head string) (artifact.Release, error) {
+// na commit obrazu, a obraz pochodzi z main z tego commita, składa pakiet
+// dowodów i dopisuje w rejestrze tag z numerem wydania. head — commit, na
+// którym biegnie workflow (GITHUB_SHA). Pakiet przed tagiem w rejestrze:
+// wydanie, którego bieg main nie przeszedł, nie dostaje numeru nigdzie.
+func (p Publisher) Publish(ctx context.Context, tag, head string) (artifact.Release, artifact.Evidence, error) {
 	commit, message, err := p.Tags.ReleaseTag(ctx, tag)
 	if err != nil {
-		return artifact.Release{}, err
+		return artifact.Release{}, artifact.Evidence{}, err
 	}
 	r, err := artifact.ParseReleaseTag(tag, message)
 	if err != nil {
-		return artifact.Release{}, cli.Unmet("%v", err)
+		return artifact.Release{}, artifact.Evidence{}, cli.Unmet("%v", err)
 	}
 	switch {
 	case r.Commit != commit:
-		return artifact.Release{}, cli.Unmet("tag %s wskazuje na %s, a zapisane wydanie na %s", tag, commit, r.Commit)
+		return artifact.Release{}, artifact.Evidence{}, cli.Unmet("tag %s wskazuje na %s, a zapisane wydanie na %s", tag, commit, r.Commit)
 	case head != commit:
-		return artifact.Release{}, cli.Unmet("workflow biegnie na %s, a tag %s wskazuje na %s", head, tag, commit)
+		return artifact.Release{}, artifact.Evidence{}, cli.Unmet("workflow biegnie na %s, a tag %s wskazuje na %s", head, tag, commit)
 	}
 	admitted, err := p.Admission.Admit(ctx, r.Image, policy("wydanie", p.Repository))
 	if err != nil {
-		return artifact.Release{}, err
+		return artifact.Release{}, artifact.Evidence{}, err
 	}
 	if admitted.Publication.Commit != r.Commit {
-		return artifact.Release{}, cli.Unmet("obraz %s zbudowano z %s, a wydanie %s mówi o %s", r.Image, admitted.Publication.Commit, tag, r.Commit)
+		return artifact.Release{}, artifact.Evidence{}, cli.Unmet("obraz %s zbudowano z %s, a wydanie %s mówi o %s", r.Image, admitted.Publication.Commit, tag, r.Commit)
+	}
+	e, err := p.evidence(ctx, r)
+	if err != nil {
+		return artifact.Release{}, artifact.Evidence{}, err
 	}
 	if err := p.Registry.Tag(ctx, r.Image, r.Version); err != nil {
-		return artifact.Release{}, err
+		return artifact.Release{}, artifact.Evidence{}, err
 	}
 	cli.Step("wydanie %s: %s:%s → %s (bez builda), akceptacja %s: %s", r.Version, p.Repository, r.Version, r.Image, r.AcceptedAt, r.Staging)
-	return r, nil
+	return r, e, nil
+}
+
+// evidence składa pakiet dowodów wydania r (decyzja 53): biegi ci po push
+// na main dla commita wydania — wyniki zadań i artefakty ze skrótami —
+// i wersje narzędzi. Pakiet, który nie przechodzi Evidence.Check (ostatni
+// bieg main tego commita nie był zielony z klastrem i chartem), to odmowa:
+// wydanie nazywa digest, który przeszedł W1–W3 na main.
+func (p Publisher) evidence(ctx context.Context, r artifact.Release) (artifact.Evidence, error) {
+	e := artifact.Evidence{Release: r, Tools: p.Tools}
+	runs, err := p.CI.RunsForCommit(ctx, "ci.yml", r.Commit, "push")
+	if err != nil {
+		return e, err
+	}
+	for _, run := range runs {
+		jobs, err := p.CI.Jobs(ctx, run.ID)
+		if err != nil {
+			return e, err
+		}
+		artifacts, err := p.CI.RunArtifacts(ctx, run.ID)
+		if err != nil {
+			return e, err
+		}
+		e.Main = append(e.Main, artifact.EvidenceRun{Run: run, Jobs: jobs, Artifacts: artifacts})
+	}
+	if found := e.Check(); len(found) > 0 {
+		return e, cli.Unmet("pakiet dowodów wydania %s: %s", r.Version, strings.Join(found, "; "))
+	}
+	cli.Step("pakiet dowodów %s: bieg main %s (%s), %d artefaktów, mise.lock %.12s", r.Version, e.Main[0].URL, e.Main[0].Conclusion, len(e.Main[0].Artifacts), p.Tools.MiseLockSHA256)
+	return e, nil
 }

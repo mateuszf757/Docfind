@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mateuszf757/Docfind/tools/internal/core/artifact"
 	"github.com/mateuszf757/Docfind/tools/internal/core/ci"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 )
@@ -61,6 +62,18 @@ func (c CLI) RunsForCommit(ctx context.Context, workflow, sha, event string) ([]
 		return nil, err
 	}
 	return runs.Runs, nil
+}
+
+// RunArtifacts zwraca artefakty biegu ze skrótami SHA-256 archiwów, które
+// liczy GitHub — także artefaktów po retencji (expired), bez treści.
+func (c CLI) RunArtifacts(ctx context.Context, runID int64) ([]artifact.EvidenceArtifact, error) {
+	var list struct {
+		Artifacts []artifact.EvidenceArtifact `json:"artifacts"`
+	}
+	if err := c.api(ctx, &list, fmt.Sprintf("repos/{owner}/{repo}/actions/runs/%d/artifacts?per_page=100", runID)); err != nil {
+		return nil, err
+	}
+	return list.Artifacts, nil
 }
 
 // Jobs zwraca zadania biegu.
