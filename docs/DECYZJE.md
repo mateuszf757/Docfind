@@ -996,6 +996,13 @@ sonda wraca do cudzego obrazu, a analiza zostaje w Go.
 
 ## 35. Cztery środowiska jako dane, definicja jako lista dozwolonych
 
+> Uzupełnione decyzją 46: `deploy` nie zniknął z listy stagingu, bo zmienił
+> znaczenie. W środowisku z `delivery.argocd` to instalacja platformy,
+> Argo CD i Application — obraz wybiera Argo z zakresu wersji, a
+> `--image` jest odmową. Ostatnie zdanie „Kiedy zmieniam zdanie” jest
+> nieaktualne; `deploy` zniknie ze stagingu, gdy platformę też przejmie
+> Argo CD (app-of-apps, krok 3 Etapu 5).
+
 **Wybieram jawną listę zamiast domyślnych uprawnień.** Kontekst, porty,
 host, wydawca i to, czy wolno drenować, żyły w każdym skrypcie osobno —
 porty czytane grepem z `deploy/k3d/cluster.yaml`. Przy jednym klastrze to
@@ -2687,8 +2694,8 @@ z cudzymi — wtedy sprawdzenie niepotrzebne.
 ## 67. NetworkPolicy przestrzeni `docfind` odłożona do Etapu 6
 
 > Krok 24 planu z analizy kontraktów miał warunek „nie stosować przed
-> pierwszą zależnością stanową w `docfind` (Etap 6)”. Projekt jest na
-> Etapie 4.
+> pierwszą zależnością stanową w `docfind` (Etap 6)”. Projekt jest
+> w Etapie 5.
 
 **Wybieram odłożenie z warunkiem zamiast polityki dziś.** W `docfind` stoi
 jedna usługa bez zależności stanowych. Pod aplikacji nie ma tokenu konta
@@ -2707,6 +2714,54 @@ zależność stanowa.
 do `docfind` (Etap 6). Wtedy domyślna odmowa z wyjątkami dla bramy, sondy
 drainu i tej zależności, a test na klastrze: pod bez wyjątku nie łączy się
 z zależnością.
+
+## 68. Polecenia w dokumentach dla ludzi sprawdzane z kodem
+
+> Krok 25, ostatni z planu analizy kontraktów: dokumentacja po krokach
+> 1–24.
+
+**Wybieram test poleceń zamiast generatora dokumentów.** README, RUNBOOK
+i WYMAGANIA mówią człowiekowi, co uruchomić, a nic ich nie sprawdzało,
+więc dryfowały. Procedura wydania z `--image` przetrwała decyzję 46,
+w której `--image` na stagingu stało się odmową. Warunek Etapu 5 i stan
+projektu były sprzed tej decyzji, a „Vault” przetrwał wybór OpenBao.
+Teraz `dft check contract` wyciąga z bloków kodu i fragmentów `kodu` tych
+trzech plików każde `./bin/mise run <zadanie>` i `dft <polecenie>` (także
+`ci/dft`). Sprawdza je z `mise.toml` i z listą poleceń i bramek dft, tą
+samą, z którą sprawdza kontrakt. Literówka w nazwie zadania albo zadanie
+usunięte bez poprawki dokumentu to czerwony `test` (§8.10 kontraktu).
+Prozy test nie czyta, więc zdanie w rodzaju „dft jest binarką” nie daje
+fałszywego alarmu.
+
+Liczby z pomiarów zostają w README jako pomiar przy zamknięciu etapu,
+z odesłaniem do raportów z bieżącymi wynikami. Generator z raportów
+ostatniego zielonego `main` dawałby świeże liczby, ale musiałby albo
+commitować z CI do `main` (prawo zapisu poza PR-ami, decyzja 49), albo
+zostawiać README nieaktualne między uruchomieniami. To ten sam koszt co
+dziś, za to z większym kodem.
+
+Ten sam PR poprawia dryf:
+- README — stan projektu (Etap 5 w toku, `v0.4.0` jeszcze nie wydane),
+  `cluster` wymagany przez `integration`, warunek Etapu 5;
+- WYMAGANIA — OpenBao, gitleaks;
+- adnotacja przy decyzji 35 — `deploy` na stagingu zmienił znaczenie;
+- RUNBOOK — procedury: czerwony `main`, noc, która się nie odbyła,
+  rotacja i wyciek klucza aplikacji auto-merge; pomiar czasu cofnięcia
+  stagingu.
+
+**Co tracę:**
+- test łapie polecenie, którego nie ma, a nie złe użycie. Flagi nie są
+  sprawdzane z `--help`, a odmowa zależna od środowiska (`--image` przy
+  Argo CD) przejdzie — takie zdania wychodzą tylko w przeglądzie PR-a,
+  który zmienia decyzję;
+- polecenie zapisane prozą, bez bloku kodu i backticków, test pominie;
+- liczby w README z definicji się starzeją — bieżące są w raportach, nie
+  w dokumencie.
+
+**Kiedy zmieniam zdanie:** gdy flaga z dokumentu zmieni nazwę bez
+poprawki — sprawdzanie flag z `--help` poleceń dft i ze specyfikacji
+`usage` zadań w `mise.toml`. Gdy README zacznie podawać liczby jako
+bieżące, np. dla klienta od Etapu 10 — generator z raportów `main`.
 
 ## Czego bym dziś nie powtórzył
 

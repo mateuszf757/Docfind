@@ -327,3 +327,21 @@ func TestRepositoryExceptions(t *testing.T) {
 		}
 	}
 }
+
+func TestCommands(t *testing.T) {
+	text := "```bash\n./bin/mise run test   # ok\nMISE_ENV=staging ./bin/mise run cluster:drain\n./bin/mise run cluster:drian\n" +
+		"./bin/mise exec -- ci/dft check contract\n./bin/mise exec -- ci/dft check kontrakt\nci/dft verify\n```\n" +
+		"Proza: dft sprawdza progi, ci/dft jest binarką, a `./bin/mise run cluster:drian` raz jeszcze.\n" +
+		"Fragment złamany: `./bin/mise run\nrepo:setings` i `dft contract thresholds`, `dft deploy`.\n" +
+		"   ```bash\n   ci/dft check contract\n   ```\n"
+	found := Commands("README.md", text, known)
+	want := []string{"`./bin/mise run cluster:drian`", "`./bin/mise run repo:setings`", "`dft check kontrakt`", "`dft verify`", "`dft deploy`"}
+	if len(found) != len(want) {
+		t.Fatalf("Commands = %q", found)
+	}
+	for i, w := range want {
+		if !strings.Contains(found[i], w) {
+			t.Errorf("%d: %q, oczekiwano %q", i, found[i], w)
+		}
+	}
+}

@@ -10,11 +10,28 @@ strażnikami i dowodami — w [docs/engineering-contracts.md](docs/engineering-c
 
 ## Stan
 
-Etap 4 z 11 — sekrety z OpenBao przez External Secrets Operator. Warunek
+Etap 5 z 11, w toku — GitOps z Argo CD. Zrobione dwa kroki: CI publikuje
+chart aplikacji jako artefakt OCI w GHCR, a Argo CD na stagingu śledzi go
+z rejestru. Zostają app-of-apps z platformą pod Argo CD i sync waves
+(krok 3); warunek zakończenia to samonaprawa bez przestoju na stagingu
+(`cluster:selfheal`).
+
+- chart publikowany po bramkach klastra, i to ten sam pakiet, który
+  przeszedł klaster — z digestem przetestowanego obrazu (decyzje 45, 61)
+- Argo CD w trybie Core, bez serwera API i UI; zakres wersji z rejestru,
+  `selfHeal` i `prune`; cofnięcie to przypięcie wersji w definicji
+  środowiska, nie `helm rollback` (decyzja 46)
+- kontrakt inżynierski w gicie: progi bramek jako stałe w kodzie, tabela
+  w kontrakcie generowana z nich, pola chronione wymagają wpisu w DECYZJE
+  w tym samym PR-ze, wyjątki z datą wygaśnięcia (decyzje 50, 64)
+
+Etap 4 — sekrety z OpenBao przez External Secrets Operator. Warunek
 zakończenia spełniony na dev: rotacja tokenu metryk dociera do każdego poda
 API bez restartu — nowy token obok starego po 42–56 s, stary odrzucony po
-68–72 s, bez wymuszania synchronizacji. Wydanie `v0.4.0` po akceptacji na
-stagingu.
+68–72 s, bez wymuszania synchronizacji. Wydania `v0.4.0` jeszcze nie ma.
+Przed pierwszym tagiem z promocją idzie ćwiczenie promocji w repozytorium
+próbnym ([RUNBOOK](docs/RUNBOOK.md)), potem akceptacja na stagingu
+(`release`).
 
 - OpenBao zamiast Vaulta (MPL zamiast BSL, to samo API): trzy repliki
   z Raftem, odpieczętowanie kluczem z Secreta, konfiguracja jako kod
@@ -95,7 +112,8 @@ zero nieudanych), i sprząta po sobie także po przerwaniu.
 - efemeryczny klaster k3d w CI na każdym PR-ze, po scaleniu i nocą: obraz
   z zadania build (archiwum albo digest z GHCR), drain każdego węzła,
   odnowienie certyfikatu pod ruchem, tożsamość na podach, dowody z klastra
-  jako artefakt; wymagany po dziesięciu zielonych biegach z rzędu (decyzja 36)
+  jako artefakt; po okresie próbnym (dziesięć zielonych biegów z rzędu)
+  wymagany przez status `integration` (decyzje 36, 52)
 - dwa wymagane statusy przed scaleniem: `fast-feedback` (lint, testy, obraz,
   warianty negatywne, powtarzalność narzędzi — równolegle) i `integration`
   (klaster, skan obrazu); pominięte zadanie warstwy to czerwony status
@@ -111,7 +129,9 @@ Zrobione w Etapach 0–1:
 - konfiguracja walidowana modelem Pydantic — nieznany klucz albo zła wartość
   kończy się odmową startu z komunikatem wskazującym pole
 - `app.schema.json` generowany z modelu, a CI pilnuje, żeby był aktualny
-- `get_secret()` jako jedyne wejście do sekretów, gotowe na Vaulta z Etapu 4
+- `get_secret()` jako jedyne wejście do sekretów — od Etapu 4 czyta przy
+  każdym wywołaniu plik z OpenBao, dostarczony przez External Secrets
+  Operator (decyzja 44)
 - `/metrics` z licznikiem żądań i histogramem czasu, z etykietą trasy jako
   szablonem — bez tego skan katalogów wysadziłby kardynalność
 - publikacja obrazu z brudnego drzewa jest odrzucana
@@ -314,10 +334,17 @@ curl -s localhost:8000/metrics
 | 2 ✅ | k3d, Deployment, probe'y, 2 repliki, PDB | drain każdego węzła: 1358 żądań, 0 błędów |
 | 3 ✅ | Envoy Gateway (Gateway API), cert-manager: własne CA i Let's Encrypt DNS-01 | odnowienie pod ruchem: 59 i 126 żądań, 0 błędów |
 | 4 ✅ | OpenBao i External Secrets Operator | rotacja dociera do podów bez restartu: 42–72 s; gitleaks: 0 sekretów w historii |
-| 5 | ArgoCD, app-of-apps, sync waves | ręczne `kubectl delete deploy` → ArgoCD odtwarza stan |
+| 5 | Argo CD, app-of-apps, sync waves | replika więcej i usunięty PDB → Argo CD przywraca stan bez przestoju (decyzja 46) |
 | 6 | ECK, Elasticsearch, ingest | reindeks z podmianą aliasu bez przestoju |
 | 7 | LLM: `ollama \| vllm \| stub`, model z PVC | streaming przez HTTPS; przekroczenie kontekstu = czytelny błąd |
 | 8 | kube-prometheus-stack, alerty, dashboardy jako kod | alert wykrywa awarię, której nie planowałem |
 | 9 | Pełne CD i testy e2e | ten sam digest na obu klastrach |
 | 10 | Chart OCI, drugi klaster jako „klient" | instalacja z rejestru; `helm rollback` < 15 min |
 | 11 | Backup, runbook, sesje diagnostyczne | piąty sabotaż rozwiązany w < 15 min |
+
+Liczby w kolumnie warunku to pomiary z zamknięcia etapu; tylko rozmiar
+obrazu zmierzono ponownie, miarą z decyzji 65. Bieżące wyniki
+tych samych bramek: lokalnie w `.cache/reports`, w CI w artefakcie
+`dowody-cluster` (drain, TLS, rotacja, tożsamość) i w logu kroku
+`check:runtime` zadania `build` (rozmiar obrazu, zamykanie). Progi są
+w tabeli §10 [kontraktu](docs/engineering-contracts.md).
