@@ -244,6 +244,11 @@ wraca lustro rejestru i tarball airgapowy, czyli warstwa, z której tu zrezygnow
 
 ## 14. Obraz na Alpine zamiast Debian slim
 
+> Uzupełnione decyzją 65: „120 MB” to rozmiar w magazynie containerd
+> lokalnie; ten sam obraz w overlay2 w CI miał 81,4 MB. Od decyzji 65
+> rozmiar to suma warstw z archiwum — 84,7 MB dla obrazu z 2026-10-17,
+> tak samo w obu miejscach.
+
 **Wybieram mniejsze kosztem wolniejszego zamykania.** Zmierzone na tym samym
 kodzie: Debian slim daje obraz 228 MB i koszt własny zamykania 0,373 s, Alpine
 daje 120 MB i 0,474 s. Limit 200 MB z Etapu 1 spełnia tylko Alpine — baza
@@ -2623,6 +2628,33 @@ wdrożeniu. `core/policy` odrzuca ConfigMapę charta aplikacji bez
 **Kiedy zmieniam zdanie:** gdy auto-merge przejdzie na token bez
 długożyjącego klucza (np. GitHub App z OIDC) — wtedy wpis znika, a rejestr
 zostaje dla kolejnych wyjątków.
+
+## 65. Rozmiar obrazu z warstw archiwum, nie z magazynu demona
+
+> Rozwiązuje H39. Uzupełnia decyzję 14 (limit 200 MB z Etapu 1).
+
+**Wybieram sumę warstw z archiwum `docker save` zamiast `docker image
+inspect .Size`.** Bramka rozmiaru mierzyła to, co raportuje magazyn obrazów
+demona. Lokalnie (Docker 29.8.1, magazyn containerd) ten sam obraz miał
+121,7 MB, w CI (Docker 28.0.4, overlay2) — 81,4 MB. Limit z Etapu 1 mógł
+więc być czerwony lokalnie i zielony w CI dla tego samego obrazu, a liczba
+„120 MB” z README była miarą jednego magazynu. Teraz `check:runtime`
+zapisuje obraz do archiwum i sumuje strumienie tar wszystkich warstw po
+rozpakowaniu (`kit/ociarchive.UnpackedSize`). Dla obrazu z 2026-10-17
+wychodzi 84,7 MB — lokalnie i w CI tak samo. Metoda `ImageSize` adaptera
+Dockera zniknęła razem z jedynym wywołującym.
+
+**Co tracę:**
+
+- **Kilka sekund na zapis archiwum.** `docker save` przed pomiarem.
+- **Liczba, która nie mówi o miejscu na dysku.** Suma warstw nie uwzględnia
+  współdzielenia warstw ani metadanych magazynu — mierzy obraz, a nie
+  zajętość dysku.
+- **Rozmiar skompresowany w rejestrze** (to, co pobiera klient) zostaje
+  `[ŻYCZENIE]` w §4.4.
+
+**Kiedy zmieniam zdanie:** gdy klient zacznie liczyć limit po rozmiarze
+pobierania — wtedy limit na rozmiar skompresowany w rejestrze.
 
 ## Czego bym dziś nie powtórzył
 

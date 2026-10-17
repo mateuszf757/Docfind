@@ -13,7 +13,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
@@ -30,21 +29,6 @@ func (c Client) output(ctx context.Context, args ...string) (string, error) {
 
 func (c Client) run(ctx context.Context, args ...string) (proc.Result, error) {
 	return c.Runner.Run(ctx, proc.Cmd{Name: "docker", Args: args})
-}
-
-// ImageSize zwraca rozmiar obrazu w bajtach według `docker image inspect`
-// — rozmiar rozpakowany w magazynie Dockera, a nie skompresowane warstwy
-// w rejestrze (obraz API: ~120 MB tu, ~29 MB w GHCR).
-func (c Client) ImageSize(ctx context.Context, ref string) (int64, error) {
-	out, err := c.output(ctx, "image", "inspect", ref, "--format", "{{.Size}}")
-	if err != nil {
-		return 0, fmt.Errorf("rozmiar obrazu %s: %w", ref, err)
-	}
-	size, err := strconv.ParseInt(out, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("rozmiar obrazu %s: %q nie jest liczbą bajtów", ref, out)
-	}
-	return size, nil
 }
 
 // ImageUser zwraca użytkownika obrazu (USER z konfiguracji); pusty —

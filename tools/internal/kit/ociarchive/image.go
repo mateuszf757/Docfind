@@ -59,6 +59,33 @@ func (i Image) Labels() (map[string]string, error) {
 	return f.Config.Labels, nil
 }
 
+// UnpackedSize — rozmiar obrazu po rozpakowaniu: suma strumieni tar
+// wszystkich warstw (decyzja 65). Liczony z archiwum, a nie z magazynu
+// demona, więc ten sam obraz daje tę samą liczbę lokalnie (magazyn
+// containerd) i w CI (overlay2).
+func (i Image) UnpackedSize() (int64, error) {
+	layers, err := i.img.Layers()
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for _, l := range layers {
+		rc, err := l.Uncompressed()
+		if err != nil {
+			return 0, err
+		}
+		n, err := io.Copy(io.Discard, rc)
+		if closeErr := rc.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			return 0, err
+		}
+		total += n
+	}
+	return total, nil
+}
+
 // Write zapisuje obraz jako archiwum `docker save` z tagiem ref — do
 // importu do węzłów klastra. Obraz zostaje ten sam, zmienia się tylko tag.
 func (i Image) Write(ref, archive string) error {

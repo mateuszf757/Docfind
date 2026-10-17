@@ -15,6 +15,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/core/container"
 	"github.com/mateuszf757/Docfind/tools/internal/core/loopback"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/ociarchive"
 )
 
 func TestMedian(t *testing.T) {
@@ -57,7 +58,19 @@ type engine struct {
 	removed []string
 }
 
-func (e *engine) ImageSize(context.Context, string) (int64, error) { return e.size, nil }
+// Save zapisuje prawdziwe archiwum obrazu z jedną warstwą: binarką
+// o rozmiarze size bajtów (rozmiar liczy się z warstw archiwum).
+func (e *engine) Save(_ context.Context, ref, path string) error {
+	binary := filepath.Join(filepath.Dir(path), "app")
+	if err := os.WriteFile(binary, make([]byte, e.size), 0o755); err != nil {
+		return err
+	}
+	img, err := ociarchive.SingleBinary(binary, ociarchive.BinaryConfig{Path: "/app", User: 10001, Arch: "amd64"})
+	if err != nil {
+		return err
+	}
+	return img.Write(ref, path)
+}
 
 func (e *engine) ImageUser(context.Context, string) (string, error) {
 	if e.user == "" {
@@ -135,7 +148,7 @@ func TestRun(t *testing.T) {
 	oldOut, oldErr := cli.Out, cli.Err
 	cli.Out, cli.Err = io.Discard, io.Discard
 	defer func() { cli.Out, cli.Err = oldOut, oldErr }()
-	e := &engine{size: 120_000_000, refuse: container.Exit{Code: 1, Stderr: "BŁĄD KONFIGURACJI"}}
+	e := &engine{size: 4096, refuse: container.Exit{Code: 1, Stderr: "BŁĄD KONFIGURACJI"}}
 	rep, err := checker(t, e, web{status: 200}).Run(context.Background())
 	if err != nil {
 		t.Fatalf("%v (%+v)", err, rep.Unmet)
@@ -158,7 +171,6 @@ func TestRunRejects(t *testing.T) {
 		web    web
 		want   string
 	}{
-		{"obraz za duży", &engine{size: 250_000_000, refuse: container.Exit{Code: 1, Stderr: "BŁĄD KONFIGURACJI"}}, web{status: 200}, "limit 200000000 B"},
 		{"obraz jako root", &engine{size: 1, user: "root", refuse: container.Exit{Code: 1, Stderr: "BŁĄD KONFIGURACJI"}}, web{status: 200}, "obraz uruchamia się jako root"},
 		{"obraz jako 0:0", &engine{size: 1, user: "0:0", refuse: container.Exit{Code: 1, Stderr: "BŁĄD KONFIGURACJI"}}, web{status: 200}, "obraz uruchamia się jako root"},
 		{"wstaje bez konfiguracji", &engine{size: 1, refuse: container.Exit{Code: -1, TimedOut: true}}, web{status: 200}, "brak konfiguracji: kontener wstał i działał"},
@@ -172,5 +184,23 @@ func TestRunRejects(t *testing.T) {
 				t.Errorf("oczekiwano niespełnionego z %q, jest %v (%v)", tt.want, err, rep.Unmet)
 			}
 		})
+	}
+}
+
+// TestRunRejectsSize: rozmiar liczony z warstw archiwum — binarka 50 kB
+// przy limicie 10 kB to obraz za duży, niezależnie od magazynu demona.
+func TestRunRejectsSize(t *testing.T) {
+	oldOut, oldErr := cli.Out, cli.Err
+	cli.Out, cli.Err = io.Discard, io.Discard
+	defer func() { cli.Out, cli.Err = oldOut, oldErr }()
+	c := checker(t, &engine{size: 50_000, refuse: container.Exit{Code: 1, Stderr: "BŁĄD KONFIGURACJI"}}, web{status: 200})
+	c.Limits.MaxImageUnpackedBytes = 10_000
+	rep, err := c.Run(context.Background())
+	if cli.ExitCode(err) != cli.ExitUnmet || !slices.ContainsFunc(rep.Unmet, func(u string) bool { return strings.Contains(u, "limit 10000 B") }) {
+		t.Errorf("obraz za duży: %v (%v)", err, rep.Unmet)
+	}
+	// Warstwa to strumień tar: binarka plus nagłówki i wyrównanie.
+	if rep.ImageUnpackedBytes < 50_000 || rep.ImageUnpackedBytes > 52_000 {
+		t.Errorf("rozmiar z warstw: %d", rep.ImageUnpackedBytes)
 	}
 }
