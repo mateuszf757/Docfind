@@ -371,6 +371,8 @@ i `gitleaks:allow` → znalezisko. Decyzja: 41.
 CPU, obrazy z zewnątrz po digeście, sekrety jako wolumen bez subPath. Przestrzenie `docfind`,
 `openbao`, `argocd` z PSA `restricted` — runAsNonRoot, drop ALL, bez eskalacji uprawnień,
 seccomp `RuntimeDefault` — w API serverze.
+Ruch do podów aplikacji: dziś bez NetworkPolicy w `docfind` [ŻYCZENIE: domyślna odmowa
+z wyjątkami (brama, ESO) — przed pierwszą zależnością stanową w `docfind`, Etap 6, decyzja 67].
 Egzekwuje: `core/policy` w `dft check charts` — w charcie aplikacji także readOnlyRootFilesystem,
 allowPrivilegeEscalation false, drop ALL, runAsNonRoot, runAsUser różny od 0, seccomp
 RuntimeDefault i automountServiceAccountToken false; PSA w API serverze, `test:cluster` w nocy
