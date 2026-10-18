@@ -246,7 +246,7 @@ i bez sudo.
 ./bin/mise run check:contract -- --base origin/main   # kontrakt; pola chronione względem main (jak na PR-ze)
 ./bin/mise exec -- ci/dft --help  # polecenia dft (wersja, tożsamość, bramki)
 
-./bin/mise run cluster:up         # klaster k3d + build + helm upgrade --install
+./bin/mise run cluster:up         # klaster k3d + build + helm upgrade --install (pierwszy: archiwum obrazów k3s, ~190 MB)
 ./bin/mise run cluster:up -- --image ghcr.io/mateuszf757/docfind-api@sha256:…   # obraz z rejestru po digeście
 ./bin/mise run cluster:drain      # warunek zakończenia Etapu 2
 ./bin/mise run cluster:tls        # warunek zakończenia Etapu 3: odnowienie certyfikatu pod ruchem

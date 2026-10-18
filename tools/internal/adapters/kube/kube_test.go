@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -437,5 +438,24 @@ func TestApplication(t *testing.T) {
 	records, err := c.HelmReleaseRecords(ctx, "docfind", "docfind")
 	if err != nil || len(records) != 1 || records[0] != "sh.helm.release.v1.docfind.v1" {
 		t.Errorf("zapis wydania: %v, %v", records, err)
+	}
+}
+
+func TestPullEvents(t *testing.T) {
+	event := func(name, msg string) *corev1.Event {
+		return &corev1.Event{ObjectMeta: metav1.ObjectMeta{Namespace: "kube-system", Name: name}, Reason: "Pulling", Message: msg}
+	}
+	c := New(fake.NewClientset(
+		event("a", `Pulling image "docker.io/rancher/klipper-lb:v0.4.17"`),
+		event("b", `Pulling image "docker.io/rancher/klipper-lb:v0.4.17"`),
+		event("c", `Pulling image "ghcr.io/x/api@sha256:abc"`),
+	), nil, nil, cluster.Target{})
+	got, err := c.PullEvents(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(got)
+	if want := []string{"docker.io/rancher/klipper-lb:v0.4.17", "ghcr.io/x/api@sha256:abc"}; !slices.Equal(got, want) {
+		t.Errorf("PullEvents = %q; oczekiwano %q", got, want)
 	}
 }

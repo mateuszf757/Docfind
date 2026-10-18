@@ -2312,6 +2312,47 @@ tej ochrony nie ma.
 (Kyverno albo ValidatingAdmissionPolicy) dla tych pól — wtedy ta sama
 reguła w API serverze, a render tylko ją powtarza.
 
+## 56. Obrazy systemowe k3s z archiwum airgap, nie z Docker Hub po tagu
+
+> Uzupełnia decyzję 20 (wszystko z zewnątrz digestem albo SHA) i spełnia
+> jej warunek dla k3s; decyzja 36 wymieniała limit Docker Hub jako ryzyko
+> klastra w CI.
+
+**Wybieram archiwum airgap z wydania k3s zamiast wyłączania komponentów.**
+k3s był przypięty digestem, ale swoje komponenty pobierał po tagu z Docker
+Hub: `klipper-lb` (na drodze ruchu wejściowego), `local-path-provisioner`,
+`metrics-server`, `busybox`. W biegu `cluster` było to 21 pobrań. Polityka
+digestu obejmowała tylko rendery naszych chartów.
+
+Teraz `dft cluster up` przy tworzeniu klastra pobiera
+`k3s-airgap-images-amd64.tar.zst` z wydania tej samej wersji co obraz k3s.
+Plik jest sprawdzany sumą z `ci/pins.env` (z `sha256sum-amd64.txt`
+wydania), a adres wynika z tagu obrazu, więc nie może się z nim rozjechać.
+k3d montuje go na każdym węźle w katalogu, z którego k3s importuje obrazy
+przy starcie.
+
+Po platformie bramka porównuje pody z listą obrazów wydania
+(`k3s-images.txt`, też przypiętą sumą). Obraz bez digestu spoza listy
+i obraz z listy w zdarzeniu `Pulling` — czyli import nie zadziałał — dają
+kod 1. Nasze obrazy po tagu (lokalny build, archiwum zadania build)
+sprawdzają tożsamość i przyjęcie, nie ta reguła.
+
+**Co tracę:**
+
+- **Pobranie archiwum.** Ok. 190 MB przy każdym nowym klastrze w CI
+  (z CDN GitHuba, sekundy) i raz lokalnie — potem z `.cache/downloads`.
+- **Aktualizacja k3s to trzy przypięcia.** Obraz i dwie sumy: obraz bez
+  nowych sum zatrzyma `cluster up` na złej sumie, a nie na obrazie
+  w złej wersji.
+- **Obraz równoważnika k3d (`k3d-proxy`) dalej po tagu.** To kontener
+  Dockera, nie pod; zostaje `[ŻYCZENIE]` w §6.6 kontraktu.
+- **Sprawdzenie dopiero na klastrze.** Lokalnie nie tworzyłem klastra, więc
+  pierwszym sprawdzeniem na żywo jest zadanie `cluster` na PR-ze.
+
+**Kiedy zmieniam zdanie:** gdy k3s przestanie publikować archiwum airgap
+dla przypiętej wersji — wtedy `--disable=servicelb,local-storage,metrics-server`
+i własne charty z digestem, jak CoreDNS (decyzja 18).
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

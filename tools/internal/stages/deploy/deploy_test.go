@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -56,7 +57,7 @@ func definition(t *testing.T, name string) environment.Definition {
 
 func TestK3dConfig(t *testing.T) {
 	e := environment.Definition{Cluster: environment.Cluster{Name: "docfind-ci", Ports: environment.Ports{API: 6551, HTTP: 8081, HTTPS: 8444}}}
-	raw, err := K3dConfig(filepath.Join(repoRoot, "deploy", "k3d", "cluster.yaml"), e)
+	raw, err := K3dConfig(filepath.Join(repoRoot, "deploy", "k3d", "cluster.yaml"), e, "/cache/k3s-airgap-images-amd64.tar.zst")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +66,8 @@ func TestK3dConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := string(raw)
-	for _, want := range []string{`"name": "docfind-ci"`, `"hostPort": "6551"`, `"127.0.0.1:8081:80"`, `"127.0.0.1:8444:443"`, `"--disable=traefik"`} {
+	for _, want := range []string{`"name": "docfind-ci"`, `"hostPort": "6551"`, `"127.0.0.1:8081:80"`, `"127.0.0.1:8444:443"`, `"--disable=traefik"`,
+		`"volume": "/cache/k3s-airgap-images-amd64.tar.zst:/var/lib/rancher/k3s/agent/images/k3s-airgap-images-amd64.tar.zst"`, `"all"`} {
 		if !strings.Contains(out, want) {
 			t.Errorf("konfiguracja bez %s:\n%s", want, out)
 		}
@@ -91,7 +93,7 @@ func TestK3dConfigRejectsWildcard(t *testing.T) {
 		if err := os.WriteFile(path, []byte(bad), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		_, err := K3dConfig(path, environment.Definition{Cluster: environment.Cluster{Name: "x", Ports: environment.Ports{API: 6550, HTTP: 8080, HTTPS: 8443}}})
+		_, err := K3dConfig(path, environment.Definition{Cluster: environment.Cluster{Name: "x", Ports: environment.Ports{API: 6550, HTTP: 8080, HTTPS: 8443}}}, "")
 		if cli.ExitCode(err) != cli.ExitUnmet {
 			t.Errorf("%s: przyjęte (%v)", mutation.to, err)
 		}
@@ -273,6 +275,9 @@ func (f fakeCluster) HelmReleaseRecords(context.Context, string, string) ([]stri
 func (f fakeCluster) DeleteSecret(_ context.Context, ns, name string) error {
 	return f.call("delete secret %s/%s", ns, name)
 }
+func (f fakeCluster) PullEvents(context.Context) ([]string, error) {
+	return nil, f.call("pull events")
+}
 
 func (f fakeCluster) Nodes(context.Context) ([]cluster.Node, error) {
 	return []cluster.Node{{Name: "s", Ready: true}, {Name: "a", Ready: true}}, f.call("nodes")
@@ -355,6 +360,16 @@ func deployer(t *testing.T, env string, rec *recorder, exists bool, podImage str
 		Builder: fakeBuilder{rec}, Admission: fakeAdmission{rec}, Versions: versions{},
 		SecretStores: func(cluster.Target) (SecretStore, error) { return fakeSecretStore{rec}, nil },
 		DNSTokens:    func(cluster.Target) (DNSToken, error) { return fakeDNSToken{rec}, nil },
+		Download: func(_ context.Context, url, _ string) (string, error) {
+			name := path.Base(url)
+			file := filepath.Join(root, name)
+			if name == pins.K3sImageList {
+				if err := os.WriteFile(file, []byte("docker.io/rancher/klipper-lb:v0.4.17\n"), 0o644); err != nil {
+					return "", err
+				}
+			}
+			return file, rec.call("download %s", name)
+		},
 	}
 }
 
@@ -385,7 +400,7 @@ func TestUpFromRegistry(t *testing.T) {
 	}
 	want := []string{
 		"admit dev attested=false",
-		"k3d exists", "cgroup", "cgroup.controllers", "rootless", "k3d create docfind userns=true",
+		"k3d exists", "cgroup", "cgroup.controllers", "download k3s-airgap-images-amd64.tar.zst", "rootless", "k3d create docfind userns=true",
 		"k3d kubeconfig", "connect", "nodes",
 		"fetch coredns", "install coredns ", "fetch envoy-gateway", "install envoy-gateway ", "fetch cert-manager", "install cert-manager ",
 	}

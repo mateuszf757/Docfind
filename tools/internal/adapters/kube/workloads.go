@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"slices"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -204,4 +206,24 @@ func (c *Cluster) PodDisruptionBudgetExists(ctx context.Context, namespace, name
 // DeletePodDisruptionBudget usuwa PDB.
 func (c *Cluster) DeletePodDisruptionBudget(ctx context.Context, namespace, name string) error {
 	return c.core.PolicyV1().PodDisruptionBudgets(namespace).Delete(ctx, name, metav1.DeleteOptions{})
+}
+
+// pullingImage — komunikat zdarzenia Pulling kubeleta.
+var pullingImage = regexp.MustCompile(`Pulling image "([^"]+)"`)
+
+// PullEvents zwraca obrazy ze zdarzeń Pulling we wszystkich przestrzeniach
+// nazw — co kubelet pobierał z sieci, póki zdarzenia nie wygasły (domyślnie
+// godzina).
+func (c *Cluster) PullEvents(ctx context.Context) ([]string, error) {
+	list, err := c.core.CoreV1().Events("").List(ctx, metav1.ListOptions{FieldSelector: "reason=Pulling"})
+	if err != nil {
+		return nil, err
+	}
+	var images []string
+	for _, e := range list.Items {
+		if m := pullingImage.FindStringSubmatch(e.Message); m != nil && !slices.Contains(images, m[1]) {
+			images = append(images, m[1])
+		}
+	}
+	return images, nil
 }

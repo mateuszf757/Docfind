@@ -7,6 +7,8 @@ package cluster
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -224,4 +226,51 @@ func PSAVersion(kubernetesVersion string) (string, error) {
 		return "", fmt.Errorf("wersja Kubernetesa %q: %w", kubernetesVersion, err)
 	}
 	return "v" + parts[0] + "." + parts[1], nil
+}
+
+// SystemImages — obrazy podów, które łamią przypięcie (decyzje 20 i 56):
+// obraz bez digestu spoza listy obrazów wydania k3s (airgap) i obraz z tej
+// listy pobierany z sieci (pulled — obrazy ze zdarzeń Pulling) zamiast
+// zaimportowany z archiwum. Obrazy z przedrostkiem own — nasze, z lokalnego
+// builda albo archiwum zadania build, wdrażane po tagu — sprawdza tożsamość
+// na podach i przyjęcie obrazu, nie ta reguła. Nazwy porównywane w pełnej
+// postaci (docker.io/library/…).
+func SystemImages(pods []Pod, pulled, airgap []string, own string) []string {
+	allowed := map[string]bool{}
+	for _, ref := range airgap {
+		allowed[FullImage(ref)] = true
+	}
+	var found []string
+	seen := map[string]bool{}
+	for _, pod := range pods {
+		for _, container := range slices.Sorted(maps.Keys(pod.Images)) {
+			ref := pod.Images[container]
+			if ref == "" || strings.Contains(ref, "@sha256:") || allowed[FullImage(ref)] || seen[ref] || (own != "" && strings.HasPrefix(ref, own)) {
+				continue
+			}
+			seen[ref] = true
+			found = append(found, fmt.Sprintf("%s/%s (%s): obraz %s bez digestu i spoza archiwum airgap k3s", pod.Namespace, pod.Name, container, ref))
+		}
+	}
+	for _, ref := range pulled {
+		if allowed[FullImage(ref)] && !seen["pull "+ref] {
+			seen["pull "+ref] = true
+			found = append(found, fmt.Sprintf("obraz %s z archiwum airgap pobrany z sieci — import na węźle nie zadziałał", ref))
+		}
+	}
+	return found
+}
+
+// FullImage — referencja obrazu w pełnej postaci: busybox:1 →
+// docker.io/library/busybox:1, rancher/x:1 → docker.io/rancher/x:1.
+func FullImage(ref string) string {
+	first, rest, ok := strings.Cut(ref, "/")
+	switch {
+	case !ok:
+		return "docker.io/library/" + ref
+	case strings.ContainsAny(first, ".:") || first == "localhost":
+		return ref
+	default:
+		return "docker.io/" + first + "/" + rest
+	}
 }

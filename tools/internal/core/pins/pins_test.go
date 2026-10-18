@@ -36,7 +36,7 @@ func TestRepositoryPins(t *testing.T) {
 // TestKeysHaveRules: każda stała klucza ma regułę — inaczej Get zwróciłby
 // pusty napis dla przypięcia, którego Parse nie wymaga.
 func TestKeysHaveRules(t *testing.T) {
-	for _, key := range []string{KubernetesVersion, K3sImage, CoreDNSChartVersion, CoreDNSChartURL, CoreDNSChartSHA256,
+	for _, key := range []string{KubernetesVersion, K3sImage, K3sAirgapSHA256, K3sImagesSHA256, CoreDNSChartVersion, CoreDNSChartURL, CoreDNSChartSHA256,
 		CertManagerChartVersion, CertManagerChartURL, CertManagerChartSHA256, EnvoyGatewayChartRef, EnvoyGatewayChartVersion,
 		EnvoyGatewayChartSHA256, OpenBaoChartVersion, OpenBaoChartURL, OpenBaoChartSHA256, ExternalSecretsVersion,
 		ExternalSecretsURL, ExternalSecretsSHA256, ArgoCDChartVersion, ArgoCDChartURL, ArgoCDChartSHA256, BuildKitImage, SBOMGeneratorImage,
@@ -45,8 +45,8 @@ func TestKeysHaveRules(t *testing.T) {
 			t.Errorf("%s bez reguły", key)
 		}
 	}
-	if len(rules) != 25 {
-		t.Errorf("reguł %d, stałych 25 — dopisz stałą dla nowego przypięcia", len(rules))
+	if len(rules) != 27 {
+		t.Errorf("reguł %d, stałych 27 — dopisz stałą dla nowego przypięcia", len(rules))
 	}
 }
 
@@ -181,5 +181,16 @@ func TestVersionSources(t *testing.T) {
 	}
 	if v, err := GoDirective([]byte("module x\n\ngo 1.27.1\n")); err != nil || v != "1.27.1" {
 		t.Errorf("GoDirective = %q, %v", v, err)
+	}
+}
+
+func TestK3sAsset(t *testing.T) {
+	p := Pins{K3sImage: "rancher/k3s:v1.36.4-k3s1@sha256:" + strings.Repeat("e", 64)}
+	got, err := p.K3sAsset(K3sImageList)
+	if want := "https://github.com/k3s-io/k3s/releases/download/v1.36.4%2Bk3s1/k3s-images.txt"; err != nil || got != want {
+		t.Errorf("K3sAsset = %q, %v; oczekiwano %q", got, err, want)
+	}
+	if _, err := (Pins{K3sImage: "rancher/k3s:latest@sha256:" + strings.Repeat("e", 64)}).K3sAsset(K3sImageList); err == nil {
+		t.Error("tag spoza vX.Y.Z-k3sN przyjęty")
 	}
 }

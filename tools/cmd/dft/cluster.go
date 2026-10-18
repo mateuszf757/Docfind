@@ -23,6 +23,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
 	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/fetch"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/sensitive"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/deploy"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/dnstoken"
@@ -120,6 +121,9 @@ func (w *workspace) deployer(def environment.Definition) (deploy.Deployer, error
 			return c, nil
 		},
 		Builder: w.builder(), Admission: w.admission(), Versions: w.git(), ChartRegistry: registry.Client{},
+		Download: func(ctx context.Context, url, sha string) (string, error) {
+			return fetch.URL(ctx, w.root, url, sha)
+		},
 		SecretStores: w.secretStores(def),
 		DNSTokens: func(t cluster.Target) (deploy.DNSToken, error) {
 			return w.dnsTokens(def, t)
