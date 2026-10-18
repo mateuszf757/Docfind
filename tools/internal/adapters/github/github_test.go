@@ -224,6 +224,17 @@ func TestVerifyEvidenceAndRunArtifacts(t *testing.T) {
 	}
 }
 
+func TestBranchRules(t *testing.T) {
+	c := CLI{Runner: &proc.Fake{Responses: map[string]proc.FakeResponse{
+		"gh api repos/o/r/rules/branches/main?per_page=100": {Stdout: `[{"type":"deletion","ruleset_id":1},` +
+			`{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":false,"required_status_checks":[{"context":"test","integration_id":15368},{"context":"build"}]}}]`},
+	}}}
+	rules, err := c.BranchRules(context.Background(), "o/r", "main")
+	if err != nil || len(rules) != 2 || rules[0].Type != "deletion" || strings.Join(rules[1].Checks, ",") != "test,build" {
+		t.Errorf("reguły: %+v, %v", rules, err)
+	}
+}
+
 func TestReleaseTag(t *testing.T) {
 	f := &proc.Fake{Responses: map[string]proc.FakeResponse{
 		"gh api repos/{owner}/{repo}/git/ref/tags/v0.4.0": {Stdout: `{"ref":"refs/tags/v0.4.0","object":{"sha":"t1","type":"tag"}}`},

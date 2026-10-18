@@ -178,7 +178,7 @@ func TestSyncIssue(t *testing.T) {
 	}{
 		{"blokujące, brak issue — otwiera", []vuln.Report{blocking, cleanGo}, nil, 0, "create ### Podatności obrazu api", cli.ExitOK},
 		{"blokujące, issue otwarte — aktualizuje", []vuln.Report{blocking, cleanGo}, nil, 7, "edit 7 ### Podatności obrazu api", cli.ExitOK},
-		{"czysto, issue otwarte — zamyka", []vuln.Report{clean, cleanGo}, nil, 7, "close 7 Skan z 2026-10-08: brak blokujących podatności.", cli.ExitOK},
+		{"czysto, issue otwarte — zamyka", []vuln.Report{clean, cleanGo}, nil, 7, "close 7 Skan z 2026-10-08: brak blokujących podatności i wyjątków wygasających w ciągu tygodnia.", cli.ExitOK},
 		{"czysto, brak issue — nic", []vuln.Report{clean, cleanGo}, nil, 0, "", cli.ExitOK},
 		// Brak raportu to brak wiedzy: issue nie jest zamykane, a bieg nie
 		// wygląda na kompletny.
@@ -214,5 +214,23 @@ func TestSyncIssue(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestSyncIssueExpiring: wyjątek, który wygaśnie w ciągu tygodnia, otwiera
+// issue także bez blokujących podatności i nie pozwala go zamknąć.
+func TestSyncIssueExpiring(t *testing.T) {
+	quiet(t)
+	scanned := time.Date(2026, 10, 21, 3, 30, 0, 0, time.UTC)
+	expiring := vuln.Report{Subject: "obrazu api", Target: "obraz.tar", ScannedAt: scanned, Expiring: []string{"CVE-2026-85091 (zlib) wygasa 2026-10-28"}}
+	cleanGo := vuln.Report{Subject: "kodu narzędzi Go", Target: "tools/", ScannedAt: scanned}
+	for open, want := range map[int]string{0: "create ", 7: "edit 7 "} {
+		i := &issues{open: open}
+		if err := SyncIssue(context.Background(), i, []vuln.Report{expiring, cleanGo}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if len(i.calls) != 1 || !strings.HasPrefix(i.calls[0], want) || !strings.Contains(i.calls[0], "CVE-2026-85091 (zlib) wygasa 2026-10-28") {
+			t.Errorf("issue %d: wywołania %v", open, i.calls)
+		}
 	}
 }

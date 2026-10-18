@@ -148,7 +148,7 @@ wersji charta w trakcie → kod 1, bez tagu; kod bramek z niezatwierdzonymi zmia
 | W1 szybka | PR, push `main`, noc | równolegle: `test` — wersje, lint, kontrakt, gitleaks na historii, Python, charty z politykami, Go z `-race`, govulncheck; `build` albo `build-publish` — obraz, baza, testy na musl, warunki Etapu 1, powtarzalność; `negatives` — warianty negatywne; `tools` — powtarzalność narzędzi | 6 min [ŻYCZENIE: zmierzone 2026-10-15, przed zrównolegleniem — 15,3 min] | tak: `fast-feedback` |
 | W2 integracja przed scaleniem | PR, push `main`, noc | po `test` i `build`: `cluster` — klaster `ci`, wdrożenie, tożsamość, drain każdego węzła, OpenBao, rotacja, TLS, dowody; `vulns` — skan obrazu | 20 min [ŻYCZENIE: zmierzone 2026-10-15 — 23,7 min] | tak: `integration` |
 | W3 po scaleniu | push `main` | `attest`, `chart`, `attest-chart`: pochodzenie i SBOM, atestacja, chart OCI z digestem przetestowanym | 30 min (2026-10-15: 24,1 min) | nie (czerwony → §3.6) |
-| W4 noc | `schedule`, `workflow_dispatch` | W1 i W2 na `main`, `vulns-issue` [ŻYCZENIE: negatywy na klastrze, upgrade N-1 → N, dryf ustawień, świeżość, kalendarz dat] | 40 min (2026-10-15: 23,9 min) | nie |
+| W4 noc | `schedule`, `workflow_dispatch` | W1 i W2 na `main`; `vulns-issue` z wyjątkami wygasającymi w ciągu tygodnia; `settings-drift`; `main-health` (także na push) [ŻYCZENIE: negatywy na klastrze, upgrade N-1 → N] | 40 min (2026-10-15: 23,9 min) | nie |
 | W5 wydanie | tag `vX.Y.Z` | `release`, `attest-release`, `vulns` z polityką wydania, `promote` po zgodzie | 10 min do oczekiwania na zgodę (2026-10-15: 2,3 min) | nie (zatwierdza autor) |
 
 Egzekwuje: [ŻYCZENIE: `dft check workflows` — zadanie bez znacznika warstwy to błąd;
@@ -164,7 +164,8 @@ pominięte, i przechodzą tylko wtedy, gdy każde zadanie warstwy ma wynik succe
 wykonuje bramkę, nie jest wymaganym statusem.
 Egzekwuje: `dft check workflows` — wymagany status to zadanie workflowu na pull_request
 z `always()` w warunku; `ci:require`; ruleset stosowany przez `dft repo-settings`; pola
-chronione (§8.3) [ŻYCZENIE: noc porównuje efektywną regułę z plikiem]. Dowód: efektywne reguły
+chronione (§8.3); noc porównuje reguły działające na `main` z plikiem
+(`dft repo-settings --check`, §6.7). Dowód: efektywne reguły
 `GET /repos/…/rules/branches/main`, log zadań zbierających. Warstwa: W1, W2.
 Wariant negatywny: wynik skipped w `NEEDS` → `ci:require` kod 1; wymagany status bez
 `always()` albo bez zadania → czerwony `test` (testy `core/workflow`, `cmd/dft`).
@@ -175,10 +176,11 @@ Decyzja: 22, 36, 38, 47, 52.
 `main` (`vulns`: na PR-ze blokuje względem obrazu bazowego, na `main` raportuje), ma drugą
 serię: 10 kolejnych scalonych PR-ów, na których ostatnim commicie przeszło za pierwszym
 podejściem.
-Egzekwuje: `dft trial` (`ci:trial`, flaga `--pull-requests`) [ŻYCZENIE: przerwa w serii
-dłuższa niż 48 h przerywa serię]. Dowód: wyjście `ci:trial`. Warstwa: W4 (pomiar), dotyczy
+Egzekwuje: `dft trial` (`ci:trial`, flaga `--pull-requests`); przerwa między biegami nocnymi
+dłuższa niż próg z §10 przerywa serię. Dowód: wyjście `ci:trial`. Warstwa: W4 (pomiar), dotyczy
 W1–W2. Wariant negatywny: bieg ponowiony przerywa serię; PR scalony z czerwonym zadaniem
-przerywa serię PR-ów (testy `stages/trial`). Decyzja: 36, 51.
+przerywa serię PR-ów; dwie noce bez biegu przerywają serię (testy `stages/trial`).
+Decyzja: 36, 51, 54.
 
 **3.4 Bez automatycznych ponowień.** Ani workflow, ani `dft` nie ponawia nieudanej bramki;
 ponawianie wywołań zewnętrznych (429, rejestr) tylko w adapterze, z limitem i logiem.
@@ -197,10 +199,11 @@ W2 przed zadaniem W1 w grafie → reguła grafu zgłasza]. Decyzja: 36, 52.
 **3.6 Czerwony `main`.** Właściciel naprawia w ≤ 24 h (revert przed poprawką); w tym czasie
 scalane są tylko poprawki, auto-merge Dependabota jest wstrzymany, staging świadomie zamrożony.
 Egzekwuje: graf zadań — `chart` publikuje się tylko po zielonych `cluster`, `negatives`
-i `tools`, więc czerwony `main` zamraża staging [ŻYCZENIE: `dft ci main-health` w nocy i na
-push]. Dowód: [ŻYCZENIE: issue].
-Warstwa: W3, W4. Wariant negatywny: [ŻYCZENIE: czerwony `main` dłużej niż 24 h → issue
-i wyłączony auto-merge na otwartych PR-ach Dependabota]. Decyzja: 22, 36, 45.
+i `tools`, więc czerwony `main` zamraża staging; `ci:main-health` (zadanie `main-health` na
+push i w nocy) prowadzi issue, gdy `main` jest czerwony dłużej niż próg z §10 albo noc nie
+przyszła [ŻYCZENIE: wstrzymanie auto-merge Dependabota przy czerwonym `main`]. Dowód: issue
+„Zdrowie main”. Warstwa: W3, W4. Wariant negatywny: `main` czerwony od 50 h → issue; czerwony
+od godziny → bez issue (testy `stages/mainhealth`). Decyzja: 22, 36, 45, 54.
 
 ## 4. Artefakty
 
@@ -369,10 +372,13 @@ Decyzja: 20, 22, 23.
 **6.7 Ustawienia repozytorium.** Reguły `main` i tagów, środowiska, auto-merge, push
 protection i wymóg SHA — jako kod w `.github/`, stosowane przez `dft repo-settings`; zmiana
 plików to zmiana kontraktu (§8.3).
-Egzekwuje: `repo:settings`, pola chronione (§8.3) [ŻYCZENIE: noc porównuje efektywny stan
-z plikami]. Dowód: log `test` [ŻYCZENIE: raport nocy]. Warstwa: W1 (pliki) [ŻYCZENIE: W4
-(stan)]. Wariant negatywny: zmiana pliku reguły bez wpisu w DECYZJE → czerwony `test`
-[ŻYCZENIE: reguła zmieniona w UI → noc czerwona]. Decyzja: 22, 38.
+Egzekwuje: `repo:settings`, pola chronione (§8.3), w nocy `dft repo-settings --check`
+(zadanie `settings-drift`): reguły działające na `main` i środowiska — czy wymagają zgody,
+skąd wolno wdrażać [ŻYCZENIE: auto-merge, push protection, wymóg SHA i retencja w porównaniu —
+ich odczyt wymaga uprawnień administratora]. Dowód: log `test`, log nocy. Warstwa: W1 (pliki),
+W4 (stan). Wariant negatywny: zmiana pliku reguły bez wpisu w DECYZJE → czerwony `test`;
+wymagany status albo zgoda zmienione w UI → noc czerwona (testy `stages/reposync`).
+Decyzja: 22, 38, 54.
 
 ## 7. Dowody i retencja
 
@@ -459,10 +465,12 @@ Wariant negatywny: nowe zadanie bez wpisu w DECYZJE → czerwony `test`. Decyzja
 
 **8.7 Daty.** Każda obietnica z datą (wyjątki, klucze, wsparcie wersji, certyfikaty) jest
 w kalendarzu danych; noc ostrzega 7 dni przed datą.
-Egzekwuje: walidacja dat wyjątków podatności (`core/vuln`) [ŻYCZENIE: kalendarz dat
-i ostrzeżenie nocy]. Dowód: log `test` [ŻYCZENIE: issue nocy]. Warstwa: W1 [ŻYCZENIE: W4].
-Wariant negatywny: wyjątek podatności z datą dalej niż 90 dni → czerwony `test`
-[ŻYCZENIE: wpis z datą za 6 dni → issue; za 8 dni → brak]. Decyzja: 37.
+Egzekwuje: walidacja dat wyjątków podatności (`core/vuln`); wyjątek wygasający w ciągu progu
+z §10 trafia do issue nocnego i trzyma je otwarte (`vulns:issue`) [ŻYCZENIE: kalendarz
+pozostałych dat — klucz aplikacji auto-merge, wsparcie wersji, certyfikaty]. Dowód: log `test`,
+issue nocne. Warstwa: W1, W4. Wariant negatywny: wyjątek z datą dalej niż 90 dni → czerwony
+`test`; wyjątek wygasający za 7 dni → issue, za 8 dni → brak (testy `core/vuln`,
+`stages/vulns`). Decyzja: 37, 54.
 
 **8.8 Czas feedbacku** jest ważniejszy niż kompletność warstwy szybkiej; kompletność przed
 scaleniem zapewnia W2.
@@ -503,7 +511,10 @@ docelowe bez strażnika (budżety warstw, Z, pokrycie) stoją w klauzulach, w zn
 | §5.5 | faza rotacji sekretu na podzie | ≤ 4m0s | cmd/dft (rotation) |
 | §5.6 | samonaprawa jednej zmiany | ≤ 1m0s | cmd/dft (selfheal) |
 | §6.2 | punkt odniesienia skanu obrazu na PR-ze | obraz commita bazowego albo najbliższego z 10 przodków | stages/vulns |
+| §3.3 | przerwa między biegami nocnymi w serii | ≤ 48h0m0s | stages/trial, stages/mainhealth |
+| §3.6 | czerwony main bez issue | ≤ 24h0m0s | stages/mainhealth |
 | §6.2 | ważność wyjątku podatności | ≤ 90 dni | core/vuln |
+| §8.7 | ostrzeżenie przed wygaśnięciem wyjątku | 168h0m0s przed datą, w issue nocnym | stages/vulns, stages/gocode |
 <!-- progi: koniec -->
 
 Koniec kontraktu. Zmiana: §0.3. Wyjątek: §0.4.

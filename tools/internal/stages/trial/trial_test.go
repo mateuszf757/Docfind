@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/ci"
 )
@@ -158,5 +160,35 @@ func TestPullRequestStreak(t *testing.T) {
 				t.Errorf("seria %d (%q), oczekiwano %d (%q)", got.Streak, got.Reason, tt.wantStreak, tt.wantReason)
 			}
 		})
+	}
+}
+
+// TestStreakNightlyGap: dwie noce bez biegu przerywają serię; tak samo noc,
+// która od dwóch dni nie przyszła.
+func TestStreakNightlyGap(t *testing.T) {
+	at := func(id int64, event, created string) ci.Run {
+		r := run(id, event, 1)
+		r.CreatedAt = created
+		return r
+	}
+	now := func() time.Time { return time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC) }
+	c := checker(runs{
+		runs: []ci.Run{at(5, "schedule", "2026-10-20T03:17:00Z"), at(4, "push", "2026-10-19T12:00:00Z"), at(3, "schedule", "2026-10-17T03:17:00Z"), at(2, "schedule", "2026-10-16T03:17:00Z")},
+		jobs: map[int64]string{5: "success", 4: "success", 3: "success", 2: "success"},
+	})
+	c.Now = now
+	got, err := c.Streak(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Streak != 2 || !strings.HasPrefix(got.Reason, "przerwa w nocach: 72h0m0s bez biegu nocnego po 2026-10-17") {
+		t.Errorf("seria %d (%q)", got.Streak, got.Reason)
+	}
+
+	c = checker(runs{runs: []ci.Run{at(9, "schedule", "2026-10-17T03:17:00Z")}, jobs: map[int64]string{9: "success"}})
+	c.Now = now
+	got, err = c.Streak(context.Background())
+	if err != nil || got.Streak != 0 || !strings.HasPrefix(got.Reason, "przerwa w nocach") {
+		t.Errorf("noc sprzed trzech dni: seria %d (%q), %v", got.Streak, got.Reason, err)
 	}
 }

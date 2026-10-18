@@ -207,17 +207,28 @@ func (w *workspace) evidenceTools() (artifact.EvidenceTools, error) {
 	return artifact.EvidenceTools{MiseLockSHA256: hex.EncodeToString(sum[:]), DftRevision: revision, GoVersion: runtime.Version()}, nil
 }
 
+// runRepoSettings stosuje ustawienia z plików albo, z --check, tylko
+// porównuje je z GitHubem (noc, decyzja 54).
 func runRepoSettings(ctx context.Context, w *workspace, args []string) error {
-	if err := expectArgs(args, 0, 1, "dft repo-settings [--dry-run]"); err != nil {
+	const usage = "dft repo-settings [--dry-run | --check]"
+	if err := expectArgs(args, 0, 1, usage); err != nil {
 		return err
 	}
-	if len(args) == 1 && args[0] != "--dry-run" {
-		return cli.Usage("użycie: dft repo-settings [--dry-run]")
+	mode := ""
+	if len(args) == 1 {
+		mode = args[0]
+	}
+	if mode != "" && mode != "--dry-run" && mode != "--check" {
+		return cli.Usage("użycie: %s", usage)
 	}
 	if err := requireTools("gh"); err != nil {
 		return err
 	}
-	return reposync.Settings{Root: w.root, GitHub: w.gh(), DryRun: len(args) == 1}.Apply(ctx)
+	s := reposync.Settings{Root: w.root, GitHub: w.gh(), DryRun: mode == "--dry-run"}
+	if mode == "--check" {
+		return s.Check(ctx)
+	}
+	return s.Apply(ctx)
 }
 
 // runTrial mówi, czy zadania CI skończyły okres próbny i ich statusy mogą

@@ -22,7 +22,9 @@ type Report struct {
 	Findings    []Finding  `json:"findings"`
 	Blocking    int        `json:"blocking"`
 	Unused      []string   `json:"unused_exceptions,omitempty"`
-	ReportOnly  bool       `json:"report_only"`
+	// Expiring — wyjątki, które wygasną w ciągu tygodnia (ExceptionWarning).
+	Expiring   []string `json:"expiring_exceptions,omitempty"`
+	ReportOnly bool     `json:"report_only"`
 }
 
 // Summary — raport jako Markdown (podsumowanie biegu, sekcja issue).
@@ -45,6 +47,9 @@ func (r Report) Summary() string {
 			block = "tak"
 		}
 		fmt.Fprintf(&b, "| %s | %s | %s %s | %s | %s | %s |\n", f.Severity, f.ID, f.Package, f.Version, strings.Join(f.Fixed, ", "), block, strings.ReplaceAll(f.Note, "|", "/"))
+	}
+	if len(r.Expiring) > 0 {
+		fmt.Fprintf(&b, "\n**Wyjątki wygasające w ciągu tygodnia:** %s — popraw albo przedłuż z uzasadnieniem w `%s`.\n", strings.Join(r.Expiring, "; "), ExceptionsFile)
 	}
 	fmt.Fprintf(&b, "\n%s, bazy: ", r.Scanner)
 	for i, db := range r.Databases {
@@ -75,6 +80,6 @@ func IssueBody(reports []Report, missing []string) string {
 	if len(missing) > 0 {
 		fmt.Fprintf(&b, "**Bez raportu:** %s — skan się nie wykonał, więc o jego podatnościach nic nie wiadomo.\n\n", strings.Join(missing, ", "))
 	}
-	b.WriteString("Issue prowadzi `dft vulns-issue` z nocnego biegu workflowu ci — zamknie je sam, gdy wszystkie skany wykonają się bez blokujących podatności.\n")
+	b.WriteString("Issue prowadzi `dft vulns-issue` z nocnego biegu workflowu ci — zamknie je sam, gdy wszystkie skany wykonają się bez blokujących podatności i bez wyjątków wygasających w ciągu tygodnia.\n")
 	return b.String()
 }

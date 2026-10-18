@@ -255,6 +255,10 @@ run = "ci/dft dns-token"
 description = "Wynik zadania zbierającego warstwę CI z NEEDS (toJSON(needs)): zielone tylko przy samych sukcesach — pominięte to nie zaliczone (decyzja 52)"
 run = "ci/dft ci require"
 
+[tasks."ci:main-health"]
+description = "Zdrowie main do issue: czerwony main dłużej niż doba, noc, która nie przyszła (decyzja 54); --dry-run tylko wypisuje"
+run = "ci/dft ci main-health"
+
 [tasks."ci:trial"]
 description = "Okres próbny zadań cluster i vulns: po 10 zielonych biegów z rzędu na main (push, nocą), bez ponowień, a vulns także 10 scalonych PR-ów (tryb PR blokuje, na main raportuje) — potem statusy do rulesetu"
 run = "ci/dft trial --pull-requests vulns 10 cluster vulns"

@@ -7,6 +7,7 @@ package reposettings
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -52,21 +53,29 @@ func LoadRulesets(root string) ([]Ruleset, error) {
 	return rulesets, nil
 }
 
-// RequiredChecks — nazwy statusów wymaganych przez reguły
+// Rule — reguła gałęzi: typ i, dla required_status_checks, wymagane
+// statusy.
+type Rule struct {
+	Type   string
+	Checks []string
+}
+
+// BranchRules — reguły z rulesetów dla gałęzi (target branch)
 // z .github/rulesets, w kolejności plików i reguł.
-func RequiredChecks(root string) ([]string, error) {
+func BranchRules(root string) ([]Rule, error) {
 	rulesets, err := LoadRulesets(root)
 	if err != nil {
 		return nil, err
 	}
-	var checks []string
+	var rules []Rule
 	for _, r := range rulesets {
 		raw, err := os.ReadFile(r.File)
 		if err != nil {
 			return nil, err
 		}
 		var rs struct {
-			Rules []struct {
+			Target string `json:"target"`
+			Rules  []struct {
 				Type       string `json:"type"`
 				Parameters struct {
 					Checks []struct {
@@ -78,16 +87,72 @@ func RequiredChecks(root string) ([]string, error) {
 		if err := json.Unmarshal(raw, &rs); err != nil {
 			return nil, cli.Unmet("%s: %v", r.File, err)
 		}
+		if rs.Target != "branch" {
+			continue
+		}
 		for _, rule := range rs.Rules {
-			if rule.Type != "required_status_checks" {
-				continue
-			}
+			out := Rule{Type: rule.Type}
 			for _, c := range rule.Parameters.Checks {
-				checks = append(checks, c.Context)
+				out.Checks = append(out.Checks, c.Context)
 			}
+			rules = append(rules, out)
 		}
 	}
+	return rules, nil
+}
+
+// RequiredChecks — nazwy statusów wymaganych przez reguły gałęzi
+// z .github/rulesets.
+func RequiredChecks(root string) ([]string, error) {
+	rules, err := BranchRules(root)
+	if err != nil {
+		return nil, err
+	}
+	var checks []string
+	for _, r := range rules {
+		checks = append(checks, r.Checks...)
+	}
 	return checks, nil
+}
+
+// RulesDrift — różnice między regułami z plików (want) a działającymi
+// w GitHubie (got): typ reguły tylko po jednej stronie i inna lista
+// wymaganych statusów.
+func RulesDrift(want, got []Rule) []string {
+	types := func(rules []Rule) []string {
+		var out []string
+		for _, r := range rules {
+			if !slices.Contains(out, r.Type) {
+				out = append(out, r.Type)
+			}
+		}
+		slices.Sort(out)
+		return out
+	}
+	checks := func(rules []Rule) []string {
+		var out []string
+		for _, r := range rules {
+			out = append(out, r.Checks...)
+		}
+		slices.Sort(out)
+		return slices.Compact(out)
+	}
+	var found []string
+	w, g := types(want), types(got)
+	for _, t := range w {
+		if !slices.Contains(g, t) {
+			found = append(found, fmt.Sprintf("reguła %s z pliku nie działa w GitHubie — ./bin/mise run repo:settings", t))
+		}
+	}
+	for _, t := range g {
+		if !slices.Contains(w, t) {
+			found = append(found, fmt.Sprintf("reguła %s działa w GitHubie, a nie ma jej w .github/rulesets — zmiana spoza kodu", t))
+		}
+	}
+	if wc, gc := checks(want), checks(got); !slices.Equal(wc, gc) {
+		found = append(found, fmt.Sprintf("wymagane statusy: w pliku %v, w GitHubie %v", wc, gc))
+	}
+	return found
 }
 
 // Environment — środowisko GitHuba z .github/environments/<nazwa>.json.

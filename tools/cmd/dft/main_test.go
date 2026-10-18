@@ -84,6 +84,8 @@ func TestUsageErrors(t *testing.T) {
 		"okres próbny z N=0":            func() error { return runTrial(ctx, w, []string{"0", "cluster"}) },
 		"PR-y zadania spoza listy":      func() error { return runTrial(ctx, w, []string{"--pull-requests", "vulns", "10", "cluster"}) },
 		"ustawienia z nieznaną flagą":   func() error { return runRepoSettings(ctx, w, []string{"--force"}) },
+		"ustawienia z dwoma trybami":    func() error { return runRepoSettings(ctx, w, []string{"--check", "--dry-run"}) },
+		"ci z nieznanym poleceniem":     func() error { return runCI(ctx, w, []string{"budget"}) },
 		"tożsamość bez pola":            func() error { return runIdentity(ctx, w, nil) },
 		"promocja bez numeru wydania":   func() error { return runPromote(ctx, w, []string{"ghcr.io/x/api@sha256:abc"}) },
 		"wydanie bez numeru":            func() error { return runRelease(ctx, w, nil) },

@@ -153,6 +153,10 @@ func (s Scan) Run(ctx context.Context, target Target, baselineCommit string, rep
 	}
 
 	rep.Findings, rep.Unused = policy.Evaluate(findings)
+	rep.Expiring = vuln.Expiring(s.Exceptions, s.Today, contract.ExceptionWarning)
+	for _, e := range rep.Expiring {
+		cli.Warn("wyjątek %s — popraw albo przedłuż z uzasadnieniem w %s", e, vuln.ExceptionsFile)
+	}
 	for _, f := range rep.Findings {
 		if f.Blocking {
 			rep.Blocking++
@@ -225,29 +229,33 @@ func SyncIssue(ctx context.Context, issues Issues, reports []vuln.Report, missin
 	if len(reports) == 0 {
 		return cli.Unmet("żaden nocny skan nie dał raportu (%s) — issue bez zmian", strings.Join(missing, ", "))
 	}
-	blocking := 0
+	blocking, expiring := 0, 0
 	for _, r := range reports {
 		blocking += r.Blocking
+		expiring += len(r.Expiring)
 	}
 	number, err := issues.FindIssue(ctx, vuln.IssueTitle)
 	if err != nil {
 		return err
 	}
+	// Wyjątek, który wygaśnie w ciągu tygodnia, trzyma issue otwarte tak jak
+	// blokująca podatność: za tydzień nią będzie (§8.7 kontraktu).
+	open := blocking > 0 || expiring > 0
 	switch body := vuln.IssueBody(reports, missing); {
-	case blocking > 0 && number == 0:
+	case open && number == 0:
 		if err := issues.CreateIssue(ctx, vuln.IssueTitle, body); err != nil {
 			return err
 		}
-		cli.Step("issue „%s” otwarte: %d blokujących", vuln.IssueTitle, blocking)
-	case blocking > 0:
+		cli.Step("issue „%s” otwarte: %d blokujących, %d wyjątków wygasa w ciągu tygodnia", vuln.IssueTitle, blocking, expiring)
+	case open:
 		if err := issues.EditIssue(ctx, number, body); err != nil {
 			return err
 		}
-		cli.Step("issue #%d zaktualizowane: %d blokujących", number, blocking)
+		cli.Step("issue #%d zaktualizowane: %d blokujących, %d wyjątków wygasa w ciągu tygodnia", number, blocking, expiring)
 	case len(missing) > 0:
 		cli.Warn("brak blokujących w %d raportach, ale skany bez raportu nie pozwalają zamknąć issue", len(reports))
 	case number != 0:
-		if err := issues.CloseIssue(ctx, number, fmt.Sprintf("Skan z %s: brak blokujących podatności.", reports[0].ScannedAt.Format("2006-01-02"))); err != nil {
+		if err := issues.CloseIssue(ctx, number, fmt.Sprintf("Skan z %s: brak blokujących podatności i wyjątków wygasających w ciągu tygodnia.", reports[0].ScannedAt.Format("2006-01-02"))); err != nil {
 			return err
 		}
 		cli.Step("issue #%d zamknięte — brak blokujących podatności", number)

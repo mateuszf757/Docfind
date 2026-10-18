@@ -35,6 +35,8 @@ type GitHub interface {
 	BranchPolicies(ctx context.Context, repo, env string) (map[reposettings.Policy]int64, error)
 	AddBranchPolicy(ctx context.Context, repo, env string, p reposettings.Policy) error
 	DeleteBranchPolicy(ctx context.Context, repo, env string, id int64) error
+	BranchRules(ctx context.Context, repo, branch string) ([]reposettings.Rule, error)
+	RequiresApproval(ctx context.Context, repo, env string) (bool, error)
 }
 
 // Settings stosuje ustawienia repozytorium w Root.
@@ -167,4 +169,61 @@ func (s Settings) environment(ctx context.Context, repo string, e reposettings.E
 		}
 	}
 	return nil
+}
+
+// Check porównuje ustawienia w GitHubie z plikami, niczego nie zmieniając
+// (`dft repo-settings --check`, noc — §6.7 kontraktu): reguły działające na
+// main (typy i wymagane statusy) i środowiska (czy wymagają zgody, skąd
+// wolno wdrażać). Różnica to NIESPEŁNIONE — zmiana w UI albo plik
+// niezastosowany po scaleniu. Odczyty są dostępne tokenem zadania.
+func (s Settings) Check(ctx context.Context) error {
+	repo, err := s.GitHub.Repo(ctx)
+	if err != nil {
+		return err
+	}
+	want, err := reposettings.BranchRules(s.Root)
+	if err != nil {
+		return err
+	}
+	got, err := s.GitHub.BranchRules(ctx, repo, "main")
+	if err != nil {
+		return err
+	}
+	envs, err := reposettings.LoadEnvironments(s.Root)
+	if err != nil {
+		return err
+	}
+	v := &cli.Verdict{}
+	for _, f := range reposettings.RulesDrift(want, got) {
+		v.Fail("main: %s", f)
+	}
+	var names []string
+	for _, e := range envs {
+		names = append(names, e.Name)
+		approval, err := s.GitHub.RequiresApproval(ctx, repo, e.Name)
+		if err != nil {
+			return err
+		}
+		if wantApproval := len(e.Reviewers) > 0; approval != wantApproval {
+			v.Fail("środowisko %s: zgoda recenzenta w GitHubie %v, w pliku %v", e.Name, approval, wantApproval)
+		}
+		existing, err := s.GitHub.BranchPolicies(ctx, repo, e.Name)
+		if err != nil {
+			return err
+		}
+		have := slices.SortedFunc(maps.Keys(existing), comparePolicies)
+		wantPolicies := slices.SortedFunc(slices.Values(e.Policies), comparePolicies)
+		if !slices.Equal(have, wantPolicies) {
+			v.Fail("środowisko %s: w GitHubie wolno wdrażać z %v, w pliku z %v", e.Name, have, wantPolicies)
+		}
+	}
+	if v.Failed() {
+		return v.Err("ustawienia repozytorium różnią się od plików — zmiana w UI albo plik niezastosowany: ./bin/mise run repo:settings")
+	}
+	cli.Step("ustawienia w GitHubie zgodne z plikami: reguły main, środowiska %s", strings.Join(names, ", "))
+	return nil
+}
+
+func comparePolicies(a, b reposettings.Policy) int {
+	return strings.Compare(a.Type+" "+a.Name, b.Type+" "+b.Name)
 }

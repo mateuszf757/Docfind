@@ -64,6 +64,18 @@ const (
 	// bazowego jeszcze nie ma: main publikuje obraz ok. 10 min po scaleniu,
 	// a każdy commit main ma obraz, chyba że jego build padł (§6.2).
 	VulnsBaselineAncestors = 10
+	// MainRedLimit — najdłużej czerwony main, zanim noc otworzy issue
+	// (§3.6): właściciel naprawia w dobę, revert przed poprawką.
+	MainRedLimit = 24 * time.Hour
+	// NightlyGap — najdłuższa przerwa między biegami nocnymi: dłuższa
+	// przerywa serię okresu próbnego i jest zgłaszana jako brak nocy (§3.3,
+	// §3.6). GitHub pomija harmonogram w szczycie i wyłącza go po 60 dniach
+	// bez aktywności w repozytorium publicznym.
+	NightlyGap = 48 * time.Hour
+	// ExceptionWarning — z takim wyprzedzeniem noc ostrzega przed
+	// wygaśnięciem wyjątku podatności (§8.7): tydzień na poprawkę albo
+	// przedłużenie z uzasadnieniem.
+	ExceptionWarning = 7 * 24 * time.Hour
 )
 
 // Threshold — wiersz tabeli progów.
@@ -90,7 +102,10 @@ func Thresholds() []Threshold {
 		{"§5.5", "faza rotacji sekretu na podzie", fmt.Sprintf("≤ %v", RotationPhaseBudget), "cmd/dft (rotation)"},
 		{"§5.6", "samonaprawa jednej zmiany", fmt.Sprintf("≤ %v", SelfHealBudget), "cmd/dft (selfheal)"},
 		{"§6.2", "punkt odniesienia skanu obrazu na PR-ze", fmt.Sprintf("obraz commita bazowego albo najbliższego z %d przodków", VulnsBaselineAncestors), "stages/vulns"},
+		{"§3.3", "przerwa między biegami nocnymi w serii", fmt.Sprintf("≤ %v", NightlyGap), "stages/trial, stages/mainhealth"},
+		{"§3.6", "czerwony main bez issue", fmt.Sprintf("≤ %v", MainRedLimit), "stages/mainhealth"},
 		{"§6.2", "ważność wyjątku podatności", fmt.Sprintf("≤ %d dni", vuln.MaxExceptionDays), "core/vuln"},
+		{"§8.7", "ostrzeżenie przed wygaśnięciem wyjątku", fmt.Sprintf("%v przed datą, w issue nocnym", ExceptionWarning), "stages/vulns, stages/gocode"},
 	}
 }
 
