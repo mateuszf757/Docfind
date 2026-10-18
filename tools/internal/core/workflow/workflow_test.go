@@ -209,16 +209,190 @@ func TestLoadNeedsWorkflows(t *testing.T) {
 	}
 }
 
-// TestRepositoryWorkflows — workflowy repozytorium spełniają regułę. Ten test
-// jest czerwony na ci.yml sprzed decyzji 47.
+// TestRepositoryWorkflows — workflowy repozytorium spełniają obie reguły.
+// Ten test jest czerwony na ci.yml sprzed decyzji 47 (łańcuch pominięć)
+// i sprzed decyzji 49 (build z packages: write na PR-ach).
 func TestRepositoryWorkflows(t *testing.T) {
 	workflows, err := Load(repoRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if len(workflows) < 2 {
+		t.Fatalf("workflowy: %d", len(workflows))
+	}
 	for _, w := range workflows {
+		if len(w.Events) == 0 {
+			t.Errorf("%s: brak zdarzeń z on", w.File)
+		}
 		for _, v := range SkipChain(w) {
 			t.Error(v)
 		}
+		for _, v := range WriteOnPullRequest(w) {
+			t.Error(v)
+		}
+	}
+}
+
+// buildBeforeFix — układ ci.yml sprzed decyzji 49: jedno zadanie build na PR
+// i na push, z packages: write, bo publikuje przy push.
+const buildBeforeFix = `
+on:
+  pull_request:
+  push: {branches: [main], tags: ["v*"]}
+  schedule: [{cron: "17 3 * * *"}]
+permissions:
+  contents: read
+jobs:
+  test:
+    if: github.ref_type != 'tag'
+    runs-on: x
+    steps: [{run: "true"}]
+  build:
+    needs: test
+    if: ${{ !cancelled() && needs.test.result == 'success' }}
+    permissions: {contents: read, packages: write}
+    runs-on: x
+    steps: [{run: "true"}]
+  attest:
+    needs: build
+    if: ${{ !cancelled() && github.event_name == 'push' && needs.build.result == 'success' }}
+    permissions: {id-token: write, attestations: write, packages: write}
+    runs-on: x
+    steps: [{run: "true"}]
+  release:
+    if: github.ref_type == 'tag'
+    permissions: {contents: read, packages: write}
+    runs-on: x
+    steps: [{run: "true"}]
+  attest-release:
+    needs: release
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
+    permissions: {id-token: write, packages: write}
+    runs-on: x
+    steps: [{run: "true"}]
+  vulns-issue:
+    needs: [test]
+    if: ${{ !cancelled() && github.event_name == 'schedule' }}
+    permissions: {contents: read, issues: write}
+    runs-on: x
+    steps: [{run: "true"}]
+`
+
+// TestWriteOnPullRequestRejectsBuildBeforeFix — wariant, który reguła musi
+// odrzucić: build z packages: write biegnący na PR-ach (logi zadań
+// 115819177283 i 113359704777 — „Packages: write”). Zadania z warunkiem
+// wykluczającym PR (push, tag, schedule — także przez jawny wynik
+// zadania z takim warunkiem) przechodzą.
+func TestWriteOnPullRequestRejectsBuildBeforeFix(t *testing.T) {
+	w, err := Parse("ci.yml", []byte(buildBeforeFix))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := jobsIn(WriteOnPullRequest(w))
+	if strings.Join(got, ",") != "build" {
+		t.Fatalf("naruszenia w %v, oczekiwano [build]", got)
+	}
+	fixed := strings.Replace(buildBeforeFix,
+		"    if: ${{ !cancelled() && needs.test.result == 'success' }}\n    permissions: {contents: read, packages: write}",
+		"    if: ${{ !cancelled() && github.event_name == 'push' && github.ref_type == 'branch' && needs.test.result == 'success' }}\n    permissions: {contents: read, packages: write}", 1)
+	w, err = Parse("ci.yml", []byte(fixed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := WriteOnPullRequest(w); len(got) != 0 {
+		t.Fatalf("po poprawce oczekiwano zero naruszeń, są: %q", got)
+	}
+}
+
+func TestWriteOnPullRequestCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    []string
+	}{
+		{
+			name: "workflow bez pull_request nie dotyczy",
+			content: `
+on: {push: {branches: [main]}}
+jobs:
+  a: {permissions: {packages: write}, runs-on: x, steps: [{run: "true"}]}
+`,
+		},
+		{
+			name: "uprawnienia z workflowu, write-all",
+			content: `
+on: pull_request
+permissions: write-all
+jobs:
+  a: {runs-on: x, steps: [{run: "true"}]}
+`,
+			want: []string{"a"},
+		},
+		{
+			name: "pull_request_target też jest PR-em",
+			content: `
+on: [pull_request_target]
+jobs:
+  a: {permissions: {contents: write}, runs-on: x, steps: [{run: "true"}]}
+`,
+			want: []string{"a"},
+		},
+		{
+			name: "warunek z alternatywą traktowany jako spełniony",
+			content: `
+on: pull_request
+jobs:
+  a: {if: "github.event_name == 'push' || github.event_name == 'pull_request'", permissions: {packages: write}, runs-on: x, steps: [{run: "true"}]}
+`,
+			want: []string{"a"},
+		},
+		{
+			name: "zadanie bez funkcji statusu za zadaniem tylko na push",
+			content: `
+on: [pull_request, push]
+jobs:
+  p: {if: "github.event_name == 'push'", runs-on: x, steps: [{run: "true"}]}
+  q: {needs: p, permissions: {packages: write}, runs-on: x, steps: [{run: "true"}]}
+`,
+		},
+		{
+			name: "always() za zadaniem tylko na push — nadal osiągalne",
+			content: `
+on: [pull_request, push]
+jobs:
+  p: {if: "github.event_name == 'push'", runs-on: x, steps: [{run: "true"}]}
+  q: {needs: p, if: "${{ always() }}", permissions: {packages: write}, runs-on: x, steps: [{run: "true"}]}
+`,
+			want: []string{"q"},
+		},
+		{
+			name: "odczyt i none nie są zapisem",
+			content: `
+on: pull_request
+permissions: {}
+jobs:
+  a: {permissions: {contents: read, pull-requests: read, issues: none}, runs-on: x, steps: [{run: "true"}]}
+`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w, err := Parse("ci.yml", []byte(tt.content))
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := jobsIn(WriteOnPullRequest(w))
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Fatalf("naruszenia w %v, oczekiwano %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConjuncts(t *testing.T) {
+	got := conjuncts("${{ !cancelled() && (a == 'x && y' || b) && needs.c.result == 'success' }}")
+	want := []string{"!cancelled()", "(a == 'x && y' || b)", "needs.c.result == 'success'"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("człony %q, oczekiwano %q", got, want)
 	}
 }

@@ -105,9 +105,10 @@ func (w *workspace) workflows() lint.Workflows {
 	return lint.Workflows{Runner: w.runner, Root: w.root, Out: os.Stdout, Err: os.Stderr}
 }
 
-// checkWorkflows — lintery skryptów i workflowów, potem reguły grafu zadań,
-// których lintery nie znają: pominięcie przechodzi łańcuchem needs na każde
-// zadanie bez funkcji statusu w warunku (decyzja 47).
+// checkWorkflows — lintery skryptów i workflowów, potem reguły, których
+// lintery nie znają: pominięcie przechodzi łańcuchem needs na każde zadanie
+// bez funkcji statusu w warunku (decyzja 47), a zadanie osiągalne
+// z pull_request nie ma tokenu z prawem zapisu (decyzja 49).
 func checkWorkflows(ctx context.Context, w *workspace) error {
 	if err := w.workflows().Check(ctx); err != nil {
 		return err
@@ -117,15 +118,24 @@ func checkWorkflows(ctx context.Context, w *workspace) error {
 		return err
 	}
 	v := &cli.Verdict{}
+	var skips, writes int
 	for _, wf := range workflows {
 		for _, found := range workflow.SkipChain(wf) {
 			v.Fail("%s", found)
+			skips++
+		}
+		for _, found := range workflow.WriteOnPullRequest(wf) {
+			v.Fail("%s", found)
+			writes++
 		}
 	}
-	if !v.Failed() {
+	if skips == 0 {
 		cli.Step("graf zadań: każde zadanie za warunkowym przodkiem patrzy na wyniki jawnie (decyzja 47)")
 	}
-	return v.Err("graf zadań workflowów")
+	if writes == 0 {
+		cli.Step("uprawnienia: żadne zadanie osiągalne z pull_request nie ma prawa zapisu (decyzja 49)")
+	}
+	return v.Err("reguły workflowów")
 }
 
 // checkSecrets — gitleaks na całej historii (warunek Etapu 4). W raporcie

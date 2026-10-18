@@ -1797,6 +1797,10 @@ robi z tego obiekt, a nie skrypt.
 
 ## 46. Argo CD na stagingu: tryb Core, zakres wersji z rejestru, samonaprawa
 
+> Uzupełnione decyzją 49: zdanie „do GHCR pisze tylko workflow `ci` na
+> `main`” opisywało warunki kroków, a nie uprawnienia — zadanie `build`
+> miało `packages: write` na każdym PR-ze. Granicą są teraz uprawnienia.
+
 > Drugi krok Etapu 5. Decyzja 45 ustaliła, co CI publikuje (chart OCI po
 > bramkach klastra); ta — kto i jak wdraża go na staging.
 
@@ -1960,6 +1964,47 @@ daje odmowę zamiast zgody. Tag założony starszą wersją `dft release`, bez
 **Kiedy zmieniam zdanie:** gdy bramki zaczną biec w klastrze z CronJoba,
 po synchronizacji — akceptacja dzieje się wtedy po synchronizacji
 z definicji, a sprawdzanie celu przed i po bramce jest zbędne.
+
+## 49. Prawo zapisu tylko w zadaniach, które nie biegną na PR-ach
+
+> Koryguje decyzję 46 i komentarz w `ci.yml`, który twierdził, że PR-y od
+> Dependabota dostają token tylko do odczytu. Logi zadań `build`: PR #47
+> (job 115819177283) — „Packages: write”; PR Dependabota (job
+> 113359704777) — „Packages: write”, „Secret source: Dependabot”.
+
+**Wybieram granicę w uprawnieniach tokenu, nie w warunkach kroków.**
+Uprawnienia dostaje zadanie, a nie krok. Jedno zadanie `build` publikowało
+przy push, więc miało `packages: write` także na każdym PR-ze, a w tym
+zadaniu biegnie kod z PR-a: `dft` zbudowany z jego drzewa i build obrazu
+z zależnościami podbitymi przez Dependabota. Klucz `permissions` podnosi
+uprawnienia także w workflowach Dependabota („You can use the
+`permissions` key in your workflow to increase the access for the token”).
+Pakiet `charts/docfind` jest połączony z repozytorium
+(`org.opencontainers.image.source`), więc workflowy repozytorium mogą do
+niego pisać, a Argo CD na stagingu bierze z niego najwyższą wersję bez
+weryfikacji przy przyjęciu. „Do GHCR pisze tylko `ci` na `main`” było
+konwencją warunków kroków.
+
+Teraz build na PR-ach i nocą (`build`, wymagany status) ma token tylko do
+odczytu, a build z publikacją na push na `main` to osobne zadanie
+`build-publish` z `packages: write`. Kroki są wspólne — akcja złożona
+`.github/actions/build-image` — więc to wciąż jeden build na commit,
+z tymi samymi sprawdzeniami. `dft check workflows` (także w `dft test`)
+odrzuca zadanie, które może ruszyć na `pull_request` i ma prawo zapisu.
+Osiągalność liczy z koniunkcji w `if`: `github.event_name == 'push'`,
+`github.ref_type == 'tag'` i jawny sukces zadania, które samo nie rusza na
+PR-ze. Człon, którego nie rozpoznaje, uznaje za spełniony.
+
+**Co tracę:** dwa zadania budujące zamiast jednego i zależne zadania
+z warunkami na oba (`vulns`, `cluster`); ścieżkę publikacji sprawdza
+dopiero pierwszy push na `main` po scaleniu, bo PR jej nie uruchamia.
+Akcja z obszaru roboczego (`./.github/actions/…`), a nie składnia `$/…`,
+którą zaleca zizmor 1.30.1: actionlint 1.7.12 jej nie zna, więc zalecenie
+jest wyciszone przy linii. `cache-mode: none` w workflowie publikującym
+(GitHub od 2026-09-10) też czeka — actionlint 1.7.12 odrzuca ten klucz.
+
+**Kiedy zmieniam zdanie:** gdy GitHub pozwoli ustawić uprawnienia zadania
+zależnie od zdarzenia — wtedy jedno zadanie `build`.
 
 ## Czego bym dziś nie powtórzył
 
