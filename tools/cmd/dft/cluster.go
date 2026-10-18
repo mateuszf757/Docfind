@@ -19,6 +19,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/kube"
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/registry"
 	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
+	"github.com/mateuszf757/Docfind/tools/internal/core/contract"
 	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
 	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
@@ -205,8 +206,8 @@ func (w *workspace) drainGate(ctx context.Context, def environment.Definition, c
 			ServiceURL:    fmt.Sprintf("http://%s.%s.svc.cluster.local/search?q=drain", deployment, def.App.Namespace),
 			ProbeImage:    probe,
 			Node:          node,
-			MinRequests:   100,
-			DrainTimeout:  180 * time.Second,
+			MinRequests:   contract.DrainMinRequests,
+			DrainTimeout:  contract.DrainTimeout,
 			RolloutWait:   120 * time.Second,
 			SettleAfter:   5 * time.Second,
 			LeaseDuration: 60 * time.Second,
@@ -257,7 +258,7 @@ func (w *workspace) ingressGate(ctx context.Context, def environment.Definition,
 			HTTPSPort:        def.Cluster.Ports.HTTPS,
 			RenewProduction:  renewProduction,
 			AllowRenewal:     def.Allows(environment.OpTLSRenew),
-			MinRequests:      50,
+			MinRequests:      contract.TLSMinRequests,
 		},
 	}
 	report, err := checker.Run(ctx)

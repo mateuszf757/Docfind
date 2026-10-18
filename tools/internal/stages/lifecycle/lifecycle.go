@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/container"
+	"github.com/mateuszf757/Docfind/tools/internal/core/contract"
 	"github.com/mateuszf757/Docfind/tools/internal/core/loopback"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/poll"
@@ -72,14 +73,14 @@ type Limits struct {
 
 // DefaultLimits to progi warunków Etapu 1.
 var DefaultLimits = Limits{
-	MaxImageUnpackedBytes: 200_000_000,
-	MaxOwnShutdown:        750 * time.Millisecond,
+	MaxImageUnpackedBytes: contract.MaxImageUnpackedBytes,
+	MaxOwnShutdown:        contract.MaxOwnShutdown,
 	TotalShutdownAdvisory: time.Second,
 	StopTimeout:           10 * time.Second,
 	StartupTimeout:        20 * time.Second,
-	RefusalTimeout:        30 * time.Second,
+	RefusalTimeout:        contract.RefusalTimeout,
 	Repeats:               5,
-	InflightDelay:         1500 * time.Millisecond,
+	InflightDelay:         contract.InflightDelay,
 }
 
 // Checker sprawdza jeden obraz.

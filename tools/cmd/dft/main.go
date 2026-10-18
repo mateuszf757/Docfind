@@ -47,7 +47,7 @@ var commands = map[string]command{
 	},
 	"check": {
 		usage: "dft check <bramka> …",
-		help:  "bramki: versions, go, reproducible-tools, workflows, python, charts; obraz: runtime, base, reproducible, negatives, published, attestation, vulns; klaster: drain, tls, identity, cluster-negatives",
+		help:  "bramki: versions, go, reproducible-tools, workflows, contract, python, charts; obraz: runtime, base, reproducible, negatives, published, attestation, vulns; klaster: drain, tls, identity, cluster-negatives",
 		run:   runCheck,
 	},
 	"build": {
@@ -66,9 +66,14 @@ var commands = map[string]command{
 		run:   runReleaseImage,
 	},
 	"test": {
-		usage: "dft test [--vulns-baseline <commit>] [--vulns-report-only]",
-		help:  "zadanie test z CI: wersje, workflowy, Python, charty, kod Go; flagi — tryb govulncheck (decyzja 37)",
+		usage: "dft test [--event <zdarzenie> --base <commit>]",
+		help:  "zadanie test z CI: wersje, workflowy, kontrakt, Python, charty, kod Go; zmiana względem commita bazowego (decyzje 37, 50)",
 		run:   runTest,
+	},
+	"contract": {
+		usage: contractUsage,
+		help:  "tabela progów kontraktu z kodu; --write wstawia ją do docs/engineering-contracts.md (decyzja 50)",
+		run:   runContract,
 	},
 	"cluster": {
 		usage: "dft cluster <up [--image <obraz>@sha256:… | --image-archive <plik> --config-digest sha256:…]|down|evidence>",

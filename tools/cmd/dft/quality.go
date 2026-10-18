@@ -29,7 +29,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/stages/vulns"
 )
 
-const checkUsage = "dft check <versions|reproducible-tools|workflows|secrets|python|charts> | <runtime|base|reproducible|negatives> [usługa] | <drain|tls|identity|cluster-negatives|openbao|rotation|selfheal> | published <obraz@digest> <digest konfiguracji> | attestation <obraz@digest> | go [--vulns-baseline <commit>] [--vulns-report-only] | vulns [źródło obrazu]"
+const checkUsage = "dft check <versions|reproducible-tools|workflows|secrets|python|charts> | contract [--base <commit>] | <runtime|base|reproducible|negatives> [usługa] | <drain|tls|identity|cluster-negatives|openbao|rotation|selfheal> | published <obraz@digest> <digest konfiguracji> | attestation <obraz@digest> | go [--vulns-baseline <commit>] [--vulns-report-only] | vulns [źródło obrazu]"
 
 // checks — bramki `dft check <nazwa>`.
 var checks = map[string]func(ctx context.Context, w *workspace, args []string) error{
@@ -37,6 +37,7 @@ var checks = map[string]func(ctx context.Context, w *workspace, args []string) e
 	"go":                 runCheckGo,
 	"reproducible-tools": runCheckReproducibleTools,
 	"workflows":          runCheckWorkflows,
+	"contract":           runCheckContract,
 	"secrets":            runCheckSecrets,
 	"python":             runCheckPython,
 	"charts":             runCheckCharts,
@@ -67,12 +68,12 @@ func runCheck(ctx context.Context, w *workspace, args []string) error {
 	return check(ctx, w, args[1:])
 }
 
-// runTest to zadanie test z CI: wersje, workflowy i skrypty, sekrety
-// w historii gita, Python aplikacji, charty, kod narzędzi. Kończy się na pierwszej grupie, która nie
-// przeszła — każda zakłada, że poprzednie przeszły (dawniej ci/run-tests.sh).
-// Flagi govulncheck — goVulnFlags.
+// runTest to zadanie test z CI: wersje, workflowy i skrypty, kontrakt,
+// sekrety w historii gita, Python aplikacji, charty, kod narzędzi. Kończy się
+// na pierwszej grupie, która nie przeszła — każda zakłada, że poprzednie
+// przeszły (dawniej ci/run-tests.sh). Tryb — testMode.
 func runTest(ctx context.Context, w *workspace, args []string) error {
-	mode, err := parseGoVulnFlags("dft test", args)
+	mode, err := parseTestFlags(args)
 	if err != nil {
 		return err
 	}
@@ -87,10 +88,11 @@ func runTest(ctx context.Context, w *workspace, args []string) error {
 	}{
 		{"spójność wersji", func() error { return checkVersions(ctx, w) }},
 		{"workflowy i skrypty", func() error { return checkWorkflows(ctx, w) }},
+		{"kontrakt inżynierski", func() error { return checkContract(ctx, w, mode.base) }},
 		{"sekrety w historii gita", func() error { return checkSecrets(ctx, w) }},
 		{"Python aplikacji", func() error { return checkPython(ctx, w) }},
 		{"charty", func() error { return checkCharts(ctx, w) }},
-		{"kod Go", func() error { return checkGo(ctx, w, mode) }},
+		{"kod Go", func() error { return checkGo(ctx, w, mode.vulns) }},
 	} {
 		cli.Step("— %s —", step.name)
 		if err := step.run(); err != nil {
@@ -198,6 +200,61 @@ func checkCharts(ctx context.Context, w *workspace) (err error) {
 type goVulnMode struct {
 	baseline   string
 	reportOnly bool
+}
+
+// testUsage — `dft test`; zdarzenie i commit bazowy podaje CI.
+const testUsage = "dft test [--event <zdarzenie GitHuba> [--base <commit>]] | [--base <commit>] [--vulns-baseline <commit>] [--vulns-report-only]"
+
+// testMode — tryb `dft test`. Zmiana ocenia się względem commita bazowego:
+// govulncheck blokuje tylko podatności, których tam nie ma (decyzja 37),
+// a pola chronione kontraktu zmienione względem niego wymagają wpisu
+// w DECYZJE (decyzja 50).
+//
+//	--event pull_request --base REV   PR: oba tryby względem REV
+//	--event <inne>                    push, noc, ręcznie: govulncheck tylko
+//	                                  raportuje, pól chronionych nie ma
+//	                                  z czym porównać (PR już porównał)
+//	bez --event                       lokalnie: --base REV jak na PR-ze,
+//	                                  flagi govulncheck jak w `dft check go`
+//
+// Wybór trybu po zdarzeniu jest tutaj, a nie w `run:` workflowu: warunek
+// w powłoce workflowu lokalnie nie biegnie i nie ma testu (§1.3 kontraktu).
+type testMode struct {
+	vulns goVulnMode
+	base  string
+}
+
+func parseTestFlags(args []string) (testMode, error) {
+	fs := flag.NewFlagSet("dft test", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var event, base string
+	var vulns goVulnMode
+	fs.StringVar(&event, "event", "", "")
+	fs.StringVar(&base, "base", "", "")
+	fs.StringVar(&vulns.baseline, "vulns-baseline", "", "")
+	fs.BoolVar(&vulns.reportOnly, "vulns-report-only", false, "")
+	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
+		return testMode{}, cli.Usage("użycie: %s", testUsage)
+	}
+	switch {
+	case event == "pull_request":
+		if base == "" || vulns != (goVulnMode{}) {
+			return testMode{}, cli.Usage("użycie: %s — na pull_request podaj tylko --base <commit bazowy>", testUsage)
+		}
+		return testMode{vulns: goVulnMode{baseline: base}, base: base}, nil
+	case event != "":
+		// Na push GitHub nie ma commita bazowego PR-a: pusty --base jest
+		// zwykłym wywołaniem z CI, a nie błędem.
+		if base != "" || vulns != (goVulnMode{}) {
+			return testMode{}, cli.Usage("użycie: %s — poza pull_request bez --base i flag govulncheck", testUsage)
+		}
+		return testMode{vulns: goVulnMode{reportOnly: true}}, nil
+	case base != "" && vulns.baseline != "":
+		return testMode{}, cli.Usage("użycie: %s — --base wyznacza już punkt odniesienia govulncheck", testUsage)
+	case base != "":
+		vulns.baseline = base
+	}
+	return testMode{vulns: vulns, base: base}, nil
 }
 
 func parseGoVulnFlags(command string, args []string) (goVulnMode, error) {

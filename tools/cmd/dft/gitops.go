@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/mateuszf757/Docfind/tools/internal/core/contract"
 	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/selfheal"
@@ -38,7 +39,7 @@ func runCheckSelfHeal(ctx context.Context, w *workspace, args []string) error {
 		// po 2 s, każda kolejna w serii trzy razy później (Argo CD 3.5:
 		// --self-heal-backoff-*) — druga zmiana tej bramki to ok. 6 s.
 		// Minuta to zapas na synchronizację.
-		Budget: time.Minute, Interval: time.Second,
+		Budget: contract.SelfHealBudget, Interval: time.Second,
 	}
 	rep, err := gate.Run(ctx)
 	return w.withReport("selfheal-"+def.Name, rep, err)

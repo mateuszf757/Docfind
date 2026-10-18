@@ -5,7 +5,8 @@ w modelu GitOps i dostarczana do klienta jako chart Helma.
 
 Projekt jest budowany warstwa po warstwie, a nie w jednym kawałku — każdy etap ma warunek
 zakończenia dający się sprawdzić bez oceniającego. Uzasadnienia wyborów technicznych,
-razem z ich kosztami, siedzą w [docs/DECYZJE.md](docs/DECYZJE.md).
+razem z ich kosztami, siedzą w [docs/DECYZJE.md](docs/DECYZJE.md); obietnice z progami,
+strażnikami i dowodami — w [docs/engineering-contracts.md](docs/engineering-contracts.md).
 
 ## Stan
 
@@ -126,7 +127,7 @@ ci/                ci/dft (buduje i uruchamia dft) i ci/pins.env (przypięcia)
 deploy/environments/  Definicje środowisk dev, ci, staging, prod czytane przez dft
 bin/mise           Launcher mise w przypiętej wersji — narzędzia i zadania (mise.toml)
 tests/corpus/      Deterministyczny korpus dla testów e2e
-docs/              DECYZJE.md i dokumentacja operacyjna
+docs/              DECYZJE.md, kontrakt inżynierski i dokumentacja operacyjna
 dokumenty/         Roboczy korpus do indeksowania (poza repozytorium)
 ```
 
@@ -235,6 +236,7 @@ i bez sudo.
 ./bin/mise run check:attestation -- ghcr.io/mateuszf757/docfind-api@sha256:…   # atestacje przed promocją
 ./bin/mise run check:tools        # to samo dla narzędzi Go → identyczna binarka
 ./bin/mise run check:secrets      # gitleaks na całej historii gita
+./bin/mise run check:contract -- --base origin/main   # kontrakt; pola chronione względem main (jak na PR-ze)
 ./bin/mise exec -- ci/dft --help  # polecenia dft (wersja, tożsamość, bramki)
 
 ./bin/mise run cluster:up         # klaster k3d + build + helm upgrade --install
