@@ -40,9 +40,11 @@ type Workflow struct {
 	Jobs        map[string]Job
 }
 
-// Job — zadanie: bezpośrednie zależności, warunek (pusty — brak `if`)
+// Job — zadanie: nazwa statusu (pole `name`; puste — identyfikator
+// zadania), bezpośrednie zależności, warunek (pusty — brak `if`)
 // i uprawnienia (nil — dziedziczy z workflowu).
 type Job struct {
+	Name        string
 	Needs       []string
 	If          string
 	Permissions *Permissions
@@ -84,9 +86,10 @@ func HasStatusFunction(condition string) bool {
 }
 
 type rawJob struct {
-	Needs       any `json:"needs"`
-	If          any `json:"if"`
-	Permissions any `json:"permissions"`
+	Name        string `json:"name"`
+	Needs       any    `json:"needs"`
+	If          any    `json:"if"`
+	Permissions any    `json:"permissions"`
 }
 
 type rawWorkflow struct {
@@ -132,7 +135,7 @@ func Parse(file string, raw []byte) (Workflow, error) {
 		if err != nil {
 			return Workflow{}, fmt.Errorf("%s: zadanie %s: permissions: %w", file, name, err)
 		}
-		w.Jobs[name] = Job{Needs: needs, If: cond, Permissions: jobPerms}
+		w.Jobs[name] = Job{Name: j.Name, Needs: needs, If: cond, Permissions: jobPerms}
 	}
 	return w, nil
 }
@@ -401,4 +404,58 @@ func WriteOnPullRequest(w Workflow) []string {
 			w.File, name, strings.Join(writes, ", ")))
 	}
 	return found
+}
+
+// RequiredChecks sprawdza statusy wymagane przez reguły repozytorium:
+// każdy to zadanie workflowu, który biegnie na pull_request, a jego warunek
+// zawiera always(). Status, którego nie daje żadne zadanie, zatrzymuje każdy
+// PR na zawsze. Zadanie wymagane pominięte warunkiem — także dlatego, że
+// zawiódł przodek, gdy warunek nie ma funkcji statusu — raportuje sukces
+// (decyzja 47), więc wymagany status to zadanie zbierające, które biegnie
+// zawsze i samo ocenia wyniki swoich needs (`dft ci require`, decyzja 52).
+func RequiredChecks(workflows []Workflow, required []string) []string {
+	var found []string
+	for _, check := range required {
+		var where []string
+		var always bool
+		for _, w := range workflows {
+			if !slices.ContainsFunc(w.Events, func(e string) bool { return slices.Contains(pullRequestEvents, e) }) {
+				continue
+			}
+			for id, j := range w.Jobs {
+				if j.Name == check || (j.Name == "" && id == check) {
+					where = append(where, w.File+": "+id)
+					always = always || alwaysRuns(j.If)
+				}
+			}
+		}
+		switch {
+		case len(where) == 0:
+			found = append(found, fmt.Sprintf("wymagany status %s: żadne zadanie workflowu uruchamianego na pull_request go nie daje — każdy PR czekałby na niego bez końca", check))
+		case !always:
+			found = append(found, fmt.Sprintf("wymagany status %s (%s): warunek bez always() — zadanie pominięte raportuje sukces; wymagany status to zadanie zbierające z always() i `ci:require` (decyzja 52)", check, strings.Join(where, ", ")))
+		}
+	}
+	return found
+}
+
+// alwaysCall — samo always() jako człon warunku.
+var alwaysCall = regexp.MustCompile(`^always\s*\(\s*\)$`)
+
+// alwaysRuns — warunek, przy którym zadanie biegnie bez względu na wyniki
+// needs: always() jako człon koniunkcji, a żaden inny człon nie patrzy na
+// needs (`always() && needs.x.result == 'success'` pomija zadanie, gdy x
+// zawiedzie). Człony o zdarzeniu są dozwolone.
+func alwaysRuns(condition string) bool {
+	terms := conjuncts(condition)
+	var always bool
+	for _, t := range terms {
+		switch {
+		case alwaysCall.MatchString(t):
+			always = true
+		case strings.Contains(t, "needs.") || HasStatusFunction(t):
+			return false
+		}
+	}
+	return always
 }

@@ -30,10 +30,16 @@ name: ci
 #
 # Build obrazu biegnie także na PR-ach, bo zmiana zależności albo obrazu
 # bazowego sprawdzona samymi testami jednostkowymi trafiłaby do main, zanim
-# ktokolwiek zbudował z nią obraz. Tak wszedł PR #7 od Dependabota. Zadania
-# test i build są wymaganymi sprawdzeniami reguły gałęzi main — na nich czeka
-# auto-merge łatek (dependabot-auto-merge.yml). Dlatego zadania nie mają pola
-# name: nazwa zadania to nazwa statusu, którego wymaga reguła.
+# ktokolwiek zbudował z nią obraz. Tak wszedł PR #7 od Dependabota.
+#
+# Warstwy (decyzja 52): W1 — test, build, tools, negatives, równolegle;
+# W2 — cluster i vulns. Reguła gałęzi main wymaga dwóch statusów:
+# fast-feedback (W1) i integration (W2) — zadań zbierających z always(),
+# które oceniają wyniki warstwy przez `ci:require`. Na nich czeka auto-merge
+# łatek (dependabot-auto-merge.yml). Zadanie wymagane pominięte warunkiem
+# raportuje sukces, więc wymaganym statusem nie jest żadne zadanie, które
+# bramkę wykonuje. Zadania nie mają pola name: nazwa zadania to nazwa
+# statusu.
 #
 # fetch-depth: 0 jest konieczne — git describe bez pełnej historii i tagów
 # zwróci samo sha i wersja wdrożenia (DOCFIND_VERSION) przestanie rosnąć.
@@ -170,20 +176,16 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-      # Dwa buildy narzędzi Go — z pamięcią podręczną i od zera — dają te
-      # same bajty. Sumy trafiają do podsumowania, do porównania z lokalnymi.
-      - name: powtarzalność narzędzi Go
-        run: ./bin/mise run check:tools
-
   # Build obrazu na PR-ach i nocą: archiwum dla zadania cluster, token tylko
   # do odczytu. Uprawnienia dostaje zadanie, a nie krok — jedno zadanie
   # z publikacją przy push miało packages: write także na każdym PR-ze, z kodem
   # PR-a w środku (decyzja 49). Na push na main te same kroki (akcja
   # build-image) wykonuje build-publish, z prawem zapisu do rejestru.
-  # Nazwa zadania to nazwa wymaganego statusu reguły main — bez pola name.
+  # Bez needs: test — biegnie równolegle z nim, więc sygnał z obrazu nie czeka
+  # na lint i testy (decyzja 52). Kosztem jest build także na PR-ze
+  # z czerwonym test; cluster i fast-feedback i tak czekają na oba.
   build:
-    needs: test
-    if: ${{ !cancelled() && github.event_name != 'push' && needs.test.result == 'success' }}
+    if: github.event_name != 'push'
     runs-on: ubuntu-24.04
     # Typowy bieg trwa 4–5 minut; powtarzalność to drugi build.
     timeout-minutes: 30
@@ -215,6 +217,66 @@ jobs:
         uses: ./.github/actions/build-image # zizmor: ignore[self-repository]
         with:
           publish: "false"
+
+  # Powtarzalność narzędzi Go: dwa buildy — z pamięcią podręczną i od zera —
+  # dają te same bajty; sumy trafiają do podsumowania, do porównania
+  # z lokalnymi. Osobne zadanie warstwy W1, równolegle z test i build
+  # (decyzja 52).
+  tools:
+    if: github.ref_type != 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Go (mise)
+        run: ./bin/mise install go
+
+      - name: powtarzalność narzędzi Go
+        run: ./bin/mise run check:tools
+
+  # Warianty, które bramki Etapu 1 muszą odrzucić, na prawdziwym obrazie:
+  # obraz, który wstaje bez konfiguracji, PID 1 bez obsługi SIGTERM, żądanie
+  # w locie dłuższe niż limit dokańczania. Bramka, której nie da się oblać,
+  # niczego nie sprawdza. Własny build tego samego commita, równolegle
+  # z build — w nim warianty czekałyby na drugi build powtarzalności
+  # (decyzja 52). Wariant sprawdza bramkę, a nie obraz; że to ten sam obraz,
+  # mówi powtarzalność builda.
+  negatives:
+    if: github.ref_type != 'tag'
+    runs-on: ubuntu-24.04
+    # Typowy bieg: build ~2 min, warianty ~2,5 min; każdy wariant ma budżet
+    # z rejestru progów (contract.NegativeVariantBudget).
+    timeout-minutes: 20
+    env:
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Wersja z historii i tagów (git describe), jak w build.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Go (mise)
+        run: ./bin/mise install go
+
+      - name: przypięte wersje
+        id: pins
+        run: ./bin/mise run pins
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=${{ steps.pins.outputs.buildkit }}
+
+      - name: build obrazu api
+        run: ./bin/mise run build
+
+      - name: warianty negatywne bramek
+        run: ./bin/mise run test:negatives
 
   # Build i publikacja obrazu na push na main — jedyny build tego commita
   # (decyzja 40). Warunek wyklucza PR-y, więc token z prawem zapisu do
@@ -375,10 +437,11 @@ jobs:
   # bieg, polityka i wyjątki z datą w dft. Na PR-ze punktem odniesienia jest
   # obraz z main dla commita bazowego — blokuje tylko to, co PR wnosi.
   vulns:
-    needs: [build, build-publish, release]
-    # Obraz przychodzi z jednego z trzech zadań: archiwum z build (PR, noc),
-    # digest z build-publish (push na main) albo wydanie z release (tag).
-    if: ${{ !cancelled() && (needs.build.result == 'success' || needs.build-publish.result == 'success' || needs.release.result == 'success') }}
+    needs: [test, build, build-publish, release]
+    # Obraz przychodzi z jednego z trzech zadań: archiwum z build (PR, noc —
+    # jak cluster, także po zielonym test), digest z build-publish (push na
+    # main) albo wydanie z release (tag, bez test).
+    if: ${{ !cancelled() && ((needs.test.result == 'success' && needs.build.result == 'success') || needs.build-publish.result == 'success' || needs.release.result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -555,14 +618,17 @@ jobs:
   # własnym CA, więc działa także na PR-ach od Dependabota i z forków. Na
   # tagu nie biegnie: digest wydania przeszedł ten klaster na main, a potem
   # staging.
-  # Okres próbny (decyzja 36): status nie jest jeszcze wymagany przez regułę
-  # main; `./bin/mise run ci:trial` mówi, kiedy można go dopisać. Klaster
-  # znika razem z maszyną runnera.
+  # Po okresie próbnym (decyzja 36) wymagany przez regułę main pośrednio:
+  # przez zadanie zbierające integration (decyzja 52). Klaster znika razem
+  # z maszyną runnera.
   cluster:
-    needs: [build, build-publish, attest]
-    # Na PR-ze i nocą obraz to archiwum z build; po publikacji — digest
-    # z build-publish, i wtedy cluster czeka na atestację, którą sprawdza.
-    if: ${{ !cancelled() && (needs.build.result == 'success' || (needs.build-publish.result == 'success' && needs.attest.result == 'success')) }}
+    needs: [test, build, build-publish, attest]
+    # Na PR-ze i nocą obraz to archiwum z build, a klaster czeka też na test:
+    # build trwa dłużej, więc nic to nie kosztuje, a PR z czerwonym test nie
+    # zajmuje runnera na 20 minut (decyzja 52). Po publikacji — digest
+    # z build-publish (ten czeka na test), i wtedy cluster czeka na
+    # atestację, którą sprawdza.
+    if: ${{ !cancelled() && ((needs.test.result == 'success' && needs.build.result == 'success') || (needs.build-publish.result == 'success' && needs.attest.result == 'success')) }}
     runs-on: ubuntu-24.04
     # Typowy bieg: utworzenie klastra i platforma ~5 minut, bramki ~4.
     timeout-minutes: 30
@@ -671,13 +737,18 @@ jobs:
   # zielony. Powtarzalny jak obraz: ten sam commit, ten sam digest. dft
   # pobiera go z rejestru po wysłaniu i sprawdza wersję i obraz w wartościach.
   chart:
-    needs: [build-publish, attest, cluster]
+    # Także po zadaniach W1 spoza ścieżki obrazu: warianty negatywne
+    # i powtarzalność narzędzi — bramka, której nie da się oblać, nie
+    # dopuszcza commita na staging (decyzja 52).
+    needs: [build-publish, attest, cluster, negatives, tools]
     if: >-
       ${{
         !cancelled() && github.event_name == 'push' && github.ref_type == 'branch'
         && needs.build-publish.result == 'success'
         && needs.attest.result == 'success'
         && needs.cluster.result == 'success'
+        && needs.negatives.result == 'success'
+        && needs.tools.result == 'success'
       }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -743,3 +814,49 @@ jobs:
           subject-digest: ${{ needs.chart.outputs.digest }}
           push-to-registry: true
           create-storage-record: false
+
+  # Wymagane statusy reguły main (decyzja 52): zadania zbierające warstwy.
+  # always() — biegną także wtedy, gdy zadanie warstwy zawiodło, zostało
+  # anulowane albo pominięte, i są wtedy czerwone: zadanie wymagane pominięte
+  # warunkiem raportuje sukces. Wynik ocenia dft (`ci:require`) z wyników
+  # needs, a nie wyrażenie w YAML-u — reguła ma test. Tylko na PR-ach: reguła
+  # sprawdza statusy przy scaleniu, a na main build zastępuje build-publish.
+  fast-feedback:
+    needs: [test, build, tools, negatives]
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Go (mise)
+        run: ./bin/mise install go
+
+      - name: wynik warstwy W1
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: ./bin/mise run ci:require
+
+  integration:
+    needs: [cluster, vulns]
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Go (mise)
+        run: ./bin/mise install go
+
+      - name: wynik warstwy W2
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: ./bin/mise run ci:require

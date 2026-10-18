@@ -20,6 +20,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/registry"
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/uv"
 	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
+	"github.com/mateuszf757/Docfind/tools/internal/core/reposettings"
 	"github.com/mateuszf757/Docfind/tools/internal/core/vuln"
 	"github.com/mateuszf757/Docfind/tools/internal/core/workflow"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
@@ -109,13 +110,18 @@ func (w *workspace) workflows() lint.Workflows {
 
 // checkWorkflows — lintery skryptów i workflowów, potem reguły, których
 // lintery nie znają: pominięcie przechodzi łańcuchem needs na każde zadanie
-// bez funkcji statusu w warunku (decyzja 47), a zadanie osiągalne
-// z pull_request nie ma tokenu z prawem zapisu (decyzja 49).
+// bez funkcji statusu w warunku (decyzja 47), zadanie osiągalne
+// z pull_request nie ma tokenu z prawem zapisu (decyzja 49), a status
+// wymagany przez regułę main to zadanie zbierające z always() (decyzja 52).
 func checkWorkflows(ctx context.Context, w *workspace) error {
 	if err := w.workflows().Check(ctx); err != nil {
 		return err
 	}
 	workflows, err := workflow.Load(w.root)
+	if err != nil {
+		return err
+	}
+	required, err := reposettings.RequiredChecks(w.root)
 	if err != nil {
 		return err
 	}
@@ -131,11 +137,18 @@ func checkWorkflows(ctx context.Context, w *workspace) error {
 			writes++
 		}
 	}
+	checks := workflow.RequiredChecks(workflows, required)
+	for _, found := range checks {
+		v.Fail("%s", found)
+	}
 	if skips == 0 {
 		cli.Step("graf zadań: każde zadanie za warunkowym przodkiem patrzy na wyniki jawnie (decyzja 47)")
 	}
 	if writes == 0 {
 		cli.Step("uprawnienia: żadne zadanie osiągalne z pull_request nie ma prawa zapisu (decyzja 49)")
+	}
+	if len(checks) == 0 {
+		cli.Step("wymagane statusy %s: zadania zbierające z always() na pull_request (decyzja 52)", strings.Join(required, ", "))
 	}
 	return v.Err("reguły workflowów")
 }

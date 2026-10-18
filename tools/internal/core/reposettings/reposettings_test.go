@@ -82,3 +82,28 @@ func TestLoadRulesets(t *testing.T) {
 		t.Errorf("reguła bez nazwy: %v", err)
 	}
 }
+
+// TestRequiredChecks: statusy wymagane przez reguły z repozytorium i z pliku
+// z dwiema regułami, z których tylko jedna wymaga statusów.
+func TestRequiredChecks(t *testing.T) {
+	checks, err := RequiredChecks(repoRoot)
+	if err != nil || len(checks) == 0 {
+		t.Fatalf("statusy z repozytorium: %v, %v", checks, err)
+	}
+	root := t.TempDir()
+	dir := filepath.Join(root, RulesetsDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ruleset := `{"name":"main","rules":[{"type":"deletion"},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"fast-feedback","integration_id":15368},{"context":"integration"}]}}]}`
+	if err := os.WriteFile(filepath.Join(dir, "main.json"), []byte(ruleset), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "tags.json"), []byte(`{"name":"tagi","rules":[{"type":"update"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checks, err = RequiredChecks(root)
+	if err != nil || !slices.Equal(checks, []string{"fast-feedback", "integration"}) {
+		t.Errorf("statusy: %v, %v", checks, err)
+	}
+}

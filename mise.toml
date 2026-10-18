@@ -251,6 +251,10 @@ run = "ci/dft check cluster-negatives"
 description = "Token API Cloudflare do klastra (DNS-01) — z terminala bez echa albo z potoku"
 run = "ci/dft dns-token"
 
+[tasks."ci:require"]
+description = "Wynik zadania zbierającego warstwę CI z NEEDS (toJSON(needs)): zielone tylko przy samych sukcesach — pominięte to nie zaliczone (decyzja 52)"
+run = "ci/dft ci require"
+
 [tasks."ci:trial"]
 description = "Okres próbny zadań cluster i vulns: po 10 zielonych biegów z rzędu na main (push, nocą), bez ponowień, a vulns także 10 scalonych PR-ów (tryb PR blokuje, na main raportuje) — potem statusy do rulesetu"
 run = "ci/dft trial --pull-requests vulns 10 cluster vulns"

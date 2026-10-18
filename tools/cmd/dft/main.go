@@ -70,6 +70,11 @@ var commands = map[string]command{
 		help:  "zadanie test z CI: wersje, workflowy, kontrakt, Python, charty, kod Go; zmiana względem commita bazowego (decyzje 37, 50)",
 		run:   runTest,
 	},
+	"ci": {
+		usage: ciUsage,
+		help:  "wynik zadania zbierającego warstwę CI z wyników jego needs (NEEDS = toJSON(needs)); pominięte to nie zaliczone (decyzja 52)",
+		run:   runCI,
+	},
 	"contract": {
 		usage: contractUsage,
 		help:  "tabela progów kontraktu z kodu; --write wstawia ją do docs/engineering-contracts.md (decyzja 50)",

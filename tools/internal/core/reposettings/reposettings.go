@@ -52,6 +52,44 @@ func LoadRulesets(root string) ([]Ruleset, error) {
 	return rulesets, nil
 }
 
+// RequiredChecks — nazwy statusów wymaganych przez reguły
+// z .github/rulesets, w kolejności plików i reguł.
+func RequiredChecks(root string) ([]string, error) {
+	rulesets, err := LoadRulesets(root)
+	if err != nil {
+		return nil, err
+	}
+	var checks []string
+	for _, r := range rulesets {
+		raw, err := os.ReadFile(r.File)
+		if err != nil {
+			return nil, err
+		}
+		var rs struct {
+			Rules []struct {
+				Type       string `json:"type"`
+				Parameters struct {
+					Checks []struct {
+						Context string `json:"context"`
+					} `json:"required_status_checks"`
+				} `json:"parameters"`
+			} `json:"rules"`
+		}
+		if err := json.Unmarshal(raw, &rs); err != nil {
+			return nil, cli.Unmet("%s: %v", r.File, err)
+		}
+		for _, rule := range rs.Rules {
+			if rule.Type != "required_status_checks" {
+				continue
+			}
+			for _, c := range rule.Parameters.Checks {
+				checks = append(checks, c.Context)
+			}
+		}
+	}
+	return checks, nil
+}
+
 // Environment — środowisko GitHuba z .github/environments/<nazwa>.json.
 type Environment struct {
 	Name              string `json:"name"`

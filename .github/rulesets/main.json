@@ -24,8 +24,8 @@
       "parameters": {
         "strict_required_status_checks_policy": false,
         "required_status_checks": [
-          { "context": "test", "integration_id": 15368 },
-          { "context": "build", "integration_id": 15368 }
+          { "context": "fast-feedback", "integration_id": 15368 },
+          { "context": "integration", "integration_id": 15368 }
         ]
       }
     }
