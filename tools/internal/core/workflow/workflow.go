@@ -16,6 +16,7 @@ package workflow
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -458,4 +459,28 @@ func alwaysRuns(condition string) bool {
 		}
 	}
 	return always
+}
+
+// CIFile — workflow, którego zadania mają warstwy (core/ci.Layers).
+const CIFile = Dir + "/ci.yml"
+
+// Layerless — zadania workflowu ci bez warstwy i warstwy zadań, których już
+// nie ma (§3.1, §8.6 kontraktu, decyzja 57): budżet liczy się z warstw, więc
+// zadanie poza nimi biegnie poza budżetem.
+func Layerless(w Workflow, layers map[string]string) []string {
+	if w.File != CIFile {
+		return nil
+	}
+	var found []string
+	for _, job := range slices.Sorted(maps.Keys(w.Jobs)) {
+		if _, ok := layers[job]; !ok {
+			found = append(found, fmt.Sprintf("%s: zadanie %s bez warstwy — dopisz je do core/ci.Layers razem z budżetem (decyzja 57)", w.File, job))
+		}
+	}
+	for _, job := range slices.Sorted(maps.Keys(layers)) {
+		if _, ok := w.Jobs[job]; !ok {
+			found = append(found, fmt.Sprintf("%s: core/ci.Layers ma zadanie %s, którego nie ma w workflowie", w.File, job))
+		}
+	}
+	return found
 }

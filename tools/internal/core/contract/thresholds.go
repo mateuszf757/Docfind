@@ -76,6 +76,19 @@ const (
 	// wygaśnięciem wyjątku podatności (§8.7): tydzień na poprawkę albo
 	// przedłużenie z uzasadnieniem.
 	ExceptionWarning = 7 * 24 * time.Hour
+	// BudgetW1 … BudgetW5 — budżet wall-clock warstwy, p95 z BudgetRuns
+	// biegów danego zdarzenia (§3.1, §0.5).
+	BudgetW1 = 6 * time.Minute
+	BudgetW2 = 20 * time.Minute
+	BudgetW3 = 30 * time.Minute
+	BudgetW4 = 40 * time.Minute
+	BudgetW5 = 10 * time.Minute
+	// BudgetRuns, BudgetWarn, BudgetFail — budżet liczy się z tylu ostatnich
+	// zielonych biegów pierwszego podejścia; przekroczenie w BudgetWarn
+	// z nich to ostrzeżenie, w BudgetFail — czerwona noc (§0.5).
+	BudgetRuns = 20
+	BudgetWarn = 3
+	BudgetFail = 5
 )
 
 // Threshold — wiersz tabeli progów.
@@ -102,6 +115,8 @@ func Thresholds() []Threshold {
 		{"§5.5", "faza rotacji sekretu na podzie", fmt.Sprintf("≤ %v", RotationPhaseBudget), "cmd/dft (rotation)"},
 		{"§5.6", "samonaprawa jednej zmiany", fmt.Sprintf("≤ %v", SelfHealBudget), "cmd/dft (selfheal)"},
 		{"§6.2", "punkt odniesienia skanu obrazu na PR-ze", fmt.Sprintf("obraz commita bazowego albo najbliższego z %d przodków", VulnsBaselineAncestors), "stages/vulns"},
+		{"§3.1", "budżet warstw W1 / W2 / W3 / W4 / W5 (p95)", fmt.Sprintf("%v / %v / %v / %v / %v", BudgetW1, BudgetW2, BudgetW3, BudgetW4, BudgetW5), "stages/budget"},
+		{"§0.5", "przekroczenia budżetu w ostatnich biegach", fmt.Sprintf("z %d: ostrzeżenie od %d, czerwona noc od %d", BudgetRuns, BudgetWarn, BudgetFail), "stages/budget"},
 		{"§3.3", "przerwa między biegami nocnymi w serii", fmt.Sprintf("≤ %v", NightlyGap), "stages/trial, stages/mainhealth"},
 		{"§3.6", "czerwony main bez issue", fmt.Sprintf("≤ %v", MainRedLimit), "stages/mainhealth"},
 		{"§6.2", "ważność wyjątku podatności", fmt.Sprintf("≤ %d dni", vuln.MaxExceptionDays), "core/vuln"},

@@ -466,3 +466,18 @@ func TestAlwaysRuns(t *testing.T) {
 		}
 	}
 }
+
+func TestLayerless(t *testing.T) {
+	w, err := Parse(CIFile, []byte("on: push\njobs:\n  test:\n    runs-on: x\n  nowe:\n    runs-on: x\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := Layerless(w, map[string]string{"test": "W1", "stare": "W2"})
+	if len(found) != 2 || !strings.Contains(found[0], "zadanie nowe bez warstwy") || !strings.Contains(found[1], "zadanie stare, którego nie ma") {
+		t.Errorf("Layerless = %q", found)
+	}
+	w.File = Dir + "/inny.yml"
+	if found := Layerless(w, nil); len(found) != 0 {
+		t.Errorf("inny workflow oceniony: %q", found)
+	}
+}

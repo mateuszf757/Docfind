@@ -76,6 +76,19 @@ func (c CLI) RunArtifacts(ctx context.Context, runID int64) ([]artifact.Evidence
 	return list.Artifacts, nil
 }
 
+// RunsByEvent zwraca zakończone biegi workflowu dla zdarzenia, od
+// najnowszego, ze wszystkich gałęzi.
+func (c CLI) RunsByEvent(ctx context.Context, workflow, event string, limit int) ([]ci.Run, error) {
+	var runs struct {
+		Runs []ci.Run `json:"workflow_runs"`
+	}
+	path := fmt.Sprintf("repos/{owner}/{repo}/actions/workflows/%s/runs?event=%s&status=completed&per_page=%d", workflow, event, min(limit, 100))
+	if err := c.api(ctx, &runs, path); err != nil {
+		return nil, err
+	}
+	return runs.Runs, nil
+}
+
 // Jobs zwraca zadania biegu.
 func (c CLI) Jobs(ctx context.Context, runID int64) ([]ci.Job, error) {
 	var jobs struct {

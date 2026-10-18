@@ -36,7 +36,8 @@ i data najdalej za 90 dni, sprawdzane przez `core/vuln`. Wyjątki skanera sekret
   (decyzja 47).
 - Wall-clock warstwy — `max(completed_at)` zadań warstwy minus `created_at` biegu.
 - Budżet — p95 z 20 ostatnich biegów danego zdarzenia; przekroczenie w ≥ 3 z 20 → ostrzeżenie
-  w podsumowaniu, w ≥ 5 → czerwona noc [ŻYCZENIE: pomiar budżetów].
+  w podsumowaniu, w ≥ 5 → czerwona noc (`ci:budget`, progi w §10) [ŻYCZENIE: czerwona noc
+  dopiero z `--enforce`, po osiągnięciu budżetu W1].
 - Kolejka — `started_at` pierwszego zadania minus `created_at` biegu, raportowana osobno.
 - Czas w bramkach — zegar monotoniczny; statystyka — maksimum w biegu, chyba że klauzula mówi
   inaczej.
@@ -145,16 +146,18 @@ wersji charta w trakcie → kod 1, bez tagu; kod bramek z niezatwierdzonymi zmia
 
 | Warstwa | Zdarzenia | Zadania i zakres | Budżet (p95, §0.5) | Wymagana |
 |---|---|---|---|---|
-| W1 szybka | PR, push `main`, noc | równolegle: `test` — wersje, lint, kontrakt, gitleaks na historii, Python, charty z politykami, Go z `-race`, govulncheck; `build` albo `build-publish` — obraz, baza, testy na musl, warunki Etapu 1, powtarzalność; `negatives` — warianty negatywne; `tools` — powtarzalność narzędzi | 6 min [ŻYCZENIE: zmierzone 2026-10-15, przed zrównolegleniem — 15,3 min] | tak: `fast-feedback` |
-| W2 integracja przed scaleniem | PR, push `main`, noc | po `test` i `build`: `cluster` — klaster `ci`, wdrożenie, tożsamość, drain każdego węzła, OpenBao, rotacja, TLS, dowody; `vulns` — skan obrazu | 20 min [ŻYCZENIE: zmierzone 2026-10-15 — 23,7 min] | tak: `integration` |
-| W3 po scaleniu | push `main` | `attest`, `chart`, `attest-chart`: pochodzenie i SBOM, atestacja, chart OCI z digestem przetestowanym | 30 min (2026-10-15: 24,1 min) | nie (czerwony → §3.6) |
-| W4 noc | `schedule`, `workflow_dispatch` | W1 i W2 na `main`; `vulns-issue` z wyjątkami wygasającymi w ciągu tygodnia; `settings-drift`; `main-health` (także na push) [ŻYCZENIE: negatywy na klastrze, upgrade N-1 → N] | 40 min (2026-10-15: 23,9 min) | nie |
-| W5 wydanie | tag `vX.Y.Z` | `release`, `attest-release`, `vulns` z polityką wydania, `promote` po zgodzie | 10 min do oczekiwania na zgodę (2026-10-15: 2,3 min) | nie (zatwierdza autor) |
+| W1 szybka | PR, push `main`, noc | równolegle: `test` — wersje, lint, kontrakt, gitleaks na historii, Python, charty z politykami, Go z `-race`, govulncheck; `build` albo `build-publish` — obraz, baza, testy na musl, warunki Etapu 1, powtarzalność; `negatives` — warianty negatywne; `tools` — powtarzalność narzędzi | 6 min [ŻYCZENIE: p95 2026-10-17 — 15,3 min na PR-ach, 15,6 na push; biegi sprzed zrównoleglenia] | tak: `fast-feedback` |
+| W2 integracja przed scaleniem | PR, push `main`, noc | po `test` i `build`: `cluster` — klaster `ci`, wdrożenie, tożsamość, drain każdego węzła, OpenBao, rotacja, TLS, dowody; `vulns` — skan obrazu | 20 min [ŻYCZENIE: p95 2026-10-17 — 23,1 min na PR-ach, 22,5 na push] | tak: `integration` |
+| W3 po scaleniu | push `main` | `attest`, `chart`, `attest-chart`: pochodzenie i SBOM, atestacja, chart OCI z digestem przetestowanym | 30 min (p95 2026-10-17: 27,9 min) | nie (czerwony → §3.6) |
+| W4 noc | `schedule`, `workflow_dispatch` | W1 i W2 na `main`; `vulns-issue` z wyjątkami wygasającymi w ciągu tygodnia; `settings-drift`; `main-health` (także na push) [ŻYCZENIE: negatywy na klastrze, upgrade N-1 → N] | 40 min (p95 2026-10-17: 17,1 min) | nie |
+| W5 wydanie | tag `vX.Y.Z` | `release`, `attest-release`, `vulns` z polityką wydania, `promote` po zgodzie | 10 min do oczekiwania na zgodę (jeden bieg: 1,4 min) | nie (zatwierdza autor) |
 
-Egzekwuje: [ŻYCZENIE: `dft check workflows` — zadanie bez znacznika warstwy to błąd;
-`dft ci budget` — budżety z 20 biegów]. Dowód: [ŻYCZENIE: podsumowanie nocy z p50 i p95 na
-zadanie i zdarzenie]. Warstwa: wszystkie. Wariant negatywny: [ŻYCZENIE: zadanie bez warstwy →
-czerwony `test`; `sleep 400` w kroku W1 → przekroczenie zgłoszone]. Decyzja: 36.
+Egzekwuje: `dft check workflows` — zadanie workflowu ci bez warstwy w `core/ci` to błąd;
+`dft ci budget` w nocy (zadanie `budget`) — p50 i p95 z 20 zielonych biegów pierwszego podejścia
+[ŻYCZENIE: `--enforce` w nocy po osiągnięciu budżetu W1]. Dowód: podsumowanie nocy (p50 i p95
+warstw, kolejki i zadań na zdarzenie), raport `budget.json`. Warstwa: wszystkie.
+Wariant negatywny: zadanie bez warstwy → czerwony `test`; W1 przekroczony w 5 z 20 biegów →
+ostrzeżenie, z `--enforce` kod 1 (testy `core/workflow`, `stages/budget`). Decyzja: 36, 57.
 
 **3.2 Wymagane statusy.** Reguła `main` (`.github/rulesets/main.json`) wymaga dokładnie
 `fast-feedback` i `integration` z aplikacji GitHub Actions. Oba to zadania zbierające
@@ -192,8 +195,9 @@ Decyzja: 36.
 **3.5 Feedback.** Czas do pierwszego czerwonego sygnału na PR-ze ≤ budżet W1; warstwa W2 nie
 opóźnia sygnału W1.
 Egzekwuje: graf zadań — zadania W1 bez needs między sobą, W2 po `test` i `build`; pola
-chronione (§8.3) [ŻYCZENIE: `dft ci budget` mierzy czas do pierwszego czerwonego sygnału].
-Dowód: [ŻYCZENIE: podsumowanie nocy]. Warstwa: W1, W2. Wariant negatywny: [ŻYCZENIE: zadanie
+chronione (§8.3); `dft ci budget` mierzy wall-clock W1 i W2 na PR-ach [ŻYCZENIE: czas do
+pierwszego czerwonego sygnału — dziś mierzone są tylko zielone biegi]. Dowód: podsumowanie
+nocy. Warstwa: W1, W2. Wariant negatywny: [ŻYCZENIE: zadanie
 W2 przed zadaniem W1 w grafie → reguła grafu zgłasza]. Decyzja: 36, 52.
 
 **3.6 Czerwony `main`.** Właściciel naprawia w ≤ 24 h (revert przed poprawką); w tym czasie
@@ -463,9 +467,10 @@ i w CI → czerwone]. Decyzja: 23.
 
 **8.6 Każda nowa funkcja CI** ma warstwę, budżet, wariant negatywny i okres próbny (§3), a jej
 wprowadzenie — wpis w DECYZJE (§8.3).
-Egzekwuje: pola chronione (§8.3), `dft trial` [ŻYCZENIE: znacznik warstwy przy zadaniu
-w `dft check workflows`]. Dowód: log `test`, wyjście `ci:trial`. Warstwa: W1.
-Wariant negatywny: nowe zadanie bez wpisu w DECYZJE → czerwony `test`. Decyzja: 36, 50.
+Egzekwuje: pola chronione (§8.3), `dft trial`, warstwa każdego zadania w `core/ci`
+sprawdzana przez `dft check workflows`. Dowód: log `test`, wyjście `ci:trial`. Warstwa: W1.
+Wariant negatywny: nowe zadanie bez wpisu w DECYZJE albo bez warstwy → czerwony `test`.
+Decyzja: 36, 50, 57.
 
 **8.7 Daty.** Każda obietnica z datą (wyjątki, klucze, wsparcie wersji, certyfikaty) jest
 w kalendarzu danych; noc ostrzega 7 dni przed datą.
@@ -478,9 +483,9 @@ issue nocne. Warstwa: W1, W4. Wariant negatywny: wyjątek z datą dalej niż 90 
 
 **8.8 Czas feedbacku** jest ważniejszy niż kompletność warstwy szybkiej; kompletność przed
 scaleniem zapewnia W2.
-Egzekwuje: [ŻYCZENIE: `dft ci budget`, §3.5]. Dowód: [ŻYCZENIE: podsumowanie nocy].
-Warstwa: W1. Wariant negatywny: [ŻYCZENIE: zadanie W2 wstawione przed W1 w grafie → reguła
-grafu zgłasza]. Decyzja: 36.
+Egzekwuje: `dft ci budget` (§3.5). Dowód: podsumowanie nocy. Warstwa: W1.
+Wariant negatywny: [ŻYCZENIE: zadanie W2 wstawione przed W1 w grafie → reguła grafu zgłasza].
+Decyzja: 36, 57.
 
 ## 9. Poza zakresem tej wersji
 
@@ -515,6 +520,8 @@ docelowe bez strażnika (budżety warstw, Z, pokrycie) stoją w klauzulach, w zn
 | §5.5 | faza rotacji sekretu na podzie | ≤ 4m0s | cmd/dft (rotation) |
 | §5.6 | samonaprawa jednej zmiany | ≤ 1m0s | cmd/dft (selfheal) |
 | §6.2 | punkt odniesienia skanu obrazu na PR-ze | obraz commita bazowego albo najbliższego z 10 przodków | stages/vulns |
+| §3.1 | budżet warstw W1 / W2 / W3 / W4 / W5 (p95) | 6m0s / 20m0s / 30m0s / 40m0s / 10m0s | stages/budget |
+| §0.5 | przekroczenia budżetu w ostatnich biegach | z 20: ostrzeżenie od 3, czerwona noc od 5 | stages/budget |
 | §3.3 | przerwa między biegami nocnymi w serii | ≤ 48h0m0s | stages/trial, stages/mainhealth |
 | §3.6 | czerwony main bez issue | ≤ 24h0m0s | stages/mainhealth |
 | §6.2 | ważność wyjątku podatności | ≤ 90 dni | core/vuln |

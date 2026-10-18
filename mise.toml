@@ -259,6 +259,10 @@ run = "ci/dft ci require"
 description = "Zdrowie main do issue: czerwony main dłużej niż doba, noc, która nie przyszła (decyzja 54); --dry-run tylko wypisuje"
 run = "ci/dft ci main-health"
 
+[tasks."ci:budget"]
+description = "Budżety warstw CI: p50/p95 z 20 zielonych biegów PR, push i nocy, kolejka, czasy zadań (decyzja 57); --enforce czerwieni przy 5 przekroczeniach z 20"
+run = "ci/dft ci budget"
+
 [tasks."ci:trial"]
 description = "Okres próbny zadań cluster i vulns: po 10 zielonych biegów z rzędu na main (push, nocą), bez ponowień, a vulns także 10 scalonych PR-ów (tryb PR blokuje, na main raportuje) — potem statusy do rulesetu"
 run = "ci/dft trial --pull-requests vulns 10 cluster vulns"

@@ -940,3 +940,31 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: ./bin/mise run ci:main-health
+
+  # Budżety warstw (decyzja 57): p50 i p95 wall-clock każdej warstwy z 20
+  # ostatnich zielonych biegów PR-ów, push i nocy, kolejka osobno, czasy
+  # zadań — w podsumowaniu nocy. Bez --enforce: budżet W1 jest jeszcze
+  # życzeniem (§3.1), więc przekroczenie ostrzega zamiast czerwienić noc.
+  budget:
+    if: github.event_name != 'pull_request' && github.event_name != 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # Biegi workflowu ci i ich zadania.
+      actions: read
+    env:
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Go i gh (mise)
+        run: ./bin/mise install go gh
+
+      - name: budżety warstw
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: ./bin/mise run ci:budget
