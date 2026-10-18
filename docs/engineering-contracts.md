@@ -270,13 +270,16 @@ Warstwa: W2. Wariant negatywny: [ŻYCZENIE: pod z wymuszonym 503 na `/readyz` do
 przez 30 s]. Decyzja: [ŻYCZENIE: nowa, przed Etapem 6].
 
 **5.4 Odnowienie certyfikatu pod ruchem.** Pętla HTTPS z nowym połączeniem na każde żądanie
-w trakcie odnowienia: minimum żądań, 0 nieudanych, 0 restartów proxy; proxy podaje nowy numer
-seryjny w czasie Y od odnowienia — progi w §10.
-Egzekwuje: `cluster:tls` (`stages/ingress`) — pierwsza obserwacja nowego certyfikatu
-[ŻYCZENIE: każda replika proxy, potwierdzona 20 kolejnymi pełnymi handshake'ami do każdego
-poda; proxy na co najmniej 2 węzłach]. Dowód: `tls-<env>.json`. Warstwa: W2; staging przy
-wydaniu [ŻYCZENIE: prod — obserwacja naturalnego odnowienia i alarm na wiek certyfikatu].
-Wariant negatywny: [ŻYCZENIE: replika odcięta od xDS → czerwony]. Decyzja: 4, 11.
+w trakcie odnowienia: minimum żądań, 0 nieudanych, 0 restartów proxy; każda replika proxy podaje
+nowy numer seryjny w czasie Y od odnowienia, co potwierdzają kolejne pełne handshake'i przez
+bramę; proxy na co najmniej 2 węzłach — progi w §10.
+Egzekwuje: `cluster:tls` (`stages/ingress`) — pierwszy nowy certyfikat, a potem kolejne pełne
+handshake'i (nowe połączenie, bez wznawiania sesji) z nowym numerem w tym samym oknie Y
+[ŻYCZENIE: handshake do każdego poda proxy osobno]. Dowód: `tls-<env>.json`
+(`confirmed_handshakes`, `proxy_nodes`). Warstwa: W2; staging przy wydaniu [ŻYCZENIE: prod —
+obserwacja naturalnego odnowienia i alarm na wiek certyfikatu]. Wariant negatywny: replika ze
+starym certyfikatem (co piąty handshake) albo proxy na jednym węźle → kod 1 (testy
+`stages/ingress`) [ŻYCZENIE: replika odcięta od xDS na klastrze]. Decyzja: 4, 11, 59.
 
 **5.5 Rotacja sekretu.** Nowy token dociera do każdego poda bez restartu: faza „nowy obok
 starego” i „tylko nowy”, każda w budżecie z §10, te same UID podów i liczba restartów.
@@ -520,7 +523,7 @@ docelowe bez strażnika (budżety warstw, Z, pokrycie) stoją w klauzulach, w zn
 | §5.2 | `kubectl drain` jednego węzła | ≤ 3m0s | cmd/dft (drain) |
 | §5.2 | zakończenie eksmitowanego poda ≤ X ≤ okres łaski | X = preStopSleepSeconds + shutdown_grace_seconds + 1 s (dziś 5 + 3 + 1 = 9 s; okres łaski 15 s), bez SIGKILL | chart docfind (adnotacja X, render); stages/drain (pomiar) |
 | §5.4 | żądania HTTPS w trakcie odnowienia | ≥ 50, 0 nieudanych, 0 restartów proxy | cmd/dft (tls) |
-| §5.4 | nowy certyfikat na proxy (Y) | ≤ 1m0s od odnowienia | stages/ingress |
+| §5.4 | nowy certyfikat na proxy (Y) | ≤ 1m0s od odnowienia, potwierdzony 20 kolejnymi pełnymi handshake'ami | stages/ingress |
 | §5.5 | faza rotacji sekretu na podzie | ≤ 4m0s | cmd/dft (rotation) |
 | §5.6 | samonaprawa jednej zmiany | ≤ 1m0s | cmd/dft (selfheal) |
 | §6.2 | punkt odniesienia skanu obrazu na PR-ze | obraz commita bazowego albo najbliższego z 10 przodków | stages/vulns |

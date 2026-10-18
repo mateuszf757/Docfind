@@ -40,6 +40,10 @@ type fakeIngress struct {
 	renewed  bool
 	issuerCN string
 	redirect string
+	// stale — co który handshake po odnowieniu podaje stary certyfikat
+	// (replika bez nowego); 0 — żaden.
+	stale     int
+	handshake int
 }
 
 func newIngress() *fakeIngress {
@@ -122,13 +126,21 @@ type edge struct{ *fakeIngress }
 func (e edge) Certificate(context.Context, loopback.Request) (*x509.Certificate, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return &x509.Certificate{SerialNumber: big.NewInt(e.serial), Issuer: pkix.Name{CommonName: e.issuerCN}}, nil
+	serial := e.serial
+	if e.renewed && e.stale > 0 {
+		e.handshake++
+		if e.handshake%e.stale == 0 {
+			serial--
+		}
+	}
+	return &x509.Certificate{SerialNumber: big.NewInt(serial), Issuer: pkix.Name{CommonName: e.issuerCN}}, nil
 }
 
 func checker(f *fakeIngress) *Checker {
 	return &Checker{Cluster: f, Edge: edge{f}, Cfg: Config{
 		GatewayNamespace: "gateway", Gateway: "docfind", AppNamespace: "docfind", Route: "docfind-api",
 		HTTPPort: 8080, HTTPSPort: 8443, AllowRenewal: true, MinRequests: 1, Settle: 50 * time.Millisecond,
+		Propagation: 3 * time.Second, ConfirmInterval: time.Millisecond,
 	}}
 }
 
@@ -139,7 +151,7 @@ func TestRun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v (%+v)", err, rep)
 	}
-	if rep.SerialBefore != "64" || rep.SerialAfter != "65" || rep.RevisionAfter != 2 || rep.Failed != 0 || rep.Requests == 0 {
+	if rep.SerialBefore != "64" || rep.SerialAfter != "65" || rep.RevisionAfter != 2 || rep.Failed != 0 || rep.Requests == 0 || rep.Confirmed != 20 {
 		t.Errorf("raport %+v", rep)
 	}
 	if len(rep.ProxyNodes) != 2 || rep.RenewalSkipped != "" {
@@ -175,6 +187,9 @@ func TestRunRejects(t *testing.T) {
 		{"nieudane żądania w trakcie odnowienia", func(f *fakeIngress, c *Checker) { f.failing, c.Cfg.Settle = 503, 350*time.Millisecond }, "nie powiodło się podczas odnowienia"},
 		{"staging z cudzym wystawcą", func(f *fakeIngress, _ *Checker) { f.gateway.Issuer = "letsencrypt-staging" }, "a podany certyfikat wystawił"},
 		{"nieznany wydawca", func(f *fakeIngress, _ *Checker) { f.gateway.Issuer = "selfsigned" }, "nieznany wydawca"},
+		// Co piąty handshake trafia na replikę ze starym certyfikatem:
+		// 20 kolejnych nowych nigdy się nie zbierze.
+		{"replika proxy ze starym certyfikatem", func(f *fakeIngress, c *Checker) { f.stale, c.Cfg.Propagation = 5, 300*time.Millisecond }, "któraś replika proxy podaje stary"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
