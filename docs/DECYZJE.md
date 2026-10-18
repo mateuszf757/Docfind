@@ -2514,6 +2514,45 @@ znaczy zmianę w drodze, a nie szum.
 (jedno zadanie z prawem zapisu po bramkach klastra) — wtedy przekazanie
 digestu niepotrzebne.
 
+## 62. Minimum pokrycia per pakiet warstwy, z kodu wykonanego przez testy
+
+> Uzupełnia decyzję 39 (warstwy narzędzi).
+
+**Wybieram minimum per pakiet według warstwy, liczone z `-coverpkg=./...`.**
+Kontrakt obiecywał progi pokrycia, a nic ich nie mierzyło. `dft check go`
+uruchamia testy z profilem pokrycia wszystkich pakietów — w tym samym
+wywołaniu `go test -race`, więc bez drugiego biegu. `core/coverage` liczy
+odsetek instrukcji wykonanych przez jakikolwiek test, a nie tylko przez
+testy własnego pakietu. `core/container` czy `kit/manifest` nie mają
+własnych testów, ale testują je etapy (bez `-coverpkg` miałyby 0%).
+
+| Warstwa | Minimum z pomiaru 2026-10-17 | Próg |
+|---|---|---|
+| stages | 70,0 | 70 |
+| core | 75,0 | 70 |
+| adapters | 59,3 | 55 |
+| kit | 62,5 | 60 |
+
+Progi są zaokrąglone w dół do 5 pp. cmd jest raportowany bez minimum
+(`cmd/dft` 19,9% — składanie programu, testowane bramkami). Pakiet
+poniżej minimum warstwy daje `NIESPEŁNIONE`. Raport `coverage-go.json`
+i wiersz w podsumowaniu biegu podają też pokrycie modułu (71,9%).
+
+**Co tracę:**
+
+- **Zapadka bez commita bazowego.** „Moduł nie spada o więcej niż 0,5 pp
+  względem commita bazowego” wymagałoby testów kodu z bazy na każdym PR-ze,
+  czyli drugiego biegu w W1. Zostaje `[ŻYCZENIE]`.
+- **Ten sam próg dla każdego pakietu warstwy.** Pakiet z 70,0% w `stages`
+  (`reproducible`) ma zero zapasu. Pierwszy test usunięty bez zastępstwa
+  będzie czerwony — tak ma być.
+- **Python bez progu.** `pytest-cov` to nowa zależność w `uv.lock`; osobna
+  decyzja.
+
+**Kiedy zmieniam zdanie:** gdy pomiar pokaże, że któryś pakiet stale
+trzyma się progu tylko dzięki testom innych pakietów — wtedy minimum
+z testów własnego pakietu.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

@@ -39,11 +39,18 @@ func (g Go) Staticcheck(ctx context.Context) error {
 
 // Test uruchamia testy; race — z detektorem wyścigów (wymaga cgo, a więc
 // kompilatora C: CCompiler).
-func (g Go) Test(ctx context.Context, race bool) error {
+func (g Go) Test(ctx context.Context, race bool, coverprofile string) error {
+	args := []string{"test"}
+	var env []string
 	if race {
-		return g.check(ctx, []string{"CGO_ENABLED=1"}, "test", "-race", "./...")
+		args, env = append(args, "-race"), []string{"CGO_ENABLED=1"}
 	}
-	return g.check(ctx, nil, "test", "./...")
+	// -coverpkg=./...: pokrycie liczy kod wykonany przez jakikolwiek test,
+	// a nie tylko testy własnego pakietu (decyzja 62).
+	if coverprofile != "" {
+		args = append(args, "-coverpkg=./...", "-coverprofile="+coverprofile)
+	}
+	return g.check(ctx, env, append(args, "./...")...)
 }
 
 // TestTagged uruchamia testy z tagiem budowania (warianty negatywne na

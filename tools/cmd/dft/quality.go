@@ -20,6 +20,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/registry"
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/uv"
 	"github.com/mateuszf757/Docfind/tools/internal/core/ci"
+	"github.com/mateuszf757/Docfind/tools/internal/core/coverage"
 	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
 	"github.com/mateuszf757/Docfind/tools/internal/core/reposettings"
 	"github.com/mateuszf757/Docfind/tools/internal/core/vuln"
@@ -320,6 +321,14 @@ func goChecker(w *workspace, mode goVulnMode) (gocode.Checker, error) {
 		VulnReportOnly: mode.reportOnly,
 		Publish: func(rep vuln.Report) error {
 			return errors.Join(w.writeReport(reportVulnsGo, rep), appendSummary(rep.Summary()))
+		},
+		// Pokrycie pakietów do raportu i podsumowania biegu (decyzja 62).
+		Coverage: func(packages map[string]coverage.Stat, total coverage.Stat) error {
+			report := struct {
+				Total    coverage.Stat            `json:"total"`
+				Packages map[string]coverage.Stat `json:"packages"`
+			}{total, packages}
+			return errors.Join(w.writeReport("coverage-go", report), appendSummary(fmt.Sprintf("### Pokrycie kodu narzędzi Go\n\n%.1f%% instrukcji modułu (%d pakietów), raport `coverage-go.json`\n", total.Percent(), len(packages))))
 		},
 	}, nil
 }
