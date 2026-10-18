@@ -241,8 +241,10 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 		if err != nil {
 			return err
 		}
-		// Nasz chart: sekrety tylko tak, żeby rotacja docierała (decyzja 44).
-		opts := policy.Options{RequireDigest: r.requireDigest, RotatableSecrets: slices.Contains(appRenders, r.name)}
+		// Nasz chart: sekrety tylko tak, żeby rotacja docierała (decyzja 44),
+		// i pody utwardzone ponad PSA (decyzja 55).
+		ours := slices.Contains(appRenders, r.name)
+		opts := policy.Options{RequireDigest: r.requireDigest, RotatableSecrets: ours, Hardened: ours}
 		if violations := policy.Check(docs, opts); len(violations) > 0 {
 			for _, v := range violations {
 				fmt.Fprintf(cli.Err, "POLITYKA (%s): %s\n", r.name, v)

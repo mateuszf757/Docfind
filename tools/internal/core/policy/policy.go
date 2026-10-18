@@ -25,6 +25,12 @@ type Options struct {
 	// migawka ze startu kontenera: rotacja nie dotarłaby do poda. Wymagane
 	// od naszego charta; charty z zewnątrz robią po swojemu.
 	RotatableSecrets bool
+	// Hardened — pody utwardzone ponad PSA restricted (decyzja 55):
+	// readOnlyRootFilesystem, allowPrivilegeEscalation: false, drop ALL,
+	// runAsNonRoot, seccomp RuntimeDefault i pod bez tokenu konta usługi.
+	// Wymagane od naszego charta aplikacji; PSA w API serverze sprawdza część
+	// tego dopiero na klastrze, a RO rootfs i token — wcale.
+	Hardened bool
 }
 
 var workloadKinds = map[string]bool{"Deployment": true, "StatefulSet": true, "DaemonSet": true, "Job": true, "CronJob": true}
@@ -59,6 +65,9 @@ func violations(m map[string]any, opts Options) []string {
 	}
 	name := manifest.String(m, "kind") + "/" + manifest.String(manifest.Map(m, "metadata"), "name")
 	var found []string
+	if opts.Hardened {
+		found = append(found, podHardening(name, spec)...)
+	}
 	containers := append(manifest.List(spec, "containers"), manifest.List(spec, "initContainers")...)
 	for _, raw := range containers {
 		c, ok := raw.(map[string]any)
@@ -93,6 +102,9 @@ func violations(m map[string]any, opts Options) []string {
 		}
 		if opts.RotatableSecrets {
 			found = append(found, unrotatable(where, c, secretVolumes(spec))...)
+		}
+		if opts.Hardened {
+			found = append(found, containerHardening(where, c, spec)...)
 		}
 	}
 	return found
@@ -131,4 +143,66 @@ func unrotatable(where string, c map[string]any, secrets map[string]bool) []stri
 		}
 	}
 	return found
+}
+
+// podHardening — pod bez tokenu konta usługi: aplikacja nie rozmawia
+// z API serverem, a token w podzie to poświadczenie do kradzieży
+// (decyzje 43 i 55).
+func podHardening(name string, spec map[string]any) []string {
+	if v, ok := spec["automountServiceAccountToken"].(bool); !ok || v {
+		return []string{fmt.Sprintf("%s: automountServiceAccountToken musi być false — aplikacja nie rozmawia z API serverem", name)}
+	}
+	return nil
+}
+
+// containerHardening — kontener utwardzony: system plików tylko do odczytu,
+// bez eskalacji uprawnień, bez capabilities, nie jako root, z seccomp
+// RuntimeDefault. runAsNonRoot i seccomp mogą stać w kontekście poda.
+func containerHardening(where string, c, spec map[string]any) []string {
+	sc := manifest.Map(c, "securityContext")
+	pod := manifest.Map(spec, "securityContext")
+	var found []string
+	if v, ok := sc["readOnlyRootFilesystem"].(bool); !ok || !v {
+		found = append(found, fmt.Sprintf("%s: readOnlyRootFilesystem musi być true — zapis tylko do wolumenów", where))
+	}
+	if v, ok := sc["allowPrivilegeEscalation"].(bool); !ok || v {
+		found = append(found, fmt.Sprintf("%s: allowPrivilegeEscalation musi być false", where))
+	}
+	if !dropsAll(manifest.Map(sc, "capabilities")) {
+		found = append(found, fmt.Sprintf("%s: capabilities.drop musi zawierać ALL", where))
+	}
+	if !boolIn("runAsNonRoot", sc, pod) {
+		found = append(found, fmt.Sprintf("%s: runAsNonRoot musi być true (kontener albo pod)", where))
+	}
+	for _, ctx := range []map[string]any{sc, pod} {
+		if uid, ok := ctx["runAsUser"]; ok && fmt.Sprint(uid) == "0" {
+			found = append(found, fmt.Sprintf("%s: runAsUser 0", where))
+		}
+	}
+	if profile(sc) == "" && profile(pod) != "RuntimeDefault" || profile(sc) != "" && profile(sc) != "RuntimeDefault" {
+		found = append(found, fmt.Sprintf("%s: seccompProfile.type musi być RuntimeDefault (kontener albo pod)", where))
+	}
+	return found
+}
+
+func dropsAll(caps map[string]any) bool {
+	for _, d := range manifest.List(caps, "drop") {
+		if fmt.Sprint(d) == "ALL" {
+			return true
+		}
+	}
+	return false
+}
+
+// boolIn — pole logiczne ustawione na true w kontenerze, a bez niego w podzie.
+func boolIn(field string, container, pod map[string]any) bool {
+	if v, ok := container[field].(bool); ok {
+		return v
+	}
+	v, ok := pod[field].(bool)
+	return ok && v
+}
+
+func profile(sc map[string]any) string {
+	return manifest.String(manifest.Map(sc, "seccompProfile"), "type")
 }

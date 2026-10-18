@@ -2,6 +2,7 @@ package charts
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"path/filepath"
 	"slices"
@@ -46,19 +47,24 @@ spec:
 `
 }
 
-// app — Deployment aplikacji z kontenerem api i wersją wdrożenia.
-func app(image, version string) string {
+// app — Deployment aplikacji z kontenerem api i wersją wdrożenia,
+// utwardzony jak chart (decyzja 55); readOnly — system plików kontenera
+// tylko do odczytu.
+func app(image, version string, readOnly bool) string {
 	return `apiVersion: apps/v1
 kind: Deployment
 metadata: {name: docfind-api}
 spec:
   template:
     spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, seccompProfile: {type: RuntimeDefault}}
       containers:
       - name: api
         image: ` + image + `
         env: [{name: DOCFIND_VERSION, value: "` + version + `"}]
         resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {memory: 64Mi}}
+        securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: ` + fmt.Sprint(readOnly) + `, capabilities: {drop: [ALL]}}
 `
 }
 
@@ -76,7 +82,9 @@ type helm struct {
 	dropVersion bool
 	// projectWithout — rodzaj zasobu, którego projekt Argo CD nie dopuszcza.
 	projectWithout string
-	renders        []string
+	// writableRoot — chart aplikacji z zapisywalnym systemem plików.
+	writableRoot bool
+	renders      []string
 }
 
 func (h *helm) Lint(context.Context, string, ...string) error { return nil }
@@ -115,7 +123,7 @@ func (h *helm) Template(_ context.Context, r cluster.Release, includeCRDs bool, 
 		if h.badConfig {
 			config = "service: {port: 0}"
 		}
-		out = app(`"ghcr.io/x/docfind-api:`+tag+digest+`"`, version) + "---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: c}\ndata:\n  app.yml: \"" + config + "\"\n"
+		out = app(`"ghcr.io/x/docfind-api:`+tag+digest+`"`, version, !h.writableRoot) + "---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: c}\ndata:\n  app.yml: \"" + config + "\"\n"
 	case strings.HasSuffix(r.Chart, "platform"):
 		out = "apiVersion: v1\nkind: Namespace\nmetadata: {name: n}\n"
 	case strings.HasSuffix(r.Chart, "delivery"):
@@ -207,6 +215,7 @@ func TestRunRejects(t *testing.T) {
 		{"chart gubi wersję wdrożenia", &helm{dropVersion: true}, appConfig{}, "DOCFIND_VERSION"},
 		{"limit CPU w charcie platformy", &helm{cpuLimit: "100m"}, appConfig{}, "render coredns łamie polityki"},
 		{"zła konfiguracja w renderze", &helm{}, rejectingConfig{}, "konfiguracja w renderze docfind-ci jest nieprawidłowa"},
+		{"zapisywalny system plików aplikacji", &helm{writableRoot: true}, appConfig{}, "render docfind-ci łamie polityki"},
 		// Nowy rodzaj zasobu w charcie aplikacji bez dopisania do projektu:
 		// Argo odmówiłby synchronizacji dopiero na stagingu.
 		{"projekt Argo CD bez rodzaju z charta", &helm{projectWithout: "ConfigMap"}, appConfig{}, "projekt Argo CD środowiska staging nie dopuszcza"},

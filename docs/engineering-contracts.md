@@ -211,10 +211,10 @@ od godziny → bez issue (testy `stages/mainhealth`). Decyzja: 22, 36, 45, 54.
 wersję; publikacja z pochodzeniem SLSA i SBOM z przypiętego generatora; na PR-ze i nocą
 archiwum z digestem konfiguracji; użytkownik numeryczny różny od 0.
 Egzekwuje: `dft build` (weryfikacja w rejestrze po publikacji), `check:base`, `check:runtime`
-[ŻYCZENIE: USER różny od 0 sprawdzany w `check:runtime`]. Dowód: digest w wyjściach
-`build-publish`, atestacje w GHCR. Warstwa: W1, W3. Wariant negatywny: obraz w rejestrze bez
-indeksu albo atestacji → `dft check published` odmawia [ŻYCZENIE: USER root → NIESPEŁNIONE].
-Decyzja: 21, 37, 40.
+(także USER różny od 0). Dowód: digest w wyjściach `build-publish`, atestacje w GHCR,
+`runtime-api.json` (`image_user`). Warstwa: W1, W3. Wariant negatywny: obraz w rejestrze bez
+indeksu albo atestacji → `dft check published` odmawia; USER root albo 0 → NIESPEŁNIONE (testy
+`stages/lifecycle`). Decyzja: 21, 37, 40, 55.
 
 **4.2 Downstream nie buduje produktu.** Zadania po buildzie konsumują archiwum albo digest;
 chart instalowany w W2 i W3 to ten sam plik, który publikuje `chart`.
@@ -301,10 +301,10 @@ kod 1. Decyzja: 30, 40.
 tokenu konta usługi; mTLS — dopiero dla ruchu między usługami poza proxy (Etap 6),
 z wewnętrznego CA.
 Egzekwuje: konfiguracja ESO i OpenBao z chartów platformy, `cluster:rotation` (sekret dociera
-tylko tą drogą) [ŻYCZENIE: reguła „pod aplikacji bez tokenu” w `core/policy`; negatywy w nocy —
-zły odbiorca, obce konto, wygasły token]. Dowód: log, audyt OpenBao. Warstwa: W2
-[ŻYCZENIE: W1, W4]. Wariant negatywny: [ŻYCZENIE: automountServiceAccountToken true w podzie
-aplikacji → czerwony `test`]. Decyzja: 42, 43, 44.
+tylko tą drogą); pod aplikacji bez tokenu — `core/policy` w `dft check charts` [ŻYCZENIE:
+negatywy w nocy — zły odbiorca, obce konto, wygasły token]. Dowód: log, audyt OpenBao.
+Warstwa: W1 (render), W2 [ŻYCZENIE: W4]. Wariant negatywny: automountServiceAccountToken true
+w podzie aplikacji → czerwony `test` (testy `core/policy`). Decyzja: 42, 43, 44, 55.
 
 **5.10 Powtarzalność.** Build z pamięcią podręczną i od zera daje identyczne bajty: obraz
 i binarki narzędzi (pusty `GOCACHE`).
@@ -344,12 +344,14 @@ i `gitleaks:allow` → znalezisko. Decyzja: 41.
 CPU, obrazy z zewnątrz po digeście, sekrety jako wolumen bez subPath. Przestrzenie `docfind`,
 `openbao`, `argocd` z PSA `restricted` — runAsNonRoot, drop ALL, bez eskalacji uprawnień,
 seccomp `RuntimeDefault` — w API serverze.
-Egzekwuje: `core/policy` w `dft check charts`; PSA w API serverze, `test:cluster` lokalnie
-[ŻYCZENIE: w `core/policy` także readOnlyRootFilesystem, capabilities
-i automountServiceAccountToken false dla podów aplikacji; `test:cluster` w nocy]. Dowód: log
-`test`, log `test:cluster`. Warstwa: W1 (render) [ŻYCZENIE: W4 (klaster)]. Wariant negatywny:
-limit CPU w charcie → czerwony `test`; sonda bez `securityContext` → odrzucona przez API
-server. Decyzja: 16, 20, 31, 44.
+Egzekwuje: `core/policy` w `dft check charts` — w charcie aplikacji także readOnlyRootFilesystem,
+allowPrivilegeEscalation false, drop ALL, runAsNonRoot, runAsUser różny od 0, seccomp
+RuntimeDefault i automountServiceAccountToken false; PSA w API serverze, `test:cluster` lokalnie
+[ŻYCZENIE: `test:cluster` w nocy]. Dowód: log `test`, log `test:cluster`. Warstwa: W1 (render)
+[ŻYCZENIE: W4 (klaster)]. Wariant negatywny: limit CPU w charcie → czerwony `test`;
+readOnlyRootFilesystem false w charcie aplikacji → czerwony `test` (testy `core/policy`,
+`stages/charts`); sonda bez `securityContext` → odrzucona przez API server.
+Decyzja: 16, 20, 31, 44, 55.
 
 **6.5 Poświadczenia w CI.** Tylko `GITHUB_TOKEN` z uprawnieniami na zadanie i OIDC
 w zadaniach atestacji; `persist-credentials: false`; bez `pull_request_target`. Jedyny wyjątek:

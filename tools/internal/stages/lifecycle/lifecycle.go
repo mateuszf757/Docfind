@@ -25,6 +25,7 @@ import (
 // Containers — lokalny silnik kontenerów (adapters/docker).
 type Containers interface {
 	ImageSize(ctx context.Context, ref string) (int64, error)
+	ImageUser(ctx context.Context, ref string) (string, error)
 	RunToExit(ctx context.Context, s container.Spec, timeout time.Duration) (container.Exit, error)
 	Start(ctx context.Context, s container.Spec) error
 	Stop(ctx context.Context, name string, timeout time.Duration) error
@@ -107,6 +108,7 @@ type Checker struct {
 type Report struct {
 	Image                 string    `json:"image"`
 	ImageUnpackedBytes    int64     `json:"image_unpacked_bytes"`
+	ImageUser             string    `json:"image_user"`
 	MaxImageUnpackedBytes int64     `json:"max_image_unpacked_bytes"`
 	Refusals              []Refusal `json:"refusals"`
 	Shutdown              *Shutdown `json:"shutdown,omitempty"`
@@ -170,6 +172,9 @@ func (c *Checker) Run(ctx context.Context) (rep Report, err error) {
 	if err := c.checkSize(ctx, &rep, fail); err != nil {
 		return rep, err
 	}
+	if err := c.checkUser(ctx, &rep, fail); err != nil {
+		return rep, err
+	}
 	if err := c.checkRefusals(ctx, tmp, &rep, fail); err != nil {
 		return rep, err
 	}
@@ -197,6 +202,24 @@ func (c *Checker) checkSize(ctx context.Context, rep *Report, fail func(string, 
 		return nil
 	}
 	cli.Step("rozmiar obrazu rozpakowanego w magazynie Dockera: %d B (%.1f MB), limit %d B", size, float64(size)/1e6, limit)
+	return nil
+}
+
+// checkUser — obraz nie uruchamia się jako root (§4.1 kontraktu, decyzja
+// 55): pusty USER, 0 i root to root. Chart wymusza runAsNonRoot, ale obraz
+// uruchomiony u klienta poza chartem — `docker run` — nie ma tej ochrony.
+func (c *Checker) checkUser(ctx context.Context, rep *Report, fail func(string, ...any)) error {
+	user, err := c.Containers.ImageUser(ctx, c.Image)
+	if err != nil {
+		return err
+	}
+	rep.ImageUser = user
+	name, _, _ := strings.Cut(user, ":")
+	if name == "" || name == "0" || name == "root" {
+		fail("obraz uruchamia się jako root (USER %q) — w Dockerfile USER z numerem użytkownika różnym od 0", user)
+		return nil
+	}
+	cli.Step("użytkownik obrazu: %s", user)
 	return nil
 }
 
