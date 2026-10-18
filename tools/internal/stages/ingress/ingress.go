@@ -43,6 +43,10 @@ type Cluster interface {
 	// RenewCertificate — odnowienie tak, jak zrobiłby to cert-manager przed
 	// wygaśnięciem (cmctl renew).
 	RenewCertificate(ctx context.Context, namespace, name string) error
+	// RestartDeployment i Rollout — rolling update aplikacji pod ruchem
+	// (decyzja 60).
+	RestartDeployment(ctx context.Context, namespace, name string) error
+	Rollout(ctx context.Context, namespace, name string) (cluster.Rollout, error)
 }
 
 // Edge — żądania do wejścia klastra na 127.0.0.1 hosta (adapters/httpclient).

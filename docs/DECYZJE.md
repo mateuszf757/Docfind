@@ -2450,6 +2450,38 @@ na co najmniej dwóch węzłach już był.
 wtedy 20 handshake'ów przestaje wystarczać statystycznie i trzeba
 handshake'ów per pod.
 
+## 60. Przestój Z mierzony na rolling update pod ruchem, w nocy
+
+> Uzupełnia decyzje 13 i 45 (chart jako produkt). Prawdziwy upgrade N-1 → N
+> zostaje życzeniem.
+
+**Wybieram restart Deploymentu pod ruchem przez bramę zamiast upgrade'u
+z poprzedniego charta.** Kontrakt obiecywał przestój ≤ Z = 1 s przy upgrade
+i nic tego nie mierzyło. Upgrade charta, synchronizacja Argo CD i restart
+idą tą samą ścieżką: rolling update z `maxSurge: 1`, `maxUnavailable: 0`,
+gotowością i preStop. `dft check rollout` (`cluster:rollout`) uruchamia
+pętlę HTTPS przez bramę — każde żądanie nowym połączeniem — i restartuje
+Deployment aplikacji jak `kubectl rollout restart`. Po rolloucie liczy
+najdłuższą przerwę między udanymi odpowiedziami: ma się zmieścić w Z, przy
+zerze nieudanych i co najmniej 100 żądaniach. Biegnie w nocy w zadaniu
+`cluster`, razem z `test:cluster` (sonda bez `securityContext` odrzucona
+przez API server). Na środowisku z Argo CD `rollout` odmawia — samonaprawa
+cofnęłaby restart.
+
+**Co tracę:**
+
+- **Bez zmiany charta.** Restart nie zmienia charta ani konfiguracji, więc
+  nie złapie zmiany niezgodnej między wersjami, np. nowego klucza
+  w ConfigMapie (H34). Upgrade z charta N-1 z rejestru zostaje
+  `[ŻYCZENIE]` w §5.7.
+- **Tylko w nocy.** Na PR-ach ta sama ścieżka biegnie w drainie, więc
+  dodatkowe minuty nie dają nowego sygnału.
+- **Pierwszy pomiar na żywo.** Pierwszą próbą na klastrze będzie najbliższa
+  noc po scaleniu (albo `workflow_dispatch`).
+
+**Kiedy zmieniam zdanie:** gdy zmieni się format konfiguracji między
+wersjami (Etap 6) — wtedy prawdziwy upgrade N-1 → N z rejestru w nocy.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

@@ -35,6 +35,12 @@ const (
 	// handshake'u z nowym numerem seryjnym. Zmierzone w CI z własnym CA:
 	// ok. 2 s; 60 s to ~30× zapasu (§5.4).
 	TLSPropagation = 60 * time.Second
+	// RolloutMaxGap (Z) — najdłuższa przerwa między udanymi odpowiedziami
+	// przez bramę w trakcie rolling update aplikacji. W drainach zmierzono
+	// 0,17–0,25 s; 1 s to zapas na kolejkę runnera (§5.7).
+	RolloutMaxGap = time.Second
+	// RolloutMinRequests — minimum żądań przez bramę w trakcie rolloutu.
+	RolloutMinRequests = 100
 	// TLSConfirmHandshakes — tyle kolejnych pełnych handshake'ów (nowe
 	// połączenie, bez wznawiania sesji) przez bramę musi podać nowy numer
 	// seryjny w czasie Y. Przy dwóch replikach proxy szansa, że jedna nie
@@ -118,6 +124,7 @@ func Thresholds() []Threshold {
 		{"§5.4", "żądania HTTPS w trakcie odnowienia", fmt.Sprintf("≥ %d, 0 nieudanych, 0 restartów proxy", TLSMinRequests), "cmd/dft (tls)"},
 		{"§5.4", "nowy certyfikat na proxy (Y)", fmt.Sprintf("≤ %v od odnowienia, potwierdzony %d kolejnymi pełnymi handshake'ami", TLSPropagation, TLSConfirmHandshakes), "stages/ingress"},
 		{"§5.5", "faza rotacji sekretu na podzie", fmt.Sprintf("≤ %v", RotationPhaseBudget), "cmd/dft (rotation)"},
+		{"§5.7", "przestój w rolling update przez bramę (Z)", fmt.Sprintf("≤ %v, ≥ %d żądań, 0 nieudanych", RolloutMaxGap, RolloutMinRequests), "stages/ingress (rollout)"},
 		{"§5.6", "samonaprawa jednej zmiany", fmt.Sprintf("≤ %v", SelfHealBudget), "cmd/dft (selfheal)"},
 		{"§6.2", "punkt odniesienia skanu obrazu na PR-ze", fmt.Sprintf("obraz commita bazowego albo najbliższego z %d przodków", VulnsBaselineAncestors), "stages/vulns"},
 		{"§3.1", "budżet warstw W1 / W2 / W3 / W4 / W5 (p95)", fmt.Sprintf("%v / %v / %v / %v / %v", BudgetW1, BudgetW2, BudgetW3, BudgetW4, BudgetW5), "stages/budget"},

@@ -223,6 +223,10 @@ run = "ci/dft cluster down"
 description = "Warunek Etapu 3: odnowienie certyfikatu pod ruchem, bez ingerencji"
 run = "ci/dft check tls"
 
+[tasks."cluster:rollout"]
+description = "Rolling update aplikacji pod ruchem przez bramę: przestój ≤ Z, zero nieudanych (decyzja 60); nie na środowisku z Argo CD"
+run = "ci/dft check rollout"
+
 [tasks."cluster:drain"]
 description = "Warunek Etapu 2: drain każdego węzła z repliką bez utraty żądania (DRAIN_NODE — jeden węzeł)"
 run = "ci/dft check drain"
