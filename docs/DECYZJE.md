@@ -558,7 +558,7 @@ dopiero na żywym środowisku.
 
 Układ:
 
-- **Toolchain.** Go 1.27.1 z mise (`core:go`; `mise lock` zapisuje URL i sumę
+- **Toolchain.** Go 1.27.2 z mise (`core:go`; `mise lock` zapisuje URL i sumę
   dla 7 platform, suma linux-x64 zgodna z https://go.dev/dl). `GOTOOLCHAIN=local`
   — przy domyślnym `auto` polecenie `go` samo pobrałoby nowszy toolchain, gdy
   zażąda go `go.mod` (decyzja 20: „co jeszcze to pobiera, kiedy biegnie").

@@ -78,7 +78,7 @@ gitleaks = "8.30.1"
 # w dyrektywie `go` w tools/go.mod — pilnuje tego `dft check versions`.
 # Aktualizacja: wersja tutaj, `./bin/mise lock`, w tools/
 # `go mod edit -go=<wersja>`, potem `./bin/mise run test`.
-go = "1.27.1"
+go = "1.27.2"
 
 [env]
 # Kubeconfig projektu zamiast globalnego ~/.kube/config. Lokalny klaster nie

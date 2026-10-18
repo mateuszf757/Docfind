@@ -1,6 +1,6 @@
 module github.com/mateuszf757/Docfind/tools
 
-go 1.27.1
+go 1.27.2
 
 tool (
 	golang.org/x/vuln/cmd/govulncheck
@@ -48,7 +48,7 @@ require (
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20231108232855-2478ac86f678 // indirect
 	golang.org/x/mod v0.41.0 // indirect
-	golang.org/x/net v0.59.0 // indirect
+	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
