@@ -82,6 +82,7 @@ func TestUsageErrors(t *testing.T) {
 		"down z argumentem":             func() error { return runCluster(ctx, w, []string{"down", "teraz"}) },
 		"okres próbny bez N":            func() error { return runTrial(ctx, w, []string{"cluster"}) },
 		"okres próbny z N=0":            func() error { return runTrial(ctx, w, []string{"0", "cluster"}) },
+		"PR-y zadania spoza listy":      func() error { return runTrial(ctx, w, []string{"--pull-requests", "vulns", "10", "cluster"}) },
 		"ustawienia z nieznaną flagą":   func() error { return runRepoSettings(ctx, w, []string{"--force"}) },
 		"tożsamość bez pola":            func() error { return runIdentity(ctx, w, nil) },
 		"promocja bez numeru wydania":   func() error { return runPromote(ctx, w, []string{"ghcr.io/x/api@sha256:abc"}) },

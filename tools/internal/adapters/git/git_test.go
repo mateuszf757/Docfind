@@ -445,6 +445,36 @@ func TestChangedFiles(t *testing.T) {
 	}
 }
 
+func TestFirstParents(t *testing.T) {
+	r := newTestRepo(t)
+	r.commit("a")
+	a := r.git("rev-parse", "HEAD")
+	r.commit("b")
+	b := r.git("rev-parse", "HEAD")
+	r.git("switch", "-q", "-c", "boczna")
+	r.commit("z boku")
+	r.git("switch", "-q", "main")
+	r.commit("c")
+	r.git("merge", "-q", "--no-ff", "-m", "scalenie", "boczna")
+	merge := r.git("rev-parse", "HEAD")
+	c := r.git("rev-parse", "HEAD^1")
+	repo := r.repo()
+	got, err := repo.FirstParents(context.Background(), merge, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Commit z bocznej gałęzi nie jest przodkiem po pierwszym rodzicu.
+	if want := []string{merge, c, b, a}; !slices.Equal(got, want) {
+		t.Errorf("FirstParents = %v; oczekiwano %v", got, want)
+	}
+	if got, _ := repo.FirstParents(context.Background(), merge[:12], 2); !slices.Equal(got, []string{merge, c}) {
+		t.Errorf("limit 2 ze skróconego SHA: %v", got)
+	}
+	if _, err := repo.FirstParents(context.Background(), "brak", 3); !errors.Is(err, artifact.ErrUnknownCommit) {
+		t.Errorf("nieznany commit: %v", err)
+	}
+}
+
 func TestFileAt(t *testing.T) {
 	r := newTestRepo(t)
 	r.write("plik.yml", "a: 1\n")

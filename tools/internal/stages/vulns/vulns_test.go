@@ -2,6 +2,7 @@ package vulns
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -79,6 +80,65 @@ func TestRun(t *testing.T) {
 	}
 	if _, err := newScan(&scanner{}).Run(context.Background(), Target{Local: repo + ":lokalny"}, "krótki", false); cli.ExitCode(err) != cli.ExitFailure {
 		t.Errorf("skrócony commit bazowy: %v", err)
+	}
+}
+
+// history — przodkowie po pierwszym rodzicu; liczy wywołania.
+type history struct {
+	commits []string
+	err     error
+	calls   int
+}
+
+func (h *history) FirstParents(_ context.Context, commit string, limit int) ([]string, error) {
+	h.calls++
+	if h.err != nil {
+		return nil, h.err
+	}
+	if commit != h.commits[0] {
+		return nil, fmt.Errorf("%s: %w", commit, artifact.ErrUnknownCommit)
+	}
+	return h.commits[:min(limit, len(h.commits))], nil
+}
+
+// TestRunBaselineAncestor — obrazu commita bazowego jeszcze nie ma w rejestrze
+// (main publikuje go ok. 10 min po scaleniu): punktem odniesienia jest obraz
+// najbliższego przodka, a nie „bez porównania”.
+func TestRunBaselineAncestor(t *testing.T) {
+	quiet(t)
+	base, parent, grandparent := strings.Repeat("b", 40), strings.Repeat("c", 40), strings.Repeat("d", 40)
+	today := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
+	newScan := func(registry store, h *history) Scan {
+		return Scan{Scanner: &scanner{}, Registry: registry, Today: today, Repository: repo, History: h}
+	}
+	pr := Target{Image: repo + ":pr"}
+
+	h := &history{commits: []string{base, parent, grandparent}}
+	rep, err := newScan(store{repo + ":pr": true, repo + ":" + grandparent[:12]: true}, h).Run(context.Background(), pr, base, false)
+	if cli.ExitCode(err) != cli.ExitUnmet || rep.Blocking != 1 || rep.Baseline != repo+":"+grandparent[:12] || rep.BaselineFor != repo+":"+base[:12] {
+		t.Fatalf("obraz dziadka jako punkt odniesienia: %v, %+v", err, rep)
+	}
+	if !strings.Contains(rep.Summary(), "obraz przodka") {
+		t.Errorf("podsumowanie bez śladu, że punkt odniesienia to przodek:\n%s", rep.Summary())
+	}
+
+	// Obraz commita bazowego jest — historii gita nie trzeba.
+	h = &history{err: errors.New("bez historii")}
+	rep, err = newScan(store{repo + ":pr": true, repo + ":" + base[:12]: true}, h).Run(context.Background(), pr, base, false)
+	if cli.ExitCode(err) != cli.ExitUnmet || rep.Baseline != repo+":"+base[:12] || rep.BaselineFor != "" || h.calls != 0 {
+		t.Errorf("obraz commita bazowego: %v, %+v, wywołań historii %d", err, rep, h.calls)
+	}
+
+	// Ani obrazu bazowego, ani przodków — jak dotąd, bez porównania.
+	rep, err = newScan(store{repo + ":pr": true}, &history{commits: []string{base, parent}}).Run(context.Background(), pr, base, false)
+	if cli.ExitCode(err) != cli.ExitUnmet || rep.Blocking != 2 || rep.Baseline != "" {
+		t.Errorf("bez żadnego obrazu bazowego: %v, %+v", err, rep)
+	}
+
+	// Commit bazowy spoza lokalnej historii (płytki klon) to awaria, nie wynik.
+	_, err = newScan(store{repo + ":pr": true}, &history{commits: []string{parent}}).Run(context.Background(), pr, base, false)
+	if cli.ExitCode(err) != cli.ExitFailure || !errors.Is(err, artifact.ErrUnknownCommit) {
+		t.Errorf("commit bazowy poza historią: %v", err)
 	}
 }
 
