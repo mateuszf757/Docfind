@@ -201,9 +201,12 @@ Odmawia, gdy kod bramek ma niezatwierdzone zmiany albo nie jest
 w `origin/main`, i gdy w trakcie Argo CD wdroży inną wersję — wtedy wydanie
 powtarza się po synchronizacji. Na tagu CI niczego nie buduje: dopisuje
 w rejestrze `ghcr.io/mateuszf757/docfind-api:0.3.1` do tego samego
-digestu, wystawia atestację wydania z zapisem akceptacji i skanuje digest
-z polityką wydania. Zadanie `promote` czeka na zgodę w Environment
-`production` — po niej sprawdza pochodzenie z `main` i atestację wydania,
+digestu, wystawia atestację wydania z zapisem akceptacji i atestację
+pakietu dowodów (bieg `main` commita z wynikami zadań i skrótami
+artefaktów, wersje narzędzi — decyzja 53) i skanuje digest z polityką
+wydania. Wydanie commita, którego bieg `main` nie jest zielony, nie
+dostaje numeru. Zadanie `promote` czeka na zgodę w Environment
+`production` — po niej sprawdza pochodzenie z `main`, atestację wydania i pakiet dowodów,
 zapisuje wdrożenie (Deployments w repozytorium, z linkiem do atestacji)
 i podaje instalację dla klienta (decyzja 38). Tagów `v*` pilnuje reguła:
 po wypchnięciu nie da się ich przesunąć ani usunąć, więc pomyłkę poprawia

@@ -186,6 +186,44 @@ func TestVerifyRelease(t *testing.T) {
 	}
 }
 
+func TestVerifyEvidenceAndRunArtifacts(t *testing.T) {
+	command := "gh attestation verify oci://" + repo + "@" + digest + " --repo mateuszf757/Docfind --signer-workflow mateuszf757/Docfind/.github/workflows/ci.yml --predicate-type " +
+		artifact.EvidencePredicate + " --deny-self-hosted-runners --format json --source-ref refs/tags/v0.4.0"
+	pack := func(version string) string {
+		return `[{"verificationResult":{"statement":{"subject":[{"name":"` + repo + `","digest":{"sha256":"` + strings.TrimPrefix(digest, "sha256:") +
+			`"}}],"predicateType":"` + artifact.EvidencePredicate + `","predicate":{"release":{"version":"` + version + `","image":"` + repo + "@" + digest +
+			`","commit":"cafe"},"main_runs":[{"id":7,"html_url":"u7","jobs":[{"name":"cluster","conclusion":"success"}]}]}},` +
+			`"signature":{"certificate":{"sourceRepositoryRef":"refs/tags/v0.4.0","sourceRepositoryDigest":"cafe","runnerEnvironment":"github-hosted"}}}}]`
+	}
+	a := Attestations{Repo: "mateuszf757/Docfind", Workflow: ".github/workflows/ci.yml"}
+	ctx := context.Background()
+	a.CLI = CLI{Runner: &proc.Fake{Responses: map[string]proc.FakeResponse{command: {Stdout: pack("0.4.0")}}}}
+	e, prov, err := a.VerifyEvidence(ctx, repo+"@"+digest, "0.4.0")
+	if err != nil || e.Release.Version != "0.4.0" || len(e.Main) != 1 || e.Main[0].Jobs[0].Name != "cluster" || prov.SourceRef != "refs/tags/v0.4.0" {
+		t.Fatalf("pakiet %+v, pochodzenie %+v, %v", e, prov, err)
+	}
+	// Pakiet innego wydania tego samego digestu nie jest pakietem tego wydania.
+	a.CLI = CLI{Runner: &proc.Fake{Responses: map[string]proc.FakeResponse{command: {Stdout: pack("0.3.1")}}}}
+	if _, _, err := a.VerifyEvidence(ctx, repo+"@"+digest, "0.4.0"); cli.ExitCode(err) != cli.ExitUnmet {
+		t.Errorf("pakiet innego wydania: %v", err)
+	}
+	// Digest z main bez wydania: gh nie znajduje atestacji z tym predykatem.
+	a.CLI = CLI{Runner: &proc.Fake{Responses: map[string]proc.FakeResponse{command: {Code: 1, Stderr: "no attestations found"}}}}
+	if _, _, err := a.VerifyEvidence(ctx, repo+"@"+digest, "0.4.0"); cli.ExitCode(err) != cli.ExitUnmet {
+		t.Errorf("brak pakietu: %v", err)
+	}
+
+	c := CLI{Runner: &proc.Fake{Responses: map[string]proc.FakeResponse{
+		"gh api repos/{owner}/{repo}/actions/runs/7/artifacts?per_page=100": {Stdout: `{"total_count":2,"artifacts":[` +
+			`{"name":"dowody-cluster","size_in_bytes":2048,"digest":"sha256:dd","expired":false,"expires_at":"2026-10-22T10:00:00Z"},` +
+			`{"name":"obraz-api","size_in_bytes":9,"digest":"sha256:ee","expired":true,"expires_at":"2026-10-16T10:00:00Z"}]}`},
+	}}}
+	artifacts, err := c.RunArtifacts(ctx, 7)
+	if err != nil || len(artifacts) != 2 || artifacts[0].Digest != "sha256:dd" || artifacts[0].Size != 2048 || !artifacts[1].Expired {
+		t.Errorf("artefakty: %+v, %v", artifacts, err)
+	}
+}
+
 func TestReleaseTag(t *testing.T) {
 	f := &proc.Fake{Responses: map[string]proc.FakeResponse{
 		"gh api repos/{owner}/{repo}/git/ref/tags/v0.4.0": {Stdout: `{"ref":"refs/tags/v0.4.0","object":{"sha":"t1","type":"tag"}}`},

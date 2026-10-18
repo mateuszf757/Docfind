@@ -3,12 +3,14 @@ package release
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/artifact"
+	"github.com/mateuszf757/Docfind/tools/internal/core/ci"
 	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
 	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
@@ -305,17 +307,48 @@ func record() artifact.Release {
 
 // TestPublish: tag wydania z zapisem z akceptacji — ten sam digest dostaje
 // w rejestrze tag z numerem, bez builda.
+// mainRuns — biegi ci po push na main w pamięci: commit → bieg z zadaniami.
+type mainRuns map[string]string
+
+func (m mainRuns) RunsForCommit(_ context.Context, workflow, sha, event string) ([]ci.Run, error) {
+	if workflow != "ci.yml" || event != "push" {
+		return nil, fmt.Errorf("zapytanie %s %s", workflow, event)
+	}
+	conclusion, ok := m[sha]
+	if !ok {
+		return nil, nil
+	}
+	return []ci.Run{{ID: 7, Event: "push", Attempt: 1, Conclusion: conclusion, HeadSHA: sha, URL: "https://github.com/o/r/actions/runs/7"}}, nil
+}
+
+func (mainRuns) Jobs(context.Context, int64) ([]ci.Job, error) {
+	var jobs []ci.Job
+	for _, name := range artifact.MainJobs {
+		jobs = append(jobs, ci.Job{Name: name, Conclusion: "success"})
+	}
+	return jobs, nil
+}
+
+func (mainRuns) RunArtifacts(context.Context, int64) ([]artifact.EvidenceArtifact, error) {
+	return []artifact.EvidenceArtifact{{Name: "dowody-cluster", Digest: "sha256:dd", Size: 1}}, nil
+}
+
 func TestPublish(t *testing.T) {
 	quiet(t)
 	reg := &registry{}
 	var policy admission.Policy
-	p := Publisher{Repository: apiImage, Tags: tags{commit, record().TagMessage()}, Admission: gate{policy: &policy, commit: commit}, Registry: reg}
-	r, err := p.Publish(context.Background(), "v0.4.0", commit)
+	tools := artifact.EvidenceTools{MiseLockSHA256: strings.Repeat("e", 64), DftRevision: gatesCommit, GoVersion: "go1.27.2"}
+	green := mainRuns{commit: "success"}
+	p := Publisher{Repository: apiImage, Tags: tags{commit, record().TagMessage()}, Admission: gate{policy: &policy, commit: commit}, Registry: reg, CI: green, Tools: tools}
+	r, e, err := p.Publish(context.Background(), "v0.4.0", commit)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.Version != "0.4.0" || strings.Join(reg.tagged, ",") != apiImage+"@"+digest+" 0.4.0" || !policy.Attested {
 		t.Errorf("wydanie %+v, tagi %v, polityka %+v", r, reg.tagged, policy)
+	}
+	if e.Release != r || len(e.Main) != 1 || e.Main[0].Artifacts[0].Digest != "sha256:dd" || e.Tools != tools {
+		t.Errorf("pakiet dowodów: %+v", e)
 	}
 
 	other := strings.Repeat("e", 40)
@@ -324,13 +357,15 @@ func TestPublish(t *testing.T) {
 		head string
 		want string
 	}{
-		"tag ręczny bez zapisu":           {Publisher{Repository: apiImage, Tags: tags{commit, "Etap 4\n"}, Admission: gate{policy: &policy, commit: commit}, Registry: &registry{}}, commit, "bez digestu"},
-		"tag na innym commicie niż zapis": {Publisher{Repository: apiImage, Tags: tags{other, record().TagMessage()}, Admission: gate{policy: &policy, commit: commit}, Registry: &registry{}}, other, "a zapisane wydanie"},
-		"workflow na innym commicie":      {Publisher{Repository: apiImage, Tags: tags{commit, record().TagMessage()}, Admission: gate{policy: &policy, commit: commit}, Registry: &registry{}}, other, "workflow biegnie"},
-		"obraz z innego commita":          {Publisher{Repository: apiImage, Tags: tags{commit, record().TagMessage()}, Admission: gate{policy: &policy, commit: other}, Registry: &registry{}}, commit, "zbudowano z"},
+		"tag ręczny bez zapisu":           {Publisher{Repository: apiImage, Tags: tags{commit, "Etap 4\n"}, Admission: gate{policy: &policy, commit: commit}, Registry: &registry{}, CI: green}, commit, "bez digestu"},
+		"tag na innym commicie niż zapis": {Publisher{Repository: apiImage, Tags: tags{other, record().TagMessage()}, Admission: gate{policy: &policy, commit: commit}, Registry: &registry{}, CI: green}, other, "a zapisane wydanie"},
+		"workflow na innym commicie":      {Publisher{Repository: apiImage, Tags: tags{commit, record().TagMessage()}, Admission: gate{policy: &policy, commit: commit}, Registry: &registry{}, CI: green}, other, "workflow biegnie"},
+		"obraz z innego commita":          {Publisher{Repository: apiImage, Tags: tags{commit, record().TagMessage()}, Admission: gate{policy: &policy, commit: other}, Registry: &registry{}, CI: green}, commit, "zbudowano z"},
+		"czerwony bieg main commita":      {Publisher{Repository: apiImage, Tags: tags{commit, record().TagMessage()}, Admission: gate{policy: &policy, commit: commit}, Registry: &registry{}, CI: mainRuns{commit: "failure"}}, commit, "pakiet dowodów wydania 0.4.0"},
+		"commit bez biegu main":           {Publisher{Repository: apiImage, Tags: tags{commit, record().TagMessage()}, Admission: gate{policy: &policy, commit: commit}, Registry: &registry{}, CI: mainRuns{}}, commit, "brak biegu ci po push na main"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := tt.p.Publish(context.Background(), "v0.4.0", tt.head); cli.ExitCode(err) != cli.ExitUnmet || !strings.Contains(err.Error(), tt.want) {
+			if _, _, err := tt.p.Publish(context.Background(), "v0.4.0", tt.head); cli.ExitCode(err) != cli.ExitUnmet || !strings.Contains(err.Error(), tt.want) {
 				t.Errorf("oczekiwano odmowy z %q, jest %v", tt.want, err)
 			}
 			if reg := tt.p.Registry.(*registry); len(reg.tagged) > 0 {

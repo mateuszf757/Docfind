@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/artifact"
+	"github.com/mateuszf757/Docfind/tools/internal/core/ci"
 	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 )
@@ -64,6 +65,7 @@ type attestations struct {
 	refuse                  bool
 	release                 *artifact.Release
 	releaseCommit           string
+	evidence                *artifact.Evidence
 	askedRef                *string
 }
 
@@ -82,8 +84,27 @@ func (a attestations) VerifyRelease(_ context.Context, ref, version string) (art
 	return *a.release, artifact.Provenance{PredicateType: artifact.ReleasePredicate, SourceRef: "refs/tags/v" + version, SourceCommit: a.releaseCommit}, nil
 }
 
+func (a attestations) VerifyEvidence(_ context.Context, ref, version string) (artifact.Evidence, artifact.Provenance, error) {
+	if a.evidence == nil || a.evidence.Release.Version != version {
+		return artifact.Evidence{}, artifact.Provenance{}, cli.Unmet("brak atestacji pakietu dowodów wydania %s dla %s", version, ref)
+	}
+	return *a.evidence, artifact.Provenance{PredicateType: artifact.EvidencePredicate, SourceRef: "refs/tags/v" + version}, nil
+}
+
+// evidenceOf — pakiet dowodów wydania r z zielonym biegiem main.
+func evidenceOf(r *artifact.Release) *artifact.Evidence {
+	var jobs []ci.Job
+	for _, name := range artifact.MainJobs {
+		jobs = append(jobs, ci.Job{Name: name, Conclusion: "success"})
+	}
+	return &artifact.Evidence{Release: *r, Main: []artifact.EvidenceRun{{
+		Run:  ci.Run{ID: 7, Conclusion: "success", HeadSHA: r.Commit, URL: "https://github.com/o/r/actions/runs/7"},
+		Jobs: jobs,
+	}}}
+}
+
 func releaseOf(image, version, from string) *artifact.Release {
-	return &artifact.Release{Version: version, Image: image, Commit: from, AcceptedAt: "2026-10-12T10:00:00Z", Staging: "ok"}
+	return &artifact.Release{Version: version, Image: image, Commit: from, AcceptedAt: "2026-10-12T10:00:00Z", Staging: "ok", GatesCommit: strings.Repeat("a", 40)}
 }
 
 func TestAdmit(t *testing.T) {
@@ -91,9 +112,20 @@ func TestAdmit(t *testing.T) {
 	attested := []string{artifact.ProvenancePredicates[0], artifact.SBOMPredicate}
 	main := attestations{sourceRef: MainRef, sourceCommit: commit}
 	withRelease := func(a attestations, r *artifact.Release, signedFrom string) attestations {
-		a.release, a.releaseCommit = r, signedFrom
+		a.release, a.releaseCommit, a.evidence = r, signedFrom, evidenceOf(r)
 		return a
 	}
+	withoutEvidence := func(a attestations) attestations {
+		a.evidence = nil
+		return a
+	}
+	redMain := func(a attestations) attestations {
+		e := *a.evidence
+		e.Main = []artifact.EvidenceRun{{Run: ci.Run{ID: 8, Conclusion: "failure", HeadSHA: commit, URL: "u8"}}}
+		a.evidence = &e
+		return a
+	}
+	released := withRelease(main, releaseOf(apiImage+"@"+digest, "0.4.0", commit), commit)
 	tests := []struct {
 		name, env, ref, release string
 		predicates              []string
@@ -115,6 +147,8 @@ func TestAdmit(t *testing.T) {
 		{"obraz z main bez atestacji wydania na produkcję", "prod", apiImage + "@" + digest, "0.4.0", attested, &main, cli.ExitUnmet, ""},
 		{"atestacja wydania innego digestu", "prod", apiImage + "@" + digest, "0.4.0", attested, ptr(withRelease(main, releaseOf(apiImage+"@sha256:"+strings.Repeat("0", 64), "0.4.0", commit), commit)), cli.ExitUnmet, ""},
 		{"wydanie podpisane z innego commita", "prod", apiImage + "@" + digest, "0.4.0", attested, ptr(withRelease(main, releaseOf(apiImage+"@"+digest, "0.4.0", commit), strings.Repeat("e", 40))), cli.ExitUnmet, ""},
+		{"wydanie bez pakietu dowodów", "prod", apiImage + "@" + digest, "0.4.0", attested, ptr(withoutEvidence(released)), cli.ExitUnmet, ""},
+		{"pakiet dowodów z czerwonym biegiem main", "prod", apiImage + "@" + digest, "0.4.0", attested, ptr(redMain(released)), cli.ExitUnmet, ""},
 		// dev nie wymaga atestacji.
 		{"bez atestacji w dev", "dev", apiImage + "@" + digest, "", attested[:1], nil, cli.ExitOK, apiImage + ":cccccccccccc@" + digest},
 	}

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -10,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"slices"
 	"strconv"
@@ -154,7 +157,11 @@ func runReleaseImage(ctx context.Context, w *workspace, args []string) error {
 	if err != nil {
 		return err
 	}
-	r, err := release.Publisher{Repository: imageName("api"), Tags: w.gh(), Admission: w.admission(), Registry: registry.Client{}}.Publish(ctx, args[0], head)
+	tools, err := w.evidenceTools()
+	if err != nil {
+		return err
+	}
+	r, e, err := release.Publisher{Repository: imageName("api"), Tags: w.gh(), Admission: w.admission(), Registry: registry.Client{}, CI: w.gh(), Tools: tools}.Publish(ctx, args[0], head)
 	if err != nil {
 		return err
 	}
@@ -166,15 +173,38 @@ func runReleaseImage(ctx context.Context, w *workspace, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := githubOutput(fmt.Sprintf("image=%s\ndigest=%s\nversion=%s\npredicate-type=%s\npredicate=%s\n",
-		repository, digest, r.Version, artifact.ReleasePredicate, predicate)); err != nil {
+	evidence, err := json.Marshal(e)
+	if err != nil {
 		return err
 	}
-	if err := w.writeReport("release-"+r.Version, r); err != nil {
+	if err := githubOutput(fmt.Sprintf("image=%s\ndigest=%s\nversion=%s\npredicate-type=%s\npredicate=%s\nevidence-predicate-type=%s\nevidence-predicate=%s\n",
+		repository, digest, r.Version, artifact.ReleasePredicate, predicate, artifact.EvidencePredicate, evidence)); err != nil {
 		return err
 	}
-	return appendSummary(fmt.Sprintf("### Wydanie %s\n\n%s\n\n| Obraz (ten sam digest co na stagingu) | Commit | Akceptacja na stagingu |\n|---|---|---|\n| `%s:%s@%s` | `%s` | %s: %s |\n",
-		r.Version, r.Title, repository, r.Version, digest, artifact.ShortCommit(r.Commit), r.AcceptedAt, r.Staging))
+	if err := errors.Join(w.writeReport("release-"+r.Version, r), w.writeReport("evidence-"+r.Version, e)); err != nil {
+		return err
+	}
+	return appendSummary(fmt.Sprintf("### Wydanie %s\n\n%s\n\n| Obraz (ten sam digest co na stagingu) | Commit | Akceptacja na stagingu |\n|---|---|---|\n| `%s:%s@%s` | `%s` | %s: %s |\n\n"+
+		"Pakiet dowodów (%s): bieg main %s — %s, %d artefaktów ze skrótami, mise.lock `%.12s`, dft `%.12s`.\n",
+		r.Version, r.Title, repository, r.Version, digest, artifact.ShortCommit(r.Commit), r.AcceptedAt, r.Staging,
+		artifact.EvidencePredicate, e.Main[0].URL, e.Main[0].Conclusion, len(e.Main[0].Artifacts), e.Tools.MiseLockSHA256, e.Tools.DftRevision))
+}
+
+// evidenceTools — wersje narzędzi do pakietu dowodów wydania (decyzja 53):
+// skrót mise.lock z drzewa (w CI: commit tagu), commit kodu dft z jego
+// informacji o buildzie i wersja Go.
+func (w *workspace) evidenceTools() (artifact.EvidenceTools, error) {
+	lock, err := os.ReadFile(filepath.Join(w.root, "mise.lock"))
+	if err != nil {
+		return artifact.EvidenceTools{}, err
+	}
+	sum := sha256.Sum256(lock)
+	code := gatesCode()
+	revision := code.Commit
+	if code.Modified {
+		revision += " (z niezatwierdzonymi zmianami)"
+	}
+	return artifact.EvidenceTools{MiseLockSHA256: hex.EncodeToString(sum[:]), DftRevision: revision, GoVersion: runtime.Version()}, nil
 }
 
 func runRepoSettings(ctx context.Context, w *workspace, args []string) error {
