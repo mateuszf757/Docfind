@@ -2391,6 +2391,39 @@ Pierwszy pomiar (2026-10-17, biegi sprzed zrównoleglenia z decyzji 52):
 **Kiedy zmieniam zdanie:** gdy p95 W1 na PR-ach zejdzie do budżetu
 w 20 kolejnych biegach — wtedy `--enforce` w nocy.
 
+## 58. Zakończenie eksmitowanego poda mierzone w drainie, X z charta
+
+> Uzupełnia decyzje 6 i 34 (drain każdego węzła).
+
+**Wybieram pomiar zakończenia każdego eksmitowanego poda zamiast samej
+relacji w renderze.** Chart pilnował tylko, że okres łaski (15 s) pokrywa
+X = preStop + dokańczanie żądań + 1 s (dziś 9 s). Nikt nie sprawdzał, czy
+pod naprawdę kończy w X: aplikacja wisząca na zamykaniu dostawała SIGKILL
+po 15 s, a pętla żądań mogła tego nie zauważyć, bo ruch szedł już do innej
+repliki. Teraz chart wystawia X w adnotacji poda
+(`docfind.io/termination-budget-seconds`, liczone w `_helpers.tpl` tym
+samym wzorem co walidacja). Bramka drainu obserwuje pody aplikacji watchem
+od przed cordonem do końca rolloutu i dla każdego usuniętego poda liczy
+czas od prośby o usunięcie (deletionTimestamp minus okres łaski) do końca
+kontenera. Kod 137 albo OOMKilled, czas ponad X, brak adnotacji i drain bez
+żadnego zaobserwowanego zakończenia dają `NIESPEŁNIONE`.
+
+**Co tracę:**
+
+- **Pomiar z dokładnością do sekundy.** Znaczniki czasu API mają sekundową
+  rozdzielczość; zapas 1 s w X to pokrywa.
+- **Pierwszy raz na klastrze w CI.** Watch na atrapie clientsetu
+  przechodzi, ale pierwszym pomiarem na żywo jest zadanie `cluster` na PR-ze.
+  Jeśli watch nie zobaczy zakończeń, bramka jest czerwona z „pomiar X nie
+  zadziałał”, a nie zielona bez pomiaru.
+- **Pętla przez Gateway dalej `[ŻYCZENIE]`.** Wymaga zaufania sondy do
+  wewnętrznego CA i nazwy hosta bramy.
+- **Rollout przy wdrożeniu.** Adnotacja zmienia szablon poda — jeden
+  rollout po wdrożeniu tej zmiany.
+
+**Kiedy zmieniam zdanie:** gdy kubelet zacznie raportować czas zakończenia
+w zdarzeniach poda — wtedy zdarzenia zamiast watcha.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

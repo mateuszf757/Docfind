@@ -38,6 +38,34 @@ type fakeCluster struct {
 	// probeLog — log sondy: wyniki żądań.
 	probeLog string
 	drained  []string
+	// evicted — pody eksmitowane drainem; term — ich zakończenie (nil —
+	// w 6 s przy X = 9 s, kod 0); silent — watch nic nie widzi.
+	evicted []string
+	term    func(pod string) cluster.Termination
+	silent  bool
+}
+
+func (f *fakeCluster) WatchTerminations(context.Context, string, string) (func() []cluster.Termination, error) {
+	f.mu.Lock()
+	from := len(f.evicted)
+	f.mu.Unlock()
+	return func() []cluster.Termination {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if f.silent {
+			return nil
+		}
+		var out []cluster.Termination
+		for _, pod := range f.evicted[from:] {
+			if f.term != nil {
+				out = append(out, f.term(pod))
+				continue
+			}
+			at := time.Date(2026, 10, 17, 10, 0, 0, 0, time.UTC)
+			out = append(out, cluster.Termination{Pod: pod, Container: "api", Requested: at, Finished: at.Add(6 * time.Second), Budget: 9 * time.Second})
+		}
+		return out
+	}, nil
 }
 
 func newCluster(replicaNodes ...string) *fakeCluster {
@@ -166,6 +194,7 @@ func (f *fakeCluster) Drain(_ context.Context, node string, _ time.Duration) err
 		if n != node {
 			continue
 		}
+		f.evicted = append(f.evicted, pod)
 		for _, other := range slices.Sorted(maps.Keys(f.nodes)) {
 			if other != node && !f.nodes[other].Unschedulable && !slices.Contains(slices.Collect(maps.Values(f.replicas)), other) {
 				f.replicas[pod] = other
@@ -236,6 +265,22 @@ func TestRunRejects(t *testing.T) {
 			f.lease = cluster.LeaseAttempt{Holder: "inny", Expires: time.Now().Add(time.Minute)}
 		}, "trwa inny bieg bramki drainu (inny"},
 		{"węzeł bez repliki", func(_ *fakeCluster, g *Gate) { g.Cfg.Node = "server-0" }, "na węźle server-0 nie ma repliki API"},
+		{"pod zabity SIGKILL", func(f *fakeCluster, _ *Gate) {
+			f.term = func(pod string) cluster.Termination {
+				at := time.Date(2026, 10, 17, 10, 0, 0, 0, time.UTC)
+				return cluster.Termination{Pod: pod, Container: "api", Requested: at, Finished: at.Add(15 * time.Second), ExitCode: 137, Reason: "Error", Budget: 9 * time.Second}
+			}
+		}, "zabity SIGKILL (kod 137"},
+		{"pod kończy się dłużej niż X", func(f *fakeCluster, _ *Gate) {
+			f.term = func(pod string) cluster.Termination {
+				at := time.Date(2026, 10, 17, 10, 0, 0, 0, time.UTC)
+				return cluster.Termination{Pod: pod, Container: "api", Requested: at, Finished: at.Add(12 * time.Second), Budget: 9 * time.Second}
+			}
+		}, "kończył się 12s, a X = 9s"},
+		{"pod bez X w adnotacji", func(f *fakeCluster, _ *Gate) {
+			f.term = func(pod string) cluster.Termination { return cluster.Termination{Pod: pod, Container: "api"} }
+		}, "bez adnotacji docfind.io/termination-budget-seconds"},
+		{"watch nie widzi zakończeń", func(f *fakeCluster, _ *Gate) { f.silent = true }, "pomiar X nie zadziałał"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
