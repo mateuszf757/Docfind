@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -27,12 +28,19 @@ func TestRunArgs(t *testing.T) {
 }
 
 // TestRunToExit: kod wyjścia różny od zera to wynik, a niemożność
-// uruchomienia — błąd.
+// uruchomienia — błąd. Wyjście pochodzi z `docker logs`, a kontener jest
+// usuwany po odczycie.
 func TestRunToExit(t *testing.T) {
 	f := &proc.Fake{Responses: map[string]proc.FakeResponse{
-		"docker run --rm --name odmowa img:1":    {Stderr: "BŁĄD KONFIGURACJI", Code: 2},
-		"docker run --rm --name ok img:1":        {Stdout: "Python 3.14.0"},
-		"docker run --rm --name brak-demona img": {Err: context.DeadlineExceeded},
+		"docker run -d --name odmowa img:1":    {Stdout: "c1\n"},
+		"docker wait c1":                       {Stdout: "2\n"},
+		"docker logs c1":                       {Stderr: "BŁĄD KONFIGURACJI"},
+		"docker rm --force c1":                 {},
+		"docker run -d --name ok img:1":        {Stdout: "c2\n"},
+		"docker wait c2":                       {Stdout: "0\n"},
+		"docker logs c2":                       {Stdout: "Python 3.14.0"},
+		"docker rm --force c2":                 {},
+		"docker run -d --name brak-demona img": {Err: context.DeadlineExceeded},
 	}}
 	c := Client{Runner: f}
 	ctx := context.Background()
@@ -46,29 +54,65 @@ func TestRunToExit(t *testing.T) {
 	if _, err := c.RunToExit(ctx, container.Spec{Name: "brak-demona", Image: "img"}, 0); err == nil {
 		t.Error("awaria uruchomienia jako wynik")
 	}
-	if _, err := c.RunToExit(ctx, container.Spec{Image: "img"}, time.Second); err == nil {
-		t.Error("limit czasu bez nazwy kontenera przyjęty")
-	}
 }
 
-// TestRunToExitTimeout: po limicie kontener jest usuwany, a wynik mówi, że
-// nie zakończył się sam.
-func TestRunToExitTimeout(t *testing.T) {
-	removed := make(chan struct{})
-	runner := proc.RunnerFunc(func(ctx context.Context, c proc.Cmd) (proc.Result, error) {
+// waitingRunner — `docker wait` czeka, aż kontener się skończy (tu: do
+// anulowania kontekstu); rm zapisuje, co usunięto, i może zawieść.
+func waitingRunner(removed *[]string, rmErr error) proc.Runner {
+	return proc.RunnerFunc(func(ctx context.Context, c proc.Cmd) (proc.Result, error) {
 		switch c.Args[0] {
-		case "rm":
-			close(removed)
-			return proc.Result{}, nil
 		case "run":
-			<-removed // `docker run` kończy się, gdy kontener zostanie usunięty
-			return proc.Result{}, &proc.ExitError{Cmd: c.String(), Code: 137}
+			return proc.Result{Stdout: []byte("c9\n")}, nil
+		case "wait":
+			<-ctx.Done()
+			return proc.Result{}, &proc.ExitError{Cmd: c.String(), Code: 143}
+		case "logs":
+			return proc.Result{Stdout: []byte("słucha na 0.0.0.0:8000")}, nil
+		case "rm":
+			*removed = append(*removed, strings.Join(c.Args, " "))
+			return proc.Result{}, rmErr
 		}
 		return proc.Result{}, nil
 	})
-	exit, err := Client{Runner: runner}.RunToExit(context.Background(), container.Spec{Name: "wstal", Image: "img"}, 10*time.Millisecond)
-	if err != nil || !exit.TimedOut {
+}
+
+// TestRunToExitTimeout: po limicie wynik mówi, że kontener nie zakończył
+// się sam, wyjście jest odczytane, a kontener usunięty — po identyfikatorze
+// z `docker run -d`, więc nie ma wyścigu z nadaniem nazwy (H27).
+func TestRunToExitTimeout(t *testing.T) {
+	var removed []string
+	exit, err := Client{Runner: waitingRunner(&removed, nil)}.RunToExit(context.Background(), container.Spec{Name: "wstal", Image: "img"}, 10*time.Millisecond)
+	if err != nil || !exit.TimedOut || exit.Code != -1 || exit.Stdout != "słucha na 0.0.0.0:8000" {
 		t.Errorf("po limicie: %+v, %v", exit, err)
+	}
+	if strings.Join(removed, ",") != "rm --force c9" {
+		t.Errorf("usunięte: %v", removed)
+	}
+}
+
+// TestRunToExitCleanupFailure: błąd usunięcia kontenera to błąd, a nie
+// cisza — dawne jedno `rm --force` z pominiętym błędem zostawiało kontener
+// i klienta czekającego na jego koniec.
+func TestRunToExitCleanupFailure(t *testing.T) {
+	var removed []string
+	_, err := Client{Runner: waitingRunner(&removed, errors.New("demon nie odpowiada"))}.RunToExit(context.Background(), container.Spec{Name: "wstal", Image: "img"}, 10*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "usunięcie kontenera c9") {
+		t.Fatalf("oczekiwano błędu sprzątania, jest %v", err)
+	}
+}
+
+// TestRunToExitInterrupted: przerwanie z zewnątrz (SIGINT) to awaria, nie
+// wynik „kontener wstał i działał” — i kontener i tak jest usuwany.
+func TestRunToExitInterrupted(t *testing.T) {
+	var removed []string
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(10 * time.Millisecond); cancel() }()
+	exit, err := Client{Runner: waitingRunner(&removed, nil)}.RunToExit(ctx, container.Spec{Name: "wstal", Image: "img"}, time.Minute)
+	if err == nil || exit.TimedOut {
+		t.Errorf("przerwanie: %+v, %v", exit, err)
+	}
+	if len(removed) != 1 {
+		t.Errorf("usunięte: %v", removed)
 	}
 }
 

@@ -55,6 +55,24 @@ func dockerChecker(t *testing.T, name string) *Checker {
 	}
 }
 
+// negativeBudget — górna granica czasu jednego wariantu: limity odmowy,
+// startu i zamykania razem z narzutem Dockera mieszczą się w niej kilka razy.
+// Wariant zaliczony dopiero po czasie nie sprawdził mechanizmu, który opisuje
+// — tak `sleep 300` czekał do końca w co trzecim biegu CI, gdy usunięcie
+// kontenera po limicie chybiało (H27).
+const negativeBudget = 2 * time.Minute
+
+// runBounded uruchamia bramkę i sprawdza, że wariant skończył się w budżecie.
+func runBounded(t *testing.T, c *Checker) (Report, error) {
+	t.Helper()
+	started := time.Now()
+	rep, err := c.Run(context.Background())
+	if elapsed := time.Since(started); elapsed > negativeBudget {
+		t.Errorf("wariant trwał %v, budżet %v — zaliczony po czasie, a nie przez mechanizm, który sprawdza", elapsed.Round(time.Second), negativeBudget)
+	}
+	return rep, err
+}
+
 func requireUnmet(t *testing.T, rep Report, err error, want string) {
 	t.Helper()
 	if cli.ExitCode(err) != cli.ExitUnmet {
@@ -73,7 +91,7 @@ func requireUnmet(t *testing.T, rep Report, err error, want string) {
 func TestStartsWithoutConfigIsRejected(t *testing.T) {
 	c := dockerChecker(t, "bez-odmowy")
 	c.Entrypoint = []string{"sleep", "300"}
-	rep, err := c.Run(context.Background())
+	rep, err := runBounded(t, c)
 	requireUnmet(t, rep, err, "brak konfiguracji: kontener wstał i działał")
 }
 
@@ -84,7 +102,7 @@ func TestStartsWithoutConfigIsRejected(t *testing.T) {
 func TestProcessWithoutSigtermHandlingIsRejected(t *testing.T) {
 	c := dockerChecker(t, "bez-sigterm")
 	c.Entrypoint = []string{"/bin/sh", "-c", "python -m docfind_api && exit"}
-	rep, err := c.Run(context.Background())
+	rep, err := runBounded(t, c)
 	requireUnmet(t, rep, err, "aplikacja zamyka się")
 	if rep.Shutdown == nil || rep.Shutdown.OwnSeconds < 2 {
 		t.Errorf("koszt własny zamykania %+v — oczekiwano ~limitu docker stop (3 s)", rep.Shutdown)
@@ -98,6 +116,6 @@ func TestInflightLongerThanGraceIsRejected(t *testing.T) {
 	c := dockerChecker(t, "w-locie")
 	c.Limits.InflightDelay = 5 * time.Second
 	c.Limits.StopTimeout = 10 * time.Second
-	rep, err := c.Run(context.Background())
+	rep, err := runBounded(t, c)
 	requireUnmet(t, rep, err, "żądanie w locie przy SIGTERM nie zostało dokończone")
 }

@@ -8,12 +8,10 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/container"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
-	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 )
 
 // runArgs zamienia specyfikację kontenera na argumenty `docker run` po
@@ -46,40 +44,60 @@ func runArgs(s container.Spec) []string {
 	return args
 }
 
-// RunToExit uruchamia kontener (--rm) i czeka na jego zakończenie. Kod
-// wyjścia różny od zera to wynik (Exit.Code), a nie błąd; błąd to tylko
-// niemożność uruchomienia.
+// RunToExit uruchamia kontener i czeka na jego zakończenie. Kod wyjścia
+// różny od zera to wynik (Exit.Code), a nie błąd; błąd to niemożność
+// uruchomienia albo sprzątania. Po timeout (>0) kontener jest usuwany,
+// a wynik ma TimedOut.
 //
-// Po timeout (>0) usuwany jest sam kontener, a nie przerywany `docker run`:
-// CLI przekazuje sygnał do kontenera, a PID 1 bez handlera go ignoruje, więc
-// przerwany klient czekałby na swój własny limit. Usunięcie kontenera
-// kończy `docker run` od razu. Wymaga nazwy kontenera.
-func (c Client) RunToExit(ctx context.Context, s container.Spec, timeout time.Duration) (container.Exit, error) {
-	if timeout > 0 && s.Name == "" {
-		return container.Exit{}, errors.New("kontener z limitem czasu wymaga nazwy")
+// Kontener startuje w tle (`docker run -d`, bez --rm): istnieje, zanim
+// zacznie się liczyć limit, a jego wyjście da się przeczytać po zakończeniu
+// (`docker logs`). Wcześniej limit liczył się od startu klienta `docker run`
+// na pierwszym planie, a po nim padało jedno `docker rm --force` z błędem
+// pominiętym — gdy chybiło, klient czekał na koniec procesu w kontenerze.
+// W wariancie negatywnym z `sleep 300` dawało to +295 s w co trzecim biegu
+// CI, a w bramce Etapu 1 aplikacja, która przestała odmawiać startu,
+// zawiesiłaby zadanie do jego limitu. Teraz usunięcie jest zawsze, a jego
+// błąd zwracany.
+func (c Client) RunToExit(ctx context.Context, s container.Spec, timeout time.Duration) (exit container.Exit, err error) {
+	started, err := c.run(ctx, append([]string{"run", "-d"}, runArgs(s)...)...)
+	if err != nil {
+		return container.Exit{}, fmt.Errorf("start kontenera %s: %w", s.Image, err)
 	}
-	var timedOut atomic.Bool
+	id := strings.TrimSpace(string(started.Stdout))
+	if id == "" {
+		return container.Exit{}, fmt.Errorf("start kontenera %s: docker run -d nie podał identyfikatora", s.Image)
+	}
+	defer func() {
+		cleanupCtx, cancel := cli.CleanupContext(30 * time.Second)
+		defer cancel()
+		if _, rmErr := c.run(cleanupCtx, "rm", "--force", id); rmErr != nil {
+			err = errors.Join(err, fmt.Errorf("usunięcie kontenera %s: %w", id, rmErr))
+		}
+	}()
+
+	waitCtx, cancel := ctx, context.CancelFunc(func() {})
 	if timeout > 0 {
-		timer := time.AfterFunc(timeout, func() {
-			timedOut.Store(true)
-			cleanupCtx, cancel := cli.CleanupContext(30 * time.Second)
-			defer cancel()
-			_, _ = c.run(cleanupCtx, "rm", "--force", s.Name)
-		})
-		defer timer.Stop()
+		waitCtx, cancel = context.WithTimeout(ctx, timeout)
 	}
-	res, err := c.run(ctx, append([]string{"run", "--rm"}, runArgs(s)...)...)
-	exit := container.Exit{Stdout: string(res.Stdout), Stderr: string(res.Stderr)}
+	defer cancel()
+	waited, waitErr := c.run(waitCtx, "wait", id)
 	switch {
-	case timedOut.Load():
-		exit.TimedOut = true
-		exit.Code = -1
-	case err == nil:
-	case proc.ExitCode(err) > 0:
-		exit.Code = proc.ExitCode(err)
+	case timeout > 0 && ctx.Err() == nil && errors.Is(waitCtx.Err(), context.DeadlineExceeded):
+		exit.TimedOut, exit.Code = true, -1
+	case waitErr != nil:
+		return exit, fmt.Errorf("docker wait %s: %w", id, waitErr)
 	default:
-		return exit, err
+		code, convErr := strconv.Atoi(strings.TrimSpace(string(waited.Stdout)))
+		if convErr != nil {
+			return exit, fmt.Errorf("docker wait %s: kod wyjścia %q: %w", id, waited.Stdout, convErr)
+		}
+		exit.Code = code
 	}
+	logs, err := c.run(ctx, "logs", id)
+	if err != nil {
+		return exit, fmt.Errorf("docker logs %s: %w", id, err)
+	}
+	exit.Stdout, exit.Stderr = string(logs.Stdout), string(logs.Stderr)
 	return exit, nil
 }
 
