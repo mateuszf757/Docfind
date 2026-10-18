@@ -253,3 +253,64 @@ aplikację instalował Helm, usuwa zapis wydania Helma
 zostają. `helm upgrade --install docfind` na stagingu postawiłby wydanie
 obok Argo; `dft cluster up --image` na środowisku z Argo odmawia.
 
+
+## Wydanie — ćwiczenie promocji w repozytorium próbnym
+
+Promocja na prod biegnie tylko na tagu `v*`, a tagów `v*` nie da się
+usunąć ani przesunąć — każdy bieg `promote` w tym repozytorium to
+prawdziwe wydanie. Ścieżkę przed pierwszym prawdziwym wydaniem ćwiczy się
+w repozytorium próbnym. Ćwiczenie sprawdza:
+- odczyt reguł środowiska tokenem zadania;
+- czekanie na zgodę;
+- Deployment;
+- obie atestacje wydania — wydania i pakietu dowodów (decyzja 53).
+
+Powtarzać przy zmianie zadania `promote` albo `stages/promote`.
+
+**Tylko u innego właściciela** (organizacja albo drugie konto), nigdy jako
+fork na tym samym koncie. Obraz i chart nazywają się
+`ghcr.io/<właściciel>/docfind-api` i `ghcr.io/<właściciel>/charts/docfind`.
+Na tym samym koncie próba pisałaby do prawdziwych pakietów, a Argo CD na
+stagingu wdrożyłoby chart z próby (zakres `>=0.0.0-0`). Repozytorium
+próbne nie dostaje sekretów — ścieżka wydania ich nie potrzebuje.
+
+1. Utwórz repozytorium publiczne `<organizacja>/Docfind` (atestacje
+   publicznego Sigstore, publiczny GHCR). Wypchnij `main`:
+   `git push https://github.com/<organizacja>/Docfind.git main`.
+2. Ustawienia z kodu w próbie (rulesety, środowiska z recenzentem):
+   `GH_REPO=<organizacja>/Docfind ./bin/mise run repo:settings`.
+   Recenzent z `.github/environments/production.json` musi mieć dostęp do
+   repozytorium.
+3. Poczekaj na zielony bieg `main` w próbie (obraz i chart w GHCR
+   organizacji, atestacje). Digest jest w podsumowaniu `build-publish`.
+4. Tag wydania bez stagingu — próba nie ma klastra, więc zapis akceptacji
+   pisze się ręcznie w formacie `dft release`. CI sprawdza pochodzenie
+   obrazu z `main`, pakiet dowodów i zgodę, a nie samą akceptację. Do
+   pliku `docs/v0.0.1.txt`:
+
+   ```text
+   Ćwiczenie promocji
+
+   Akceptacja na stagingu: ćwiczenie — bez stagingu
+
+   Image: ghcr.io/<organizacja>/docfind-api@sha256:<digest z kroku 3>
+   Commit: <pełny SHA commita z kroku 3>
+   Accepted-At: <teraz, RFC 3339 UTC>
+   Gates-Commit: <ten sam pełny SHA>
+   ```
+
+   `git tag --annotate --cleanup=verbatim --file=docs/v0.0.1.txt v0.0.1 <SHA>`
+   i `git push https://github.com/<organizacja>/Docfind.git v0.0.1`.
+   Tag zostaje tylko w próbie — w tym repozytorium nie pushuj go.
+5. Oczekiwane w biegu tagu:
+   - `release` — tag `0.0.1` w GHCR organizacji i pakiet dowodów w podsumowaniu;
+   - `attest-release` — dwie atestacje;
+   - `vulns` — zielone;
+   - `promote` — czeka na zgodę w Environment `production`;
+   - po zgodzie — Deployment `production` z linkiem do atestacji, a w zapisie promocji `evidence_run`.
+6. Wariant negatywny: usuń recenzenta ze środowiska `production` w próbie
+   i wydaj `v0.0.2` (krok 4) → `dft promote` kod 1 („środowisko bez
+   wymaganej zgody”).
+7. Wynik — numery biegów i to, co się nie zgadzało — dopisz w opisie
+   najbliższego PR-a wydania. Repozytorium i pakiety próby usuń po
+   ćwiczeniu.

@@ -1240,6 +1240,12 @@ tylko wdrożenia przez `dft`.
 
 ## 38. Środowiska GitHuba jako kod, promocja wydania przed Etapem 10
 
+> Uzupełnione 2026-10-17: ścieżki promocji nie da się przećwiczyć tutaj
+> (tagów `v*` nie da się usunąć), więc `docs/RUNBOOK.md` ma procedurę
+> ćwiczenia w repozytorium próbnym — tylko u innego właściciela, bo nazwy
+> obrazu i charta biorą się z właściciela, a Argo CD na stagingu śledzi
+> chart konta. Ćwiczenie przed pierwszym wydaniem z pakietem dowodów.
+
 > Zmienione decyzją 40: promocja czeka na zadania `release`,
 > `attest-release` i `vulns`, a promowany obraz to digest z `main`
 > z atestacją wydania, a nie obraz zbudowany na tagu. Bramki klastrowe ten
