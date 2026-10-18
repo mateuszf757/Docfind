@@ -376,6 +376,39 @@ func TestCreateTag(t *testing.T) {
 	}
 }
 
+// TestIsAncestor: commit kodu bramek musi być w main — przodek albo ten sam
+// commit; commit z bocznej gałęzi nie; nieznany ref to awaria, nie „nie”.
+func TestIsAncestor(t *testing.T) {
+	r := newTestRepo(t)
+	r.commit("a")
+	base := r.git("rev-parse", "HEAD")
+	r.git("branch", "boczna")
+	r.commit("b")
+	head := r.git("rev-parse", "HEAD")
+	r.git("switch", "-q", "boczna")
+	r.commit("c")
+	side := r.git("rev-parse", "HEAD")
+	repo := r.repo()
+	ctx := context.Background()
+	for _, tt := range []struct {
+		commit, ref string
+		want        bool
+	}{
+		{base, head, true},
+		{head, head, true},
+		{side, head, false},
+		{head, side, false},
+	} {
+		got, err := repo.IsAncestor(ctx, tt.commit, tt.ref)
+		if err != nil || got != tt.want {
+			t.Errorf("IsAncestor(%s, %s) = %v, %v; oczekiwano %v", tt.commit[:7], tt.ref[:7], got, err, tt.want)
+		}
+	}
+	if _, err := repo.IsAncestor(ctx, head, "refs/remotes/origin/brak"); err == nil {
+		t.Error("nieznany ref dał wynik zamiast błędu")
+	}
+}
+
 // TestExport: kod katalogu z commita, a nie z drzewa roboczego, tylko ten
 // katalog i ze ścieżkami względem niego; rev, który wygląda jak opcja,
 // nie trafia do git archive; dowiązanie symboliczne zatrzymuje wypakowanie.

@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/kube"
@@ -82,7 +83,7 @@ func runRelease(ctx context.Context, w *workspace, args []string) error {
 	}
 	r, err := release.Acceptor{
 		Staging: def, Repository: imageName("api"), Cluster: c, Admission: w.admission(),
-		Gates: acceptanceGates{w: w, def: def, cluster: c}, Git: w.git(),
+		Gates: acceptanceGates{w: w, def: def, cluster: c}, Git: w.git(), Code: gatesCode(),
 	}.Accept(ctx, args[0], title)
 	if err != nil {
 		return err
@@ -102,8 +103,28 @@ type acceptanceGates struct {
 	cluster *kube.Cluster
 }
 
-func (g acceptanceGates) Identity(ctx context.Context) ([]identity.Pod, error) {
-	return g.w.identityGate(ctx, g.def, g.cluster, "")
+func (g acceptanceGates) Identity(ctx context.Context, image string) ([]identity.Pod, error) {
+	return g.w.identityGate(ctx, g.def, g.cluster, image)
+}
+
+// gatesCode — commit i stan drzewa, z którego zbudowano ten program (ci/dft
+// buduje go z drzewa roboczego przy każdym wywołaniu): go build zapisuje je
+// w informacji o buildzie (vcs.revision, vcs.modified).
+func gatesCode() release.GatesCode {
+	var code release.GatesCode
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return code
+	}
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			code.Commit = s.Value
+		case "vcs.modified":
+			code.Modified = s.Value == "true"
+		}
+	}
+	return code
 }
 
 func (g acceptanceGates) Drain(ctx context.Context) (drain.Report, error) {
