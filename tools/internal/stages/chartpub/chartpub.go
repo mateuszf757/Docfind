@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -124,11 +125,31 @@ func (p Publisher) Build(ctx context.Context, image string) (chart.OCI, chart.Bu
 	return oci, b, err
 }
 
+// Package zapisuje w dir archiwum charta dla obrazu image — ten sam
+// artefakt, który opublikowałby Publish (pakowanie jest powtarzalne,
+// decyzja 45) — i zwraca ścieżkę oraz digest manifestu OCI.
+func (p Publisher) Package(ctx context.Context, image, dir string) (string, string, error) {
+	oci, _, err := p.Build(ctx, image)
+	if err != nil {
+		return "", "", err
+	}
+	path := filepath.Join(dir, fmt.Sprintf("%s-%s.tgz", filepath.Base(p.ChartDir), oci.Version))
+	if err := os.WriteFile(path, oci.Archive, 0o644); err != nil {
+		return "", "", err
+	}
+	return path, oci.Digest(), nil
+}
+
 // Publish publikuje chart dla obrazu image i sprawdza go w rejestrze.
-func (p Publisher) Publish(ctx context.Context, image string) (Published, error) {
+// tested — digest charta przetestowanego w zadaniu cluster (decyzja 61);
+// chart złożony teraz musi być tym samym artefaktem. Puste — bez porównania.
+func (p Publisher) Publish(ctx context.Context, image, tested string) (Published, error) {
 	oci, b, err := p.Build(ctx, image)
 	if err != nil {
 		return Published{}, err
+	}
+	if tested != "" && oci.Digest() != tested {
+		return Published{}, cli.Unmet("chart złożony teraz (%s) to nie chart przetestowany na klastrze (%s) — publikowany byłby artefakt, którego nikt nie wdrożył", oci.Digest(), tested)
 	}
 	digest, err := p.Registry.PushManifest(ctx, p.Repository+":"+oci.Version, oci.Manifest, chart.ManifestMediaType,
 		artifact.Blob{Data: oci.Config, MediaType: chart.ConfigMediaType}, artifact.Blob{Data: oci.Archive, MediaType: chart.LayerMediaType})

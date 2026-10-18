@@ -244,6 +244,11 @@ func (f fakeCharts) Install(_ context.Context, _ cluster.Target, r cluster.Relea
 	if r.HooksOnly {
 		values = append(values, "hooksOnly")
 	}
+	// Aplikacja ze spakowanego charta (decyzja 61) — charty platformy też są
+	// archiwami, więc tylko wydanie aplikacji.
+	if r.Name == "docfind" && strings.HasSuffix(r.Chart, ".tgz") {
+		values = append(values, "chart="+filepath.Base(r.Chart))
+	}
 	return f.call("install %s %s", r.Name, strings.Join(values, " "))
 }
 
@@ -516,5 +521,30 @@ func TestDownRequiresPermission(t *testing.T) {
 	dev := deployer(t, "dev", rec, true, "")
 	if err := dev.Down(context.Background()); err != nil || !slices.Equal(rec.calls, []string{"k3d delete docfind"}) {
 		t.Errorf("usunięcie dev: %v, %v", err, rec.calls)
+	}
+}
+
+// TestUpFromRegistryPackaged: z --chart-package aplikacja idzie z archiwum
+// spakowanego jak do publikacji, bez obrazu w --set (decyzja 61).
+func TestUpFromRegistryPackaged(t *testing.T) {
+	quiet(t)
+	t.Setenv("DOCFIND_ACME_EMAIL", "")
+	digest := "sha256:" + strings.Repeat("d", 64)
+	rec := &recorder{}
+	d := deployer(t, "dev", rec, true, apiImage+":cccccccccccc@"+digest)
+	d.Env.Artifact.Sources = []string{environment.SourceRegistry}
+	var packaged string
+	d.Package = func(_ context.Context, image string) (string, string, error) {
+		packaged = image
+		// Wersja wdrożenia jest w wartościach archiwum, nie w --set.
+		rec.version = "0.3.1-dev.4+" + commit[:7]
+		return "/tmp/docfind-0.4.1-dev.3.tgz", "sha256:" + strings.Repeat("c", 64), rec.call("package")
+	}
+	if err := d.Up(context.Background(), Source{Kind: environment.SourceRegistry, Ref: apiImage + "@" + digest, PackageChart: true}); err != nil {
+		t.Fatalf("%v\n%s", err, strings.Join(rec.calls, "\n"))
+	}
+	joined := strings.Join(rec.calls, "\n")
+	if packaged != apiImage+"@"+digest || !strings.Contains(joined, "chart=docfind-0.4.1-dev.3.tgz") || strings.Contains(joined, "api.image.digest") {
+		t.Errorf("spakowany %q, wywołania:\n%s", packaged, joined)
 	}
 }

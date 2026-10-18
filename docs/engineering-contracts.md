@@ -221,11 +221,14 @@ indeksu albo atestacji → `dft check published` odmawia; USER root albo 0 → N
 `stages/lifecycle`). Decyzja: 21, 37, 40, 55.
 
 **4.2 Downstream nie buduje produktu.** Zadania po buildzie konsumują archiwum albo digest;
-chart instalowany w W2 i W3 to ten sam plik, który publikuje `chart`.
-Egzekwuje: digest konfiguracji archiwum w `cluster` i `vulns` [ŻYCZENIE: porównanie digestu
-charta przetestowanego z publikowanym]. Dowód: wyjścia zadań. Warstwa: W2, W3.
-Wariant negatywny: podmienione archiwum → `cluster` kod 1 [ŻYCZENIE: chart w rejestrze o innym
-digeście niż przetestowany → `chart` kod 1]. Decyzja: 36, 45.
+chart instalowany na klastrze `ci` po push to ten sam artefakt (ten sam digest), który
+publikuje `chart`.
+Egzekwuje: digest konfiguracji archiwum w `cluster` i `vulns`; `dft cluster up --chart-package`
+instaluje chart spakowany jak do publikacji i oddaje jego digest, a `dft chart publish --tested`
+odmawia publikacji innego (`stages/chartpub`). Dowód: wyjścia zadań (`chart-digest`), raport
+`chart.json`. Warstwa: W2, W3. Wariant negatywny: podmienione archiwum → `cluster` kod 1; chart
+złożony w `chart` o innym digeście niż przetestowany → `chart` kod 1 (testy `stages/chartpub`).
+Decyzja: 36, 45, 61.
 
 **4.3 Klaster tylko po zielonym buildzie.** `cluster` biegnie po sukcesie `test` i `build`
 (PR, noc) albo `build-publish` i `attest` (push).

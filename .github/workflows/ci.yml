@@ -655,6 +655,10 @@ jobs:
     # atestację, którą sprawdza.
     if: ${{ !cancelled() && ((needs.test.result == 'success' && needs.build.result == 'success') || (needs.build-publish.result == 'success' && needs.attest.result == 'success')) }}
     runs-on: ubuntu-24.04
+    # Digest charta zainstalowanego z archiwum (push) — zadanie chart
+    # publikuje tylko ten sam artefakt (decyzja 61).
+    outputs:
+      chart-digest: ${{ steps.up.outputs.chart-digest }}
     # Typowy bieg: utworzenie klastra i platforma ~5 minut, bramki ~4.
     timeout-minutes: 30
     permissions:
@@ -703,12 +707,15 @@ jobs:
       # sprawdzony jak po publikacji (indeks z atestacją, jeden obraz).
       # Środowisko ci wymaga atestacji (artifact.attested): pochodzenie i SBOM
       # w rejestrze i atestacja GitHuba z tego workflowu — gh czyta ją z API.
+      # Chart z archiwum spakowanego jak do publikacji: jego digest idzie do
+      # wyjść, a zadanie chart opublikuje tylko ten sam artefakt (decyzja 61).
       - name: klaster i wdrożenie obrazu z GHCR po digeście
+        id: up
         if: github.event_name == 'push'
         env:
           IMAGE: ${{ needs.build-publish.outputs.image }}@${{ needs.build-publish.outputs.digest }}
           GH_TOKEN: ${{ github.token }}
-        run: ./bin/mise run cluster:up -- --image "$IMAGE"
+        run: ./bin/mise run cluster:up -- --image "$IMAGE" --chart-package
 
       - name: drain każdego węzła z repliką
         run: ./bin/mise run cluster:drain
@@ -821,7 +828,9 @@ jobs:
         id: chart
         env:
           IMAGE: ${{ needs.build-publish.outputs.image }}@${{ needs.build-publish.outputs.digest }}
-        run: ./bin/mise run chart:publish -- --image "$IMAGE"
+          # Digest charta, który zadanie cluster zainstalowało i sprawdziło.
+          TESTED: ${{ needs.cluster.outputs.chart-digest }}
+        run: ./bin/mise run chart:publish -- --image "$IMAGE" --tested "$TESTED"
 
   # Atestacja GitHuba charta — ta sama tożsamość workflowu i commita co
   # obraz. Osobne zadanie z tego samego powodu co attest: id-token: write

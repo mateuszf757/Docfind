@@ -38,11 +38,12 @@ import (
 // repozytorium@sha256:… — z rejestru; --image-archive i --config-digest —
 // archiwum z zadania build.
 func sourceArgs(args []string) (deploy.Source, error) {
-	const usage = "dft cluster up [--image <obraz>@sha256:… | --image-archive <plik.tar> --config-digest sha256:…]"
+	const usage = "dft cluster up [--image <obraz>@sha256:… [--chart-package] | --image-archive <plik.tar> --config-digest sha256:…]"
 	fs := flag.NewFlagSet("cluster up", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var src deploy.Source
 	fs.StringVar(&src.Ref, "image", "", "")
+	fs.BoolVar(&src.PackageChart, "chart-package", false, "")
 	fs.StringVar(&src.Archive, "image-archive", "", "")
 	fs.StringVar(&src.Config, "config-digest", "", "")
 	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
@@ -51,9 +52,9 @@ func sourceArgs(args []string) (deploy.Source, error) {
 	switch {
 	case src.Ref != "" && src.Archive == "" && src.Config == "":
 		src.Kind = environment.SourceRegistry
-	case src.Ref == "" && src.Archive != "" && src.Config != "":
+	case src.Ref == "" && src.Archive != "" && src.Config != "" && !src.PackageChart:
 		src.Kind = environment.SourceArchive
-	case src.Ref == "" && src.Archive == "" && src.Config == "":
+	case src.Ref == "" && src.Archive == "" && src.Config == "" && !src.PackageChart:
 	default:
 		return src, cli.Usage("użycie: %s", usage)
 	}
@@ -123,6 +124,19 @@ func (w *workspace) deployer(def environment.Definition) (deploy.Deployer, error
 		Builder: w.builder(), Admission: w.admission(), Versions: w.git(), ChartRegistry: registry.Client{},
 		Download: func(ctx context.Context, url, sha string) (string, error) {
 			return fetch.URL(ctx, w.root, url, sha)
+		},
+		// Digest spakowanego charta idzie do wyjść kroku: zadanie chart
+		// opublikuje tylko ten sam artefakt (decyzja 61).
+		Package: func(ctx context.Context, image string) (string, string, error) {
+			dir, err := os.MkdirTemp("", "dft-chart-")
+			if err != nil {
+				return "", "", err
+			}
+			archive, digest, err := w.chartPublisher().Package(ctx, image, dir)
+			if err != nil {
+				return "", "", err
+			}
+			return archive, digest, githubOutput("chart-digest=" + digest + "\n")
 		},
 		SecretStores: w.secretStores(def),
 		DNSTokens: func(t cluster.Target) (deploy.DNSToken, error) {
