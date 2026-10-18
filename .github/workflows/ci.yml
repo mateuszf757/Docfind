@@ -176,6 +176,10 @@ jobs:
 
   build:
     needs: test
+    # Jawny wynik zamiast domyślnego success() (decyzja 47): na tagu test
+    # jest pominięty warunkiem i build też — tak ma być — ale zależność od
+    # przodków ma być widoczna w warunku, a nie domyślna.
+    if: ${{ !cancelled() && needs.test.result == 'success' }}
     runs-on: ubuntu-24.04
     # Typowy bieg trwa 1–2 minuty; publikacja i powtarzalność to dwa buildy.
     timeout-minutes: 30
@@ -307,7 +311,9 @@ jobs:
   # atestacji i logowanie do rejestru.
   attest:
     needs: build
-    if: github.event_name == 'push'
+    # Push na tagu też jest zdarzeniem push, ale build jest wtedy pominięty —
+    # warunek patrzy na jego wynik jawnie (decyzja 47).
+    if: ${{ !cancelled() && github.event_name == 'push' && needs.build.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Strona atestacji digestu — link w zapisie promocji (zadanie promote).
@@ -394,6 +400,7 @@ jobs:
   # samych powodów co attest.
   attest-release:
     needs: release
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Strona atestacji wydania — link w zapisie promocji (zadanie promote).
@@ -555,7 +562,18 @@ jobs:
   # zadanie podaje instalację, a nie instaluje.
   promote:
     needs: [release, attest-release, vulns]
-    if: github.ref_type == 'tag'
+    # Domyślne success() patrzy na wszystkich przodków, nie tylko na needs:
+    # na tagu pominięty build (przodek vulns) pomijał promote, choć release,
+    # attest-release i vulns były zielone — wydanie v0.3.1 nie miało ani
+    # zgody, ani zapisu (bieg 38164714816). Stąd !cancelled() i jawne wyniki
+    # bezpośrednich zależności (decyzja 47).
+    if: >-
+      ${{
+        !cancelled() && github.ref_type == 'tag'
+        && needs.release.result == 'success'
+        && needs.attest-release.result == 'success'
+        && needs.vulns.result == 'success'
+      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
@@ -710,7 +728,13 @@ jobs:
   # pobiera go z rejestru po wysłaniu i sprawdza wersję i obraz w wartościach.
   chart:
     needs: [build, attest, cluster]
-    if: github.event_name == 'push' && github.ref_type == 'branch'
+    if: >-
+      ${{
+        !cancelled() && github.event_name == 'push' && github.ref_type == 'branch'
+        && needs.build.result == 'success'
+        && needs.attest.result == 'success'
+        && needs.cluster.result == 'success'
+      }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -754,6 +778,7 @@ jobs:
   # gh attestation verify oci://…/charts/docfind@sha256:….
   attest-chart:
     needs: chart
+    if: ${{ !cancelled() && needs.chart.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

@@ -21,6 +21,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/uv"
 	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
 	"github.com/mateuszf757/Docfind/tools/internal/core/vuln"
+	"github.com/mateuszf757/Docfind/tools/internal/core/workflow"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/charts"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/gocode"
@@ -85,7 +86,7 @@ func runTest(ctx context.Context, w *workspace, args []string) error {
 		run  func() error
 	}{
 		{"spójność wersji", func() error { return checkVersions(ctx, w) }},
-		{"workflowy i skrypty", func() error { return w.workflows().Check(ctx) }},
+		{"workflowy i skrypty", func() error { return checkWorkflows(ctx, w) }},
 		{"sekrety w historii gita", func() error { return checkSecrets(ctx, w) }},
 		{"Python aplikacji", func() error { return checkPython(ctx, w) }},
 		{"charty", func() error { return checkCharts(ctx, w) }},
@@ -102,6 +103,29 @@ func runTest(ctx context.Context, w *workspace, args []string) error {
 
 func (w *workspace) workflows() lint.Workflows {
 	return lint.Workflows{Runner: w.runner, Root: w.root, Out: os.Stdout, Err: os.Stderr}
+}
+
+// checkWorkflows — lintery skryptów i workflowów, potem reguły grafu zadań,
+// których lintery nie znają: pominięcie przechodzi łańcuchem needs na każde
+// zadanie bez funkcji statusu w warunku (decyzja 47).
+func checkWorkflows(ctx context.Context, w *workspace) error {
+	if err := w.workflows().Check(ctx); err != nil {
+		return err
+	}
+	workflows, err := workflow.Load(w.root)
+	if err != nil {
+		return err
+	}
+	v := &cli.Verdict{}
+	for _, wf := range workflows {
+		for _, found := range workflow.SkipChain(wf) {
+			v.Fail("%s", found)
+		}
+	}
+	if !v.Failed() {
+		cli.Step("graf zadań: każde zadanie za warunkowym przodkiem patrzy na wyniki jawnie (decyzja 47)")
+	}
+	return v.Err("graf zadań workflowów")
 }
 
 // checkSecrets — gitleaks na całej historii (warunek Etapu 4). W raporcie
@@ -240,7 +264,7 @@ func runCheckWorkflows(ctx context.Context, w *workspace, args []string) error {
 	if err := requireTools("shellcheck", "actionlint", "zizmor"); err != nil {
 		return err
 	}
-	return w.workflows().Check(ctx)
+	return checkWorkflows(ctx, w)
 }
 
 func runCheckSecrets(ctx context.Context, w *workspace, args []string) error {
