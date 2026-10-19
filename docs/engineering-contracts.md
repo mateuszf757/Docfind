@@ -514,6 +514,15 @@ Egzekwuje: `dft ci budget` (§3.5). Dowód: podsumowanie nocy. Warstwa: W1.
 Wariant negatywny: [ŻYCZENIE: zadanie W2 wstawione przed W1 w grafie → reguła grafu zgłasza].
 Decyzja: 36, 57.
 
+**8.9 Zegar.** Zegar ścienny maszyny, na której biegnie `cluster up` albo `release`, różni się
+od czasu API GitHuba najwyżej o próg z §10. Pomiary czasu w bramkach idą zegarem monotonicznym;
+daty porównywane z cudzymi — ważność certyfikatów, tokeny z czasem życia, wygasanie wyjątków —
+idą zegarem ściennym.
+Egzekwuje: `dft cluster up` i `dft release` (`core/clock`, `adapters/host` — nagłówek `Date`
+odpowiedzi API GitHuba) [ŻYCZENIE: zegar węzłów klastra]. Dowód: log `cluster up` i `release`.
+Warstwa: W2, W5. Wariant negatywny: serwer z czasem przesuniętym o 5 min → kod 2 (testy
+`core/clock`, `adapters/host`). Decyzja: 23, 66.
+
 ## 9. Poza zakresem tej wersji
 
 SLO i alerty objawowe (Etap 8); kontrakt danych Elasticsearcha i reindeks bez przestoju
@@ -554,6 +563,7 @@ docelowe bez strażnika (budżety warstw, Z, pokrycie) stoją w klauzulach, w zn
 | §3.3 | przerwa między biegami nocnymi w serii | ≤ 48h0m0s | stages/trial, stages/mainhealth |
 | §3.6 | czerwony main bez issue | ≤ 24h0m0s | stages/mainhealth |
 | §6.2 | ważność wyjątku podatności | ≤ 90 dni | core/vuln |
+| §8.9 | rozjazd zegara maszyny z API GitHuba | ≤ 1m0s przed `cluster up` i `release` | core/clock, adapters/host |
 | §8.7 | ostrzeżenie przed wygaśnięciem wyjątku | 168h0m0s przed datą, w issue nocnym | stages/vulns, stages/gocode |
 <!-- progi: koniec -->
 

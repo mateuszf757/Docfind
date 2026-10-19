@@ -18,6 +18,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/httpclient"
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/kube"
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/registry"
+	"github.com/mateuszf757/Docfind/tools/internal/core/clock"
 	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
 	"github.com/mateuszf757/Docfind/tools/internal/core/contract"
 	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
@@ -77,6 +78,9 @@ func runCluster(ctx context.Context, w *workspace, args []string) error {
 			return err
 		}
 		if err := requireTools("k3d", "kubectl", "helm", "docker"); err != nil {
+			return err
+		}
+		if err := checkClock(ctx); err != nil {
 			return err
 		}
 		d, err := w.deployer(def)
@@ -434,4 +438,22 @@ func readSecret(prompt string) (string, error) {
 		return "", err
 	}
 	return dnstoken.ReadToken(bytes.NewReader(raw))
+}
+
+// checkClock — zegar maszyny względem nagłówka Date API GitHuba przed
+// operacjami, które porównują daty z cudzymi: certyfikaty, tokeny z czasem
+// życia, daty wyjątków (decyzja 66). Rozjazd ponad próg to awaria
+// środowiska (kod 2); brak odpowiedzi — ostrzeżenie, bo lokalny klaster
+// działa bez sieci.
+func checkClock(ctx context.Context) error {
+	skew, err := host.Host{}.ClockSkew(ctx, host.GitHubAPI)
+	if err != nil {
+		cli.Warn("nie sprawdzono zegara: %v", err)
+		return nil
+	}
+	if p := clock.Problem(skew); p != "" {
+		return errors.New(p)
+	}
+	cli.Step("zegar maszyny zgodny z API GitHuba (różnica %v)", skew.Round(100*time.Millisecond))
+	return nil
 }

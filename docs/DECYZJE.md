@@ -2656,6 +2656,34 @@ Dockera zniknęła razem z jedynym wywołującym.
 **Kiedy zmieniam zdanie:** gdy klient zacznie liczyć limit po rozmiarze
 pobierania — wtedy limit na rozmiar skompresowany w rejestrze.
 
+## 66. Zegar maszyny sprawdzany przed klastrem i wydaniem
+
+> Rozwiązuje H18. Uzupełnia decyzję 23.
+
+**Wybieram porównanie z nagłówkiem `Date` API GitHuba przed operacjami,
+które porównują daty z cudzymi.** Bramki mierzą czas zegarem
+monotonicznym, więc skok zegara ściennego nie psuje progów 60 s czy
+240 s. Psuje natomiast to, co zegar ścienny porównuje z cudzym: ważność
+certyfikatów przy weryfikacji, TokenRequest z czasem życia, wygasanie
+wyjątków. Zegar WSL po hibernacji potrafi stać minutami (pomiar
+z analizy: 1,6 s różnicy). `dft cluster up` i `dft release` wysyłają HEAD
+do `https://api.github.com` i porównują nagłówek `Date` z zegarem maszyny,
+przyjmując za chwilę lokalną środek między wysłaniem a odpowiedzią.
+Różnica ponad 60 s to awaria środowiska (kod 2) z poleceniem do
+porównania. Brak odpowiedzi daje ostrzeżenie: lokalny klaster dev działa
+bez sieci.
+
+**Co tracę:**
+
+- **Jedno zapytanie przed każdym `cluster up` i `release`.**
+- **Rozdzielczość sekundy.** Nagłówek `Date` ma sekundy, a odpowiedź idzie
+  chwilę; próg 60 s ma ten błąd w zapasie.
+- **Zegary węzłów klastra niesprawdzone.** k3d w kontenerach dzieli zegar
+  maszyny, ale klaster zdalny już nie — zostaje `[ŻYCZENIE]` w §8.9.
+
+**Kiedy zmieniam zdanie:** gdy bramki przestaną porównywać daty
+z cudzymi — wtedy sprawdzenie niepotrzebne.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

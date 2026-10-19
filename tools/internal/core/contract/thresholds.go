@@ -97,6 +97,10 @@ const (
 	CoverageCore     = 70.0
 	CoverageAdapters = 55.0
 	CoverageKit      = 60.0
+	// MaxClockSkew — największy rozjazd zegara maszyny z nagłówkiem Date
+	// API GitHuba przed `cluster up` i `release` (§8.9). Zmierzono 1,6 s
+	// (WSL); po hibernacji WSL zegar potrafi stać minutami.
+	MaxClockSkew = 60 * time.Second
 	// BudgetW1 … BudgetW5 — budżet wall-clock warstwy, p95 z BudgetRuns
 	// biegów danego zdarzenia (§3.1, §0.5).
 	BudgetW1 = 6 * time.Minute
@@ -143,6 +147,7 @@ func Thresholds() []Threshold {
 		{"§3.3", "przerwa między biegami nocnymi w serii", fmt.Sprintf("≤ %v", NightlyGap), "stages/trial, stages/mainhealth"},
 		{"§3.6", "czerwony main bez issue", fmt.Sprintf("≤ %v", MainRedLimit), "stages/mainhealth"},
 		{"§6.2", "ważność wyjątku podatności", fmt.Sprintf("≤ %d dni", vuln.MaxExceptionDays), "core/vuln"},
+		{"§8.9", "rozjazd zegara maszyny z API GitHuba", fmt.Sprintf("≤ %v przed `cluster up` i `release`", MaxClockSkew), "core/clock, adapters/host"},
 		{"§8.7", "ostrzeżenie przed wygaśnięciem wyjątku", fmt.Sprintf("%v przed datą, w issue nocnym", ExceptionWarning), "stages/vulns, stages/gocode"},
 	}
 }

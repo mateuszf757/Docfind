@@ -75,6 +75,9 @@ func runRelease(ctx context.Context, w *workspace, args []string) error {
 	if err := requireTools("gh", "kubectl", "go", "k3d", "cmctl"); err != nil {
 		return err
 	}
+	if err := checkClock(ctx); err != nil {
+		return err
+	}
 	def, err := environment.Load(w.root, "staging")
 	if err != nil {
 		return err
