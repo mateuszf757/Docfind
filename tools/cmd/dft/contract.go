@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/contract"
@@ -98,6 +99,20 @@ func checkContract(ctx context.Context, w *workspace, base string) error {
 	}
 	if len(found) == 0 {
 		cli.Step("kontrakt: tabela progów równa kodowi, każda klauzula z polami, strażnicy i decyzje istnieją")
+	}
+	var stale int
+	for _, doc := range contract.Documents {
+		raw, err := os.ReadFile(filepath.Join(w.root, filepath.FromSlash(doc)))
+		if err != nil {
+			return err
+		}
+		for _, f := range contract.Commands(doc, string(raw), known) {
+			v.Fail("%s", f)
+			stale++
+		}
+	}
+	if stale == 0 {
+		cli.Step("dokumentacja: polecenia z %s istnieją (decyzja 68)", strings.Join(contract.Documents, ", "))
 	}
 	problems, warnings, err := w.contractExceptions(string(text))
 	if err != nil {

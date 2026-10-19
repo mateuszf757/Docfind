@@ -257,3 +257,64 @@ func isProtected(path string) bool {
 	}
 	return false
 }
+
+// Documents — dokumenty dla ludzi, których polecenia muszą istnieć
+// (decyzja 68): kto wykona procedurę z README albo RUNBOOK, ma dostać
+// działające polecenie, a nie „nieznane zadanie”.
+var Documents = []string{"README.md", "docs/RUNBOOK.md", "docs/WYMAGANIA.md"}
+
+var (
+	docMiseRun = regexp.MustCompile(`\./bin/mise run ([a-z][a-z0-9:-]*)`)
+	docDftCall = regexp.MustCompile(`(?m)(?:^|\s|ci/)dft ([a-z][a-z-]*)(?: ([a-z][a-z-]*))?`)
+)
+
+// Commands — polecenia w dokumencie, których nie ma: zadania mise po
+// `./bin/mise run` i polecenia albo bramki po `ci/dft` i `dft`. Patrzy
+// tylko w bloki kodu i fragmenty `kodu`, bo tam stoją polecenia — proza
+// w rodzaju „dft jest binarką” nie daje fałszywego alarmu.
+func Commands(name, text string, known Known) []string {
+	var found []string
+	seen := map[string]bool{}
+	report := func(msg string) {
+		if !seen[msg] {
+			seen[msg] = true
+			found = append(found, fmt.Sprintf("%s: %s", name, msg))
+		}
+	}
+	text = code(text)
+	for _, m := range docMiseRun.FindAllStringSubmatch(text, -1) {
+		if !slices.Contains(known.Tasks, m[1]) {
+			report(fmt.Sprintf("`./bin/mise run %s` — nie ma takiego zadania mise", m[1]))
+		}
+	}
+	for _, m := range docDftCall.FindAllStringSubmatch(text, -1) {
+		switch {
+		case !slices.Contains(known.Commands, m[1]):
+			report(fmt.Sprintf("`dft %s` — dft nie ma takiego polecenia", m[1]))
+		case m[1] == "check" && m[2] != "" && !slices.Contains(known.Checks, m[2]):
+			report(fmt.Sprintf("`dft check %s` — dft nie ma takiej bramki", m[2]))
+		}
+	}
+	return found
+}
+
+// code — treść bloków kodu (```) i fragmentów `kodu`, po jednym w wierszu.
+// Fragment złamany w prozie na dwa wiersze składa się w jeden.
+func code(text string) string {
+	var out, prose strings.Builder
+	fenced := false
+	for _, line := range strings.Split(text, "\n") {
+		switch {
+		case strings.HasPrefix(strings.TrimSpace(line), "```"):
+			fenced = !fenced
+		case fenced:
+			out.WriteString(line + "\n")
+		default:
+			prose.WriteString(line + "\n")
+		}
+	}
+	for _, m := range codeSpan.FindAllStringSubmatch(prose.String(), -1) {
+		out.WriteString(strings.Join(strings.Fields(m[1]), " ") + "\n")
+	}
+	return out.String()
+}

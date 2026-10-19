@@ -238,6 +238,11 @@ i `MISE_ENV=staging ./bin/mise run cluster:up` — do kroku 3 (app-of-apps)
 Application zakłada `dft` z drzewa roboczego, więc zmiana działa od razu,
 a PR z nią idzie zaraz potem. Powrót do śledzenia: `">=0.0.0-0"`.
 
+Czasu cofnięcia nikt jeszcze nie zmierzył. Przy pierwszym użyciu zapisz
+czas od zmiany definicji do `Synced <przypięta wersja> Healthy` i zielonego
+`cluster:identity` — dla porównania warunek Etapu 10 to `helm rollback`
+u klienta w < 15 min.
+
 ### Ręczna zmiana „nie trzyma się"
 
 Tak ma być: `selfHeal`. Zmiana idzie przez chart (PR) albo wartości
@@ -314,3 +319,119 @@ próbne nie dostaje sekretów — ścieżka wydania ich nie potrzebuje.
 7. Wynik — numery biegów i to, co się nie zgadzało — dopisz w opisie
    najbliższego PR-a wydania. Repozytorium i pakiety próby usuń po
    ćwiczeniu.
+
+## CI — czerwony `main` i noc
+
+Zadanie `main-health` (każdy push na `main` i noc) prowadzi jedno issue
+„Zdrowie main: czerwony bieg, brak nocy, bliskie daty”. Otwiera je, gdy
+`main` jest czerwony dłużej niż doba, ostatni bieg nocny jest starszy niż
+48 h albo wyjątek wygasa w ciągu tygodnia. Zamyka, gdy żadnego z tych
+powodów już nie ma (§3.6 kontraktu, decyzja 54, progi w §10).
+
+### Stan
+
+```bash
+./bin/mise exec -- gh run list --workflow ci.yml --branch main --limit 5
+./bin/mise exec -- gh run list --workflow ci.yml --event schedule --limit 3
+./bin/mise run ci:main-health -- --dry-run   # co trafiłoby do issue, bez zmian w nim
+```
+
+### Czerwony `main`
+
+**Objaw:** e-mail GitHuba o czerwonym biegu `ci` na `main`, po dobie issue
+„Zdrowie main”. Publikacja charta czeka na zielone `cluster`, `negatives`
+i `tools`, więc staging stoi na ostatniej dobrej wersji. To zamrożenie jest
+zamierzone — nie omijaj go ręczną publikacją.
+
+```bash
+./bin/mise exec -- gh run view <id biegu> --log-failed
+```
+
+1. **Revert przed poprawką** — na naprawę jest doba (§3.6). Gdy winny
+   jest commit, także para PR-ów zielonych osobno (bez kolejki scalania
+   ich połączenie sprawdza dopiero `main`, decyzja 22):
+   `git switch -c revert-<sha> origin/main && git revert <sha>`, PR
+   z przyczyną w opisie. Poprawka wraca osobnym PR-em, gdy przyczyna jest
+   znana.
+2. **Wstrzymaj auto-merge Dependabota** — scalałby dalej na czerwony `main`:
+
+   ```bash
+   ./bin/mise exec -- gh pr list --author app/dependabot \
+     --json number,autoMergeRequest --jq '.[] | select(.autoMergeRequest) | .number'
+   ./bin/mise exec -- gh pr merge --disable-auto <numer>
+   ```
+
+   Do zielonego `main` scalaj tylko poprawki. Potem ponów bieg
+   `dependabot-auto-merge` na tych PR-ach — włączy auto-merge tam, gdzie
+   pozwala decyzja 22.
+3. **Winne otoczenie, nie kod** (limit pobrań Docker Hub, awaria GitHuba
+   albo GHCR): `gh run rerun <id> --failed`, przyczyna w issue. Ponowienie
+   przerywa serię `ci:trial` jak porażka (decyzja 36): bramka, która
+   migocze, potrzebuje przyczyny, nie kolejnych ponowień.
+4. Issue zamyka się samo przy pierwszym zielonym biegu `main`.
+
+### Noc się nie odbyła
+
+**Objaw:** issue „Zdrowie main” z „ostatni bieg nocny … temu” albo „brak
+biegu nocnego”; `ci:trial` zgłasza przerwę w serii dłuższą niż 48 h.
+GitHub opóźnia albo upuszcza harmonogram (03:17 UTC) przy obciążeniu,
+a w repozytorium publicznym wyłącza go po 60 dniach bez aktywności.
+
+```bash
+./bin/mise exec -- gh workflow list --all   # ci: active albo disabled_inactivity
+```
+
+- `disabled_inactivity` — włącz (autor, prawa admina):
+  `./bin/mise exec -- gh workflow enable ci.yml`;
+- noc ręcznie: `./bin/mise exec -- gh workflow run ci.yml --ref main`.
+  `workflow_dispatch` biegnie jak noc: W1 i W2, raport podatności
+  z wygasającymi wyjątkami, dryf ustawień, budżety, rolling update pod
+  ruchem i negatywy na klastrze.
+
+Bieg ręczny daje nocne sprawdzenia, ale nie dowodzi, że harmonogram działa.
+`main-health` i `ci:trial` liczą tylko biegi `schedule`, więc issue zamknie
+dopiero kolejna noc z harmonogramu.
+
+## Klucz aplikacji auto-merge
+
+Aplikacja GitHuba scala łatki od Dependabota, bo scalenie przez
+`GITHUB_TOKEN` nie uruchomiłoby CI na `main` (decyzja 22). Jej klucz
+prywatny to jedyny długo żyjący sekret w CI: daje token z `contents: write`
+i `pull-requests: write`. Datę rotacji trzyma wpis w
+`ci/contract-exceptions.yaml` (§6.5). Tydzień przed nią przypomina issue
+„Zdrowie main”, po niej `dft check contract` jest czerwony.
+
+### Rotacja (najdalej co 90 dni)
+
+1. Ustawienia aplikacji (Settings → Developer settings → GitHub Apps →
+   aplikacja → Private keys) → *Generate a private key*. Stary klucz
+   zostaje do kroku 4.
+2. Nowy klucz jako sekret Dependabota, potem usuń plik:
+
+   ```bash
+   ./bin/mise exec -- gh secret set DOCFIND_AUTOMERGE_PRIVATE_KEY --app dependabot < nowy.pem
+   shred -u nowy.pem
+   ```
+
+3. Sprawdź na otwartym PR-ze Dependabota:
+   `./bin/mise exec -- gh run list --workflow dependabot-auto-merge.yml --limit 3`,
+   potem `gh run rerun <id>`. Krok tokenu aplikacji ma przejść bez błędu.
+4. Usuń stary klucz w ustawieniach aplikacji.
+5. PR z nową datą w `ci/contract-exceptions.yaml` (najdalej 90 dni od
+   rotacji) i wpisem w DECYZJE. Rejestr wyjątków to pole chronione — bez
+   wpisu `dft check contract` odrzuci zmianę.
+
+### Pilnie — klucz wyciekł
+
+Od razu usuń klucz w ustawieniach aplikacji. Auto-merge staje, ale nic
+innego od klucza nie zależy. Potem rotacja od kroku 1. Sprawdź, co
+aplikacja scaliła od chwili wycieku:
+
+```bash
+./bin/mise exec -- gh pr list --state merged --search "merged:>=<data wycieku>" \
+  --json number,author,mergedBy --jq '.[] | "\(.number) \(.author.login) \(.mergedBy.login)"'
+```
+
+PR scalony przez aplikację (`mergedBy` — `app/…`), którego autorem nie jest
+`app/dependabot`, to nadużycie: revert i przegląd zmian.
+

@@ -525,6 +525,15 @@ odpowiedzi API GitHuba) [ŻYCZENIE: zegar węzłów klastra]. Dowód: log `clust
 Warstwa: W2, W5. Wariant negatywny: serwer z czasem przesuniętym o 5 min → kod 2 (testy
 `core/clock`, `adapters/host`). Decyzja: 23, 66.
 
+**8.10 Polecenia w dokumentach.** Polecenie w README, RUNBOOK albo WYMAGANIA istnieje: zadanie
+po `./bin/mise run` jest w `mise.toml`, a polecenie i bramka po `dft` (także `ci/dft`) — w dft.
+Liczby z pomiarów w README to pomiar przy zamknięciu etapu; bieżące są w raportach bramek.
+Egzekwuje: `dft check contract` (`core/contract`) w blokach kodu i fragmentach `kodu`; odmowę
+zależną od środowiska (`--image` przy Argo CD) łapie tylko przegląd PR-a, który zmienia
+decyzję [ŻYCZENIE: flagi z dokumentów sprawdzane z `--help`]. Dowód: log `test`. Warstwa: W1.
+Wariant negatywny: literówka w nazwie zadania mise albo nieznana bramka dft w bloku kodu
+README → czerwony `test` (testy `core/contract`). Decyzja: 50, 68.
+
 ## 9. Poza zakresem tej wersji
 
 SLO i alerty objawowe (Etap 8); kontrakt danych Elasticsearcha i reindeks bez przestoju

@@ -213,7 +213,7 @@ Etap 2 potrzebuje ~1,5 GB na trzy węzły k3d i dwie repliki API. Etap 3
 z platformą (Envoy Gateway, cert-manager) i Etap 4 z trzema replikami
 OpenBao — ~3 GB na klaster (zmierzone `kubectl top nodes` na dev: węzły
 0,8–1,3 GB; OpenBao 26–35 MiB na replikę). Pełny stos
-z docelowego planu (Elasticsearch, monitoring, ArgoCD, Vault) to ~7–8 GB bez
+z docelowego planu (Elasticsearch, monitoring, Argo CD, OpenBao) to ~7–8 GB bez
 modelu LLM, który domyślnie stoi poza klastrem (decyzja 7). Limit pamięci WSL
 ustawia się w `.wslconfig` kluczem `memory=`; domyślnie WSL dostaje połowę RAM-u
 hosta.
@@ -230,7 +230,7 @@ podów.
 **Instalacja i sprawdzenie:** `./bin/mise install`
 
 `kubectl`, `k3d`, `helm`, `kubeconform`, `shellcheck`, `actionlint`, `zizmor`,
-`gh`, `cmctl`, `osv-scanner` i `go` (toolchain narzędzi z `tools/`)
+`gh`, `cmctl`, `osv-scanner`, `gitleaks` i `go` (toolchain narzędzi z `tools/`)
 w wersjach z `mise.toml`, weryfikowane względem sum SHA-256 dla każdej
 platformy zapisanych w `mise.lock` (`locked = true` odmawia instalacji
 czegokolwiek spoza lockfile'a), a te, które publikują podpis albo
