@@ -2684,6 +2684,30 @@ bez sieci.
 **Kiedy zmieniam zdanie:** gdy bramki przestaną porównywać daty
 z cudzymi — wtedy sprawdzenie niepotrzebne.
 
+## 67. NetworkPolicy przestrzeni `docfind` odłożona do Etapu 6
+
+> Krok 24 planu z analizy kontraktów miał warunek „nie stosować przed
+> pierwszą zależnością stanową w `docfind` (Etap 6)”. Projekt jest na
+> Etapie 4.
+
+**Wybieram odłożenie z warunkiem zamiast polityki dziś.** W `docfind` stoi
+jedna usługa bez zależności stanowych. Pod aplikacji nie ma tokenu konta
+usługi (decyzja 55), nie rozmawia z OpenBao (sekrety przynosi ESO,
+decyzja 44), a OpenBao ma własną NetworkPolicy, która wpuszcza tylko ESO
+i repliki (decyzja 42). Domyślna odmowa w `docfind` dziś chroniłaby przed
+niczym, a kosztowałaby wyjątek dla bramy i sondy drainu. Kosztowałaby też
+weryfikację na klastrze, której nie mam jak zrobić przed scaleniem.
+Parytet stagingu z prod (§2.4) jest zachowany: obu brakuje tego samego.
+
+**Co tracę:** ruch wschód–zachód do aplikacji jest otwarty dla każdego
+poda w klastrze, dopóki w `docfind` nie pojawi się Elasticsearch albo inna
+zależność stanowa.
+
+**Kiedy zmieniam zdanie:** w PR-ze, który dodaje pierwszą zależność stanową
+do `docfind` (Etap 6). Wtedy domyślna odmowa z wyjątkami dla bramy, sondy
+drainu i tej zależności, a test na klastrze: pod bez wyjątku nie łączy się
+z zależnością.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta
