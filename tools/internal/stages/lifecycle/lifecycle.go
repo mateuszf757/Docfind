@@ -19,12 +19,15 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/core/contract"
 	"github.com/mateuszf757/Docfind/tools/internal/core/loopback"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/ociarchive"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/poll"
 )
 
 // Containers — lokalny silnik kontenerów (adapters/docker).
 type Containers interface {
-	ImageSize(ctx context.Context, ref string) (int64, error)
+	// Save — obraz jako archiwum `docker save`; rozmiar liczy się z warstw
+	// archiwum, nie z magazynu demona (decyzja 65).
+	Save(ctx context.Context, ref, path string) error
 	ImageUser(ctx context.Context, ref string) (string, error)
 	RunToExit(ctx context.Context, s container.Spec, timeout time.Duration) (container.Exit, error)
 	Start(ctx context.Context, s container.Spec) error
@@ -43,8 +46,9 @@ type HTTP interface {
 // (tu), skompresowane warstwy w rejestrze (~29 MB dla tego samego obrazu)
 // i „200 MiB" w politykach klastra z zewnętrznej analizy.
 type Limits struct {
-	// MaxImageUnpackedBytes — rozmiar obrazu rozpakowanego w magazynie Dockera
-	// (`docker image inspect .Size`), w bajtach. Warunek Etapu 1.
+	// MaxImageUnpackedBytes — rozmiar obrazu rozpakowanego w bajtach: suma
+	// warstw z archiwum `docker save`, a nie magazyn Dockera, który liczy
+	// inaczej lokalnie i w CI (decyzja 65). Warunek Etapu 1.
 	MaxImageUnpackedBytes int64
 	// MaxOwnShutdown — koszt własny zamykania: mediana `docker stop` aplikacji
 	// minus mediana odniesienia. Zmierzony koszt uvicorna na Alpine to
@@ -169,7 +173,7 @@ func (c *Checker) Run(ctx context.Context) (rep Report, err error) {
 	defer os.RemoveAll(tmp)
 
 	cli.Step("sprawdzany obraz: %s", c.Image)
-	if err := c.checkSize(ctx, &rep, fail); err != nil {
+	if err := c.checkSize(ctx, tmp, &rep, fail); err != nil {
 		return rep, err
 	}
 	if err := c.checkUser(ctx, &rep, fail); err != nil {
@@ -190,18 +194,29 @@ func (c *Checker) Run(ctx context.Context) (rep Report, err error) {
 	return rep, v.Err("warunki zakończenia Etapu 1")
 }
 
-func (c *Checker) checkSize(ctx context.Context, rep *Report, fail func(string, ...any)) error {
-	size, err := c.Containers.ImageSize(ctx, c.Image)
+func (c *Checker) checkSize(ctx context.Context, tmp string, rep *Report, fail func(string, ...any)) error {
+	archive := filepath.Join(tmp, "obraz.tar")
+	if err := c.Containers.Save(ctx, c.Image, archive); err != nil {
+		return err
+	}
+	img, err := ociarchive.Open(archive)
 	if err != nil {
+		return err
+	}
+	size, err := img.UnpackedSize()
+	if err != nil {
+		return fmt.Errorf("rozmiar obrazu z warstw: %w", err)
+	}
+	if err := os.Remove(archive); err != nil {
 		return err
 	}
 	rep.ImageUnpackedBytes = size
 	limit := c.Limits.MaxImageUnpackedBytes
 	if size > limit {
-		fail("obraz rozpakowany w magazynie Dockera ma %d B (%.1f MB), limit %d B", size, float64(size)/1e6, limit)
+		fail("obraz rozpakowany (suma warstw) ma %d B (%.1f MB), limit %d B", size, float64(size)/1e6, limit)
 		return nil
 	}
-	cli.Step("rozmiar obrazu rozpakowanego w magazynie Dockera: %d B (%.1f MB), limit %d B", size, float64(size)/1e6, limit)
+	cli.Step("rozmiar obrazu rozpakowanego (suma warstw z archiwum): %d B (%.1f MB), limit %d B", size, float64(size)/1e6, limit)
 	return nil
 }
 

@@ -238,11 +238,13 @@ Egzekwuje: warunek zadania `cluster` w `ci.yml` — pole chronione (§8.3). Dow�
 Warstwa: W2. Wariant negatywny: zmiana warunku bez wpisu w DECYZJE → czerwony `test`.
 Decyzja: 36, 47, 49.
 
-**4.4 Rozmiar obrazu.** Obraz rozpakowany mieści się w progu z §10.
-Egzekwuje: `check:runtime` (`stages/lifecycle`) [ŻYCZENIE: rozmiar liczony z manifestu
-i warstw, niezależnie od magazynu Dockera — dziś miara zależy od magazynu]. Dowód:
-`runtime-api.json`. Warstwa: W1. Wariant negatywny: `--max-image-bytes` poniżej rozmiaru →
-NIESPEŁNIONE. Decyzja: 14.
+**4.4 Rozmiar obrazu.** Obraz rozpakowany mieści się w progu z §10. Miara: suma strumieni tar
+warstw z archiwum `docker save` — ta sama dla tego samego obrazu lokalnie i w CI, niezależnie
+od magazynu obrazów demona.
+Egzekwuje: `check:runtime` (`stages/lifecycle`, `kit/ociarchive`) [ŻYCZENIE: rozmiar
+skompresowany w rejestrze w raporcie]. Dowód: `runtime-api.json` (`image_unpacked_bytes`).
+Warstwa: W1. Wariant negatywny: `--max-image-bytes` poniżej rozmiaru → NIESPEŁNIONE; obraz
+z warstwą ponad limit → NIESPEŁNIONE (testy `stages/lifecycle`). Decyzja: 14, 65.
 
 ## 5. Kontrakty behawioralne
 
@@ -483,10 +485,11 @@ kod 2, nie 1. Decyzja: 23.
 **8.5 Lokalnie jak w CI.** Ten sam program, te same wersje, ta sama miara; różnica werdyktu
 lokalnie i w CI dla tego samego wejścia jest błędem bramki.
 Egzekwuje: `./bin/mise run ci` (te same zadania), `dft check versions`, tryb `dft test`
-wybierany w `dft` z argumentów, a nie w workflowie [ŻYCZENIE: porównanie miar lokalnych
-z podsumowaniem biegu, np. rozmiaru obrazu]. Dowód: raporty `.cache/reports` i podsumowanie
-biegu. Warstwa: W1. Wariant negatywny: [ŻYCZENIE: ten sam obraz z różnym rozmiarem lokalnie
-i w CI → czerwone]. Decyzja: 23.
+wybierany w `dft` z argumentów, a nie w workflowie; rozmiar obrazu liczony z warstw archiwum,
+nie z magazynu demona (§4.4) [ŻYCZENIE: porównanie pozostałych miar lokalnych z podsumowaniem
+biegu]. Dowód: raporty `.cache/reports` i podsumowanie biegu. Warstwa: W1. Wariant negatywny:
+ten sam obraz w magazynie containerd i overlay2 daje ten sam rozmiar (testy `kit/ociarchive`,
+`stages/lifecycle`). Decyzja: 23, 65.
 
 **8.6 Każda nowa funkcja CI** ma warstwę, budżet, wariant negatywny i okres próbny (§3), a jej
 wprowadzenie — wpis w DECYZJE (§8.3).
@@ -531,7 +534,7 @@ docelowe bez strażnika (budżety warstw, Z, pokrycie) stoją w klauzulach, w zn
 <!-- progi: początek — generuje `dft contract thresholds --write`, nie edytuj ręcznie -->
 | Klauzula | Próg | Wartość | Gdzie w kodzie |
 |---|---|---|---|
-| §4.4 | rozmiar obrazu rozpakowanego | ≤ 200000000 B | stages/lifecycle |
+| §4.4 | rozmiar obrazu rozpakowanego (suma warstw z archiwum) | ≤ 200000000 B | stages/lifecycle |
 | §5.1 | koszt własny zamykania ponad `docker stop` | ≤ 750ms | stages/lifecycle |
 | §5.1 | żądanie w locie przy SIGTERM | 1.5s, odpowiedź 200 | stages/lifecycle |
 | §5.1 | odmowa startu bez konfiguracji | w ≤ 30s | stages/lifecycle |

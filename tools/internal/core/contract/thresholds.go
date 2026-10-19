@@ -53,8 +53,9 @@ const (
 	// SelfHealBudget — przywrócenie jednej ręcznej zmiany przez Argo CD:
 	// samonaprawa po 2 s, kolejna w serii trzy razy później (§5.6).
 	SelfHealBudget = time.Minute
-	// MaxImageUnpackedBytes — obraz rozpakowany w magazynie Dockera
-	// (warunek Etapu 1, §4.4).
+	// MaxImageUnpackedBytes — obraz rozpakowany: suma strumieni tar warstw
+	// z archiwum `docker save`, ta sama lokalnie i w CI (warunek Etapu 1,
+	// §4.4, decyzja 65).
 	MaxImageUnpackedBytes = 200_000_000
 	// MaxOwnShutdown — koszt zamykania aplikacji ponad narzut `docker stop`
 	// (warunek Etapu 1, §5.1).
@@ -122,7 +123,7 @@ type Threshold struct {
 // Thresholds — tabela progów w kolejności kontraktu.
 func Thresholds() []Threshold {
 	return []Threshold{
-		{"§4.4", "rozmiar obrazu rozpakowanego", fmt.Sprintf("≤ %d B", MaxImageUnpackedBytes), "stages/lifecycle"},
+		{"§4.4", "rozmiar obrazu rozpakowanego (suma warstw z archiwum)", fmt.Sprintf("≤ %d B", MaxImageUnpackedBytes), "stages/lifecycle"},
 		{"§5.1", "koszt własny zamykania ponad `docker stop`", fmt.Sprintf("≤ %v", MaxOwnShutdown), "stages/lifecycle"},
 		{"§5.1", "żądanie w locie przy SIGTERM", fmt.Sprintf("%v, odpowiedź 200", InflightDelay), "stages/lifecycle"},
 		{"§5.1", "odmowa startu bez konfiguracji", fmt.Sprintf("w ≤ %v", RefusalTimeout), "stages/lifecycle"},

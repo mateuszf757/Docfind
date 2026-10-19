@@ -105,7 +105,8 @@ Zrobione w Etapach 0–1:
 
 - `/version` raportuje commit z obrazu, zgodny z HEAD, i wersję wdrożenia
   z `DOCFIND_VERSION` (decyzja 40)
-- obraz jest samoopisujący się i waży 120 MB; buduje się z `uv.lock`, więc
+- obraz jest samoopisujący się i waży 85 MB po rozpakowaniu (suma warstw,
+  decyzja 65); buduje się z `uv.lock`, więc
   zawiera dokładnie wersje, które przeszły testy
 - konfiguracja walidowana modelem Pydantic — nieznany klucz albo zła wartość
   kończy się odmową startu z komunikatem wskazującym pole
@@ -309,7 +310,7 @@ curl -s localhost:8000/metrics
 | Etap | Zakres | Warunek zakończenia |
 |---|---|---|
 | 0 ✅ | Repozytorium i pipeline | PR uruchamia testy; build daje `version.json` zgodny z commitem |
-| 1 ✅ | API w kontenerze, walidacja konfiguracji, `/metrics` | obraz 120 MB < 200 MB; zły config = czytelna odmowa startu; zamykanie 0,37 s ponad narzut Dockera |
+| 1 ✅ | API w kontenerze, walidacja konfiguracji, `/metrics` | obraz 85 MB (suma warstw) < 200 MB; zły config = czytelna odmowa startu; zamykanie 0,37 s ponad narzut Dockera |
 | 2 ✅ | k3d, Deployment, probe'y, 2 repliki, PDB | drain każdego węzła: 1358 żądań, 0 błędów |
 | 3 ✅ | Envoy Gateway (Gateway API), cert-manager: własne CA i Let's Encrypt DNS-01 | odnowienie pod ruchem: 59 i 126 żądań, 0 błędów |
 | 4 ✅ | OpenBao i External Secrets Operator | rotacja dociera do podów bez restartu: 42–72 s; gitleaks: 0 sekretów w historii |

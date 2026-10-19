@@ -207,3 +207,27 @@ func TestExtractRejectsEscapingPaths(t *testing.T) {
 		t.Errorf("rozpakowany plik: %q, %v", data, err)
 	}
 }
+
+func TestUnpackedSize(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "app")
+	if err := os.WriteFile(binary, make([]byte, 3000), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	img, err := SingleBinary(binary, BinaryConfig{Path: "/app", User: 1, Arch: "amd64"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(t.TempDir(), "obraz.tar")
+	if err := img.Write("img:1", archive); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := Open(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	size, err := opened.UnpackedSize()
+	// tar: nagłówek PAX i zwykły, treść wyrównana do 512 B, dwa bloki końca.
+	if err != nil || size < 3000 || size > 5000 {
+		t.Errorf("UnpackedSize = %d, %v", size, err)
+	}
+}
