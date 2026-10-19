@@ -300,13 +300,17 @@ samonaprawy — zmiana nie wraca w budżecie → NIESPEŁNIONE. Decyzja: 46.
 (najdłuższa przerwa między udanymi odpowiedziami) ≤ Z, 0 nieudanych żądań — progi w §10
 (w drainach zmierzono najdłuższą przerwę 0,17–0,25 s). Upgrade charta N-1 → N i synchronizacja
 Argo CD idą tą samą ścieżką rolling update; rollback przez przypięcie wersji ≤ 15 min od
-decyzji do `Synced`.
+decyzji do `Synced`. Konfiguracja aplikacji stoi w ConfigMapie z sumą treści w nazwie,
+niezmiennej (`immutable: true`): stary pod w trakcie rolloutu i po rollbacku czyta swoją
+konfigurację, a nie nową.
 Egzekwuje: `cluster:rollout` (`stages/ingress`) — restart Deploymentu pod pętlą HTTPS przez
-bramę, w nocy w zadaniu `cluster` [ŻYCZENIE: upgrade z charta N-1 z rejestru do N; synchronizacja
-Argo CD na stagingu]. Dowód: `rollout-<env>.json`. Warstwa: W4. Wariant negatywny: błędy
-w trakcie rolloutu albo przerwa 1,2 s bez błędu → kod 1 (testy `stages/ingress`)
+bramę, w nocy w zadaniu `cluster`; niezmienna ConfigMapa charta aplikacji — `core/policy`
+w `dft check charts` [ŻYCZENIE: upgrade z charta N-1 z rejestru do N z kluczem dodanym w N
+i restartem starego poda w trakcie; synchronizacja Argo CD na stagingu]. Dowód: `rollout-<env>.json`, log `test`. Warstwa: W1 (render), W4. Wariant negatywny: błędy
+w trakcie rolloutu albo przerwa 1,2 s bez błędu → kod 1 (testy `stages/ingress`); ConfigMapa
+aplikacji bez `immutable` → czerwony `test` (testy `core/policy`, `stages/charts`)
 [ŻYCZENIE: chart N z opóźnieniem zaślepki dłuższym niż grace → czerwony na klastrze].
-Decyzja: 13, 45, 46, 60.
+Decyzja: 13, 45, 46, 60, 63.
 
 **5.8 Tożsamość artefaktu.** Każdy pod aplikacji ma obraz z Deploymentu, commit z obrazu
 i `DOCFIND_VERSION` z Deploymentu; liczba podów = repliki.

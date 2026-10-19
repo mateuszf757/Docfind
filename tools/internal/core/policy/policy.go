@@ -31,6 +31,9 @@ type Options struct {
 	// Wymagane od naszego charta aplikacji; PSA w API serverze sprawdza część
 	// tego dopiero na klastrze, a RO rootfs i token — wcale.
 	Hardened bool
+	// ImmutableConfig — ConfigMapy niezmienne (immutable: true), z sumą
+	// treści w nazwie (decyzja 63): nowa konfiguracja to nowa ConfigMapa.
+	ImmutableConfig bool
 }
 
 var workloadKinds = map[string]bool{"Deployment": true, "StatefulSet": true, "DaemonSet": true, "Job": true, "CronJob": true}
@@ -59,6 +62,12 @@ func Check(manifests []map[string]any, opts Options) []string {
 }
 
 func violations(m map[string]any, opts Options) []string {
+	if opts.ImmutableConfig && manifest.String(m, "kind") == "ConfigMap" {
+		if v, ok := m["immutable"].(bool); !ok || !v {
+			return []string{fmt.Sprintf("ConfigMap/%s: brak immutable: true — zmiana treści pod tą samą nazwą dociera do starych podów w trakcie rolloutu (decyzja 63)", manifest.String(manifest.Map(m, "metadata"), "name"))}
+		}
+		return nil
+	}
 	spec := podSpec(m)
 	if spec == nil {
 		return nil

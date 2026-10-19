@@ -147,3 +147,24 @@ spec:
 		t.Errorf("chart z zewnątrz oceniony regułami utwardzenia: %v", got)
 	}
 }
+
+func TestImmutableConfig(t *testing.T) {
+	check := func(src string, opts Options) []string {
+		docs, err := manifest.Parse(strings.NewReader(src))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return Check(docs, opts)
+	}
+	immutable := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: api-config-77c4a94277}\nimmutable: true\ndata: {app.yml: x}\n"
+	if got := check(immutable, Options{ImmutableConfig: true}); len(got) > 0 {
+		t.Errorf("niezmienna ConfigMapa odrzucona: %v", got)
+	}
+	mutable := strings.Replace(immutable, "immutable: true\n", "", 1)
+	if got := check(mutable, Options{ImmutableConfig: true}); len(got) != 1 || !strings.Contains(got[0], "brak immutable: true") {
+		t.Errorf("zmienna ConfigMapa: %v", got)
+	}
+	if got := check(mutable, Options{}); len(got) > 0 {
+		t.Errorf("chart z zewnątrz oceniony regułą ConfigMapy: %v", got)
+	}
+}
