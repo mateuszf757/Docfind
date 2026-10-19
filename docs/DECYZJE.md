@@ -2586,6 +2586,44 @@ wdrożeniu. `core/policy` odrzuca ConfigMapę charta aplikacji bez
 **Kiedy zmieniam zdanie:** gdy aplikacja zacznie przyjmować nieznane klucze
 (wersjonowany format konfiguracji, Etap 10) — wtedy stała nazwa wystarczy.
 
+## 64. Rejestr wyjątków od kontraktu i straż otoczenia narzędzi
+
+> Uzupełnia decyzje 20, 22 i 23. Kontrakt (§0.4) zapowiadał rejestr
+> wyjątków, którego nie było; klucz aplikacji auto-merge był wyjątkiem bez
+> daty.
+
+**Wybieram jeden rejestr z datami i sprawdzanie otoczenia w CI.**
+
+- **Rejestr wyjątków.** `ci/contract-exceptions.yaml` trzyma wyjątki od
+  klauzul kontraktu: klauzula, opis, uzasadnienie, odwołanie i data
+  najdalej za 90 dni. `dft check contract` odrzuca wpis bez pól, wyjątek od
+  klauzuli, której nie ma, i wyjątek po terminie albo dalej niż 90 dni.
+  Wpis wygasający w ciągu tygodnia trafia do issue „Zdrowie main”. Rejestr
+  jest polem chronionym. Pierwszy wpis to klucz prywatny aplikacji
+  auto-merge (`DOCFIND_AUTOMERGE_PRIVATE_KEY`) — jedyne poświadczenie
+  w CI poza `GITHUB_TOKEN` i OIDC. Data jego utworzenia nie jest zapisana,
+  więc pierwszy termin to 90 dni od dziś (2027-01-15).
+- **Straż otoczenia.** `dft check versions` (w `dft test`) porównuje
+  otoczenie z tym, co ustawia `mise.toml` (`GOPROXY`, `GOTOOLCHAIN`)
+  i `bin/mise` (`MISE_INSTALL_PATH` i `MISE_DATA_DIR` dla przypiętej
+  wersji). Odrzuca też `GOFLAGS`, `GONOSUMDB`, `GOINSECURE`, `GOPRIVATE`,
+  `MISE_VERSION` i bazę sum inną niż `sum.golang.org`. W CI to błąd,
+  lokalnie ostrzeżenie.
+
+**Co tracę:**
+
+- **Termin klucza wymuszony z góry.** Przy kluczu sprzed tygodnia
+  wymusza rotację za kwartał zamiast za rok — ale nie ma zapisu, że jest
+  świeższy.
+- **Czerwony `test` po terminie.** Wygasły wyjątek zatrzymuje każdy PR,
+  także niezwiązany, aż ktoś go obróci albo przedłuży z wpisem tutaj.
+- **Lista zakazanych zmiennych to lista.** Nowy mechanizm nadpisania
+  (np. nowa zmienna Go) przejdzie, dopóki ktoś go nie dopisze.
+
+**Kiedy zmieniam zdanie:** gdy auto-merge przejdzie na token bez
+długożyjącego klucza (np. GitHub App z OIDC) — wtedy wpis znika, a rejestr
+zostaje dla kolejnych wyjątków.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

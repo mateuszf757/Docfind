@@ -170,3 +170,39 @@ func TestCheck(t *testing.T) {
 		})
 	}
 }
+
+func TestEnvironment(t *testing.T) {
+	env := map[string]string{"GOPROXY": "https://proxy.golang.org", "GOTOOLCHAIN": "local", "GOSUMDB": "sum.golang.org",
+		"MISE_DATA_DIR": "/repo/.mise", "MISE_INSTALL_PATH": "/repo/.mise/mise-2026.9.10"}
+	getenv := func(k string) string { return env[k] }
+	if found := Environment(getenv, "/repo", "2026.9.10"); len(found) > 0 {
+		t.Fatalf("otoczenie z mise i bin/mise odrzucone: %v", found)
+	}
+	env["GOPROXY"], env["GONOSUMDB"], env["MISE_VERSION"], env["GOSUMDB"] = "https://proxy.golang.org,direct", "*", "v2026.1.0", "off"
+	env["MISE_INSTALL_PATH"] = "/usr/bin/true"
+	found := Environment(getenv, "/repo", "2026.9.10")
+	if len(found) != 5 || !strings.Contains(found[0], "MISE_INSTALL_PATH=") || !strings.Contains(strings.Join(found, " "), "GOSUMDB=\"off\"") {
+		t.Errorf("nadpisania: %q", found)
+	}
+}
+
+func TestLauncherVersion(t *testing.T) {
+	v, err := LauncherVersion(filepath.Join("..", "..", "..", ".."))
+	if err != nil || !strings.HasPrefix(v, "20") {
+		t.Errorf("wersja z bin/mise: %q, %v", v, err)
+	}
+}
+
+// TestMiseEnv: oczekiwane wartości to te z mise.toml — inaczej straż
+// zgłaszałaby nadpisanie przy każdym biegu przez mise.
+func TestMiseEnv(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "mise.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range MiseEnv {
+		if !strings.Contains(string(raw), key+" = \""+want+"\"") {
+			t.Errorf("mise.toml bez %s = %q", key, want)
+		}
+	}
+}

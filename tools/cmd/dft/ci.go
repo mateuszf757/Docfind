@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"time"
 
@@ -42,7 +43,17 @@ func runCI(ctx context.Context, w *workspace, args []string) error {
 		if err := requireTools("gh"); err != nil {
 			return err
 		}
-		c := mainhealth.Checker{Runs: w.gh(), Issues: w.gh()}
+		// Daty z rejestru wyjątków kontraktu, które wypadają w ciągu tygodnia
+		// (§8.7): to samo issue, bo to też stan main, który trzeba ruszyć.
+		doc, err := os.ReadFile(filepath.Join(w.root, filepath.FromSlash(contract.Doc)))
+		if err != nil {
+			return err
+		}
+		_, dates, err := w.contractExceptions(string(doc))
+		if err != nil {
+			return err
+		}
+		c := mainhealth.Checker{Runs: w.gh(), Issues: w.gh(), Dates: dates}
 		if len(args) == 1 {
 			return c.Sync(ctx)
 		}

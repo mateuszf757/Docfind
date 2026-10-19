@@ -6,8 +6,13 @@ package versions
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
@@ -123,4 +128,63 @@ func clientGoMinor(kubernetes string) string {
 		return "v0." + kubernetes
 	}
 	return "v0." + parts[1] + "."
+}
+
+// Otoczenie, które mise ustawia z mise.toml [env] (decyzja 64). Inna
+// wartość w CI to nadpisanie z zewnątrz: GOPROXY z „direct” pobiera moduły
+// prosto z repozytoriów kodu, GONOSUMDB i GOINSECURE wyłączają sprawdzanie
+// sum, GOFLAGS zmienia każde wywołanie `go`, MISE_VERSION
+// i MISE_INSTALL_PATH podmieniają przypięty launcher (bin/mise).
+var (
+	MiseEnv = map[string]string{
+		"GOPROXY":     "https://proxy.golang.org",
+		"GOTOOLCHAIN": "local",
+	}
+	forbiddenEnv = []string{"GOFLAGS", "GONOSUMDB", "GONOSUMCHECK", "GOINSECURE", "GOPRIVATE", "GONOPROXY", "MISE_VERSION"}
+	// launcherVersion — przypięta wersja mise w bin/mise.
+	launcherVersion = regexp.MustCompile(`MISE_VERSION:-v?([0-9]+\.[0-9]+\.[0-9]+)`)
+)
+
+// LauncherVersion — wersja mise przypięta w bin/mise.
+func LauncherVersion(root string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(root, "bin", "mise"))
+	if err != nil {
+		return "", err
+	}
+	m := launcherVersion.FindSubmatch(raw)
+	if m == nil {
+		return "", errors.New("bin/mise bez przypiętej wersji (MISE_VERSION:-X.Y.Z)")
+	}
+	return string(m[1]), nil
+}
+
+// Environment — nadpisania otoczenia narzędzi: zmienne z mise.toml
+// o innej wartości, zmienne zakazane, baza sum inna niż sum.golang.org
+// i katalogi mise inne niż te, które ustawia bin/mise w wersji launcher
+// (pusta — bez porównania katalogów).
+func Environment(getenv func(string) string, root, launcher string) []string {
+	var found []string
+	if launcher != "" {
+		dir := filepath.Join(root, ".mise")
+		for key, want := range map[string]string{"MISE_DATA_DIR": dir, "MISE_INSTALL_PATH": filepath.Join(dir, "mise-"+launcher)} {
+			if got := getenv(key); got != "" && got != want {
+				found = append(found, fmt.Sprintf("%s=%q, a bin/mise ustawia %q", key, got, want))
+			}
+		}
+		slices.Sort(found)
+	}
+	for _, key := range slices.Sorted(maps.Keys(MiseEnv)) {
+		if got := getenv(key); got != MiseEnv[key] {
+			found = append(found, fmt.Sprintf("%s=%q, a mise.toml ustawia %q", key, got, MiseEnv[key]))
+		}
+	}
+	for _, key := range forbiddenEnv {
+		if got := getenv(key); got != "" {
+			found = append(found, fmt.Sprintf("%s=%q — nadpisanie z otoczenia, którego mise.toml nie ustawia", key, got))
+		}
+	}
+	if got := getenv("GOSUMDB"); got != "" && got != "sum.golang.org" {
+		found = append(found, fmt.Sprintf("GOSUMDB=%q — moduły sprawdzane innej bazie sum niż sum.golang.org", got))
+	}
+	return found
 }

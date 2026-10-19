@@ -39,7 +39,7 @@ var Fields = []string{"Egzekwuje", "Dowód", "Warstwa", "Wariant negatywny", "De
 // każdy ma uzasadnienie i datę wygaśnięcia ≤ 90 dni, sprawdzane przez
 // core/vuln — sam wygasa. Wyjątek gitleaks nie wygasa.
 var Protected = []string{
-	File, Doc, "ci/gitleaks.toml", "ci/gitleaks-ignore",
+	File, Doc, ExceptionsFile, "ci/gitleaks.toml", "ci/gitleaks-ignore",
 	".github/rulesets/", ".github/environments/", ".github/dependabot.yml",
 	workflow.Dir + "/", workflow.ActionsDir + "/",
 }

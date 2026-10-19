@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 const repoRoot = "../../../.."
@@ -274,5 +275,55 @@ func TestThresholdsMatchConstants(t *testing.T) {
 	}
 	if n := strings.Count(md, "\n"); n != len(Thresholds())+2 {
 		t.Errorf("tabela ma %d wierszy, a progów jest %d", n, len(Thresholds()))
+	}
+}
+
+func TestCheckExceptions(t *testing.T) {
+	today := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
+	clauses := []string{"6.5", "8.3"}
+	ok := Exception{Clause: "6.5", What: "klucz", Reason: "bo", Expires: "2027-01-15", Ref: "decyzja 22"}
+	soon := ok
+	soon.Expires = "2026-10-20"
+	problems, warnings := CheckExceptions([]Exception{ok, soon}, clauses, today)
+	if len(problems) != 0 || len(warnings) != 1 || !strings.Contains(warnings[0], "wygasa 2026-10-20") {
+		t.Errorf("ważne wyjątki: %q / %q", problems, warnings)
+	}
+	for name, change := range map[string]func(*Exception){
+		"wygasły":          func(e *Exception) { e.Expires = "2026-10-17" },
+		"za daleko":        func(e *Exception) { e.Expires = "2027-02-01" },
+		"zła data":         func(e *Exception) { e.Expires = "15.01.2027" },
+		"obca klauzula":    func(e *Exception) { e.Clause = "9.9" },
+		"bez uzasadnienia": func(e *Exception) { e.Reason = "" },
+	} {
+		e := ok
+		change(&e)
+		if problems, _ := CheckExceptions([]Exception{e}, clauses, today); len(problems) != 1 {
+			t.Errorf("%s: %q", name, problems)
+		}
+	}
+	if _, err := ParseExceptions([]byte("exceptions:\n  - clause: \"6.5\"\n    wygasa: jutro\n")); err == nil {
+		t.Error("nieznane pole przyjęte")
+	}
+}
+
+// TestRepositoryExceptions: rejestr z repozytorium jest czytelny, a jego
+// klauzule istnieją w kontrakcie.
+func TestRepositoryExceptions(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(ExceptionsFile)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := ParseExceptions(raw)
+	if err != nil || len(list) == 0 {
+		t.Fatalf("rejestr: %v, %v", list, err)
+	}
+	doc, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(Doc)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range list {
+		if !slices.Contains(Clauses(string(doc)), e.Clause) {
+			t.Errorf("wyjątek od nieistniejącej klauzuli %s", e.Clause)
+		}
 	}
 }

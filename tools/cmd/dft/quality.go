@@ -192,7 +192,29 @@ func checkSecrets(ctx context.Context, w *workspace) error {
 }
 
 func checkVersions(ctx context.Context, w *workspace) error {
-	return versions.Check(ctx, w.root, versions.Tools{Kubectl: kube.Kubectl{Runner: w.runner}, UV: uv.UV{Runner: w.runner}}, runtime.Version(), clientGoVersion())
+	if err := versions.Check(ctx, w.root, versions.Tools{Kubectl: kube.Kubectl{Runner: w.runner}, UV: uv.UV{Runner: w.runner}}, runtime.Version(), clientGoVersion()); err != nil {
+		return err
+	}
+	// Nadpisania z otoczenia (decyzja 64): w CI błąd — bieg nie jest tym,
+	// za który się podaje — lokalnie ostrzeżenie.
+	launcher, err := versions.LauncherVersion(w.root)
+	if err != nil {
+		return err
+	}
+	found := versions.Environment(os.Getenv, w.root, launcher)
+	if len(found) == 0 {
+		cli.Step("otoczenie narzędzi jak w mise.toml: GOPROXY, GOTOOLCHAIN, bez GOFLAGS, GONOSUMDB, GOINSECURE i podmiany mise")
+		return nil
+	}
+	v := &cli.Verdict{}
+	for _, f := range found {
+		if os.Getenv("CI") == "true" {
+			v.Fail("%s", f)
+		} else {
+			cli.Warn("%s (lokalnie ostrzeżenie, w CI błąd)", f)
+		}
+	}
+	return v.Err("otoczenie narzędzi")
 }
 
 func checkPython(ctx context.Context, w *workspace) error {
