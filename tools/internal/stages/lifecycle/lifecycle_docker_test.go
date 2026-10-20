@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,19 +27,48 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 )
 
+// output — wyjście bramki ze wszystkich wariantów. Warianty biegną
+// równolegle (decyzja 73), a cli.Out i cli.Err to zmienne pakietu, więc
+// jedna podmiana na cały pakiet zamiast podmiany w każdym teście — ta byłaby
+// wyścigiem. Przy porażce test pokazuje całość; wiersze wariantów rozróżniają
+// nazwy kontenerów.
+var output syncBuffer
+
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func TestMain(m *testing.M) {
+	cli.Out, cli.Err = &output, &output
+	os.Exit(m.Run())
+}
+
 func dockerChecker(t *testing.T, name string) *Checker {
 	t.Helper()
+	// Warianty są od siebie niezależne: osobne kontenery (nazwy z wariantu
+	// i PID), porty od Dockera, osobne katalogi tymczasowe. Razem trwają tyle,
+	// co najdłuższy, a nie suma (decyzja 73).
+	t.Parallel()
 	image := os.Getenv("DF_TEST_IMAGE")
 	if image == "" {
 		t.Fatal("DF_TEST_IMAGE nie jest ustawione — uruchom przez ./bin/mise run test:negatives")
 	}
-	var out bytes.Buffer
-	oldOut, oldErr := cli.Out, cli.Err
-	cli.Out, cli.Err = &out, &out
 	t.Cleanup(func() {
-		cli.Out, cli.Err = oldOut, oldErr
 		if t.Failed() {
-			t.Log(out.String())
+			t.Log(output.String())
 		}
 	})
 	limits := DefaultLimits
