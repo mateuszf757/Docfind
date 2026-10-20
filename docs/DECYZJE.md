@@ -3040,6 +3040,53 @@ zadanie W1 — wtedy z powrotem do W2. Gdy awarie baz OSV albo GHCR dadzą
 dwa czerwone `fast-feedback` w miesiącu — ponowienie w adapterze (§3.4)
 albo kopia baz.
 
+## 75. Profil integracji wg ryzyka zmiany, na razie w trybie cienia
+
+> Krok 7 planu z `docs/ANALIZA-CI-NARZEDZIA-I-WARSTWY.md` (§9.2). Kroki 8
+> (profil dymny klastra) i 9 (włączenie planu) idą osobno, po 20 biegach
+> cienia.
+
+**Wybieram profil wyznaczany przez zmianę zamiast klastra tylko w nocy.**
+Szablon odkłada pełny klaster do nocy i przed wydanie. Tu dwie trzecie
+commitów `main` (33 z 50) dotyka tego, co sprawdza klaster, a klaster złapał
+na PR-ach cztery błędy w zmianach drainu, OpenBao i zakładania klastra.
+Klaster tylko w nocy wpuściłby je na `main`. Profil zmiany:
+- **fast** — dokumentacja, ustawienia repozytorium, rejestry wyjątków,
+  testy i pakiety `tools/` spoza grafu poleceń klastrowych;
+- **medium** — aplikacja i jej zależności (`services/api/`,
+  `deploy/config/`);
+- **heavy** — charty, platforma, środowiska, k3d, workflowy, przypięcia,
+  mise, `go.mod`, sonda drainu, pliki poleceń klastrowych w `cmd/dft`
+  i każdy pakiet w ich grafie zależności. Graf to importy `cluster.go`,
+  `gitops.go`, `secrets.go` i `wiring.go` plus `go list -deps`, więc nowy
+  pakiet użyty przez polecenie klastrowe wchodzi do heavy sam;
+- **heavy** też domyślnie — ścieżka, której reguły nie znają.
+
+**Plan liczy kod z commita bazowego.** Zadanie `plan` pobiera commit bazowy
+do katalogu `baza` i stamtąd buduje `dft`. Z PR-a, w katalogu `pr`, czyta
+tylko historię gita. Żaden kod PR-a tam nie biegnie, więc zmiana nie obniży
+sobie profilu, zmieniając reguły, graf albo `dft`. Zmiana reguł działa od
+następnego PR-a. Pierwszy PR z planem nie ma go w bazie: krótka gałąź
+w YAML-u daje wtedy heavy — do usunięcia, gdy plan będzie na `main`.
+
+**Tryb cienia.** Na razie profil trafia do podsumowania i raportu
+`plan.json`, a `cluster` biegnie na każdym PR-ze jak dotąd. `integration`
+czeka na `plan`, więc awaria planu jest widoczna od pierwszego dnia.
+Pomijanie (krok 9) wchodzi po 20 biegach cienia bez rozjazdu: żaden czerwony
+`cluster` na PR-ze z profilem fast albo medium.
+
+**Co tracę:**
+- jedno zadanie więcej na PR (~30 s z pamięcią podręczną) i drugi checkout;
+- graf jest szerszy niż konieczne — `core/contract` łączy bramki klastrowe
+  z regułami workflowów, a `wiring.go` z każdym adapterem — więc część zmian
+  w narzędziach dostaje heavy bez potrzeby;
+- reguły ścieżek to lista do utrzymania; nowy katalog bez reguły to heavy,
+  czyli koszt runnera, nie ryzyko.
+
+**Kiedy zmieniam zdanie:** gdy cień pokaże czerwony `cluster` na PR-ze
+z profilem fast albo medium — najpierw reguła, potem włączenie. Gdy pojawi
+się kolejka scalania — heavy w kolejce zamiast na PR-ze.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

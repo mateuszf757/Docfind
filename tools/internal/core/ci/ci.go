@@ -77,7 +77,7 @@ const (
 // w kilku zdarzeniach, ma warstwę zdarzenia, dla którego powstało.
 var Layers = map[string]Layer{
 	"lint": W1, "test": W1, "build": W1, "build-publish": W1, "tools": W1, "negatives": W1, "vulns": W1, "fast-feedback": W1,
-	"cluster": W2, "integration": W2,
+	"plan": W2, "cluster": W2, "integration": W2,
 	"attest": W3, "chart": W3, "attest-chart": W3, "go-cache": W3,
 	"vulns-issue": W4, "settings-drift": W4, "main-health": W4, "budget": W4,
 	"release": W5, "attest-release": W5, "promote": W5,

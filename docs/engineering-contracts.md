@@ -149,7 +149,7 @@ wersji charta w trakcie → kod 1, bez tagu; kod bramek z niezatwierdzonymi zmia
 | Warstwa | Zdarzenia | Zadania i zakres | Budżet (p95, §0.5) | Wymagana |
 |---|---|---|---|---|
 | W1 szybka | PR, push `main`, noc | równolegle: `lint` — wersje, workflowy, kontrakt, gitleaks na historii, Python, charty z politykami; `test` — Go z `-race`, pokrycie, govulncheck; `build` albo `build-publish` — obraz, baza, testy na musl, warunki Etapu 1, powtarzalność; `negatives` — warianty negatywne; `tools` — powtarzalność narzędzi; `vulns` — skan obrazu zaraz po `build` | 6 min [ŻYCZENIE: p95 2026-10-17 — 15,3 min na PR-ach, 15,6 na push; biegi sprzed zrównoleglenia] | tak: `fast-feedback` |
-| W2 integracja przed scaleniem | PR, push `main`, noc | po `lint`, `test` i `build`: `cluster` — klaster `ci`, wdrożenie, tożsamość, drain każdego węzła, OpenBao, rotacja, TLS, dowody | 20 min [ŻYCZENIE: p95 2026-10-17 — 23,1 min na PR-ach, 22,5 na push] | tak: `integration` |
+| W2 integracja przed scaleniem | PR, push `main`, noc | `plan` — profil zmiany (§3.7, na PR-ach); po `lint`, `test` i `build`: `cluster` — klaster `ci`, wdrożenie, tożsamość, drain każdego węzła, OpenBao, rotacja, TLS, dowody | 20 min [ŻYCZENIE: p95 2026-10-17 — 23,1 min na PR-ach, 22,5 na push] | tak: `integration` |
 | W3 po scaleniu | push `main` | `attest`, `chart`, `attest-chart`: pochodzenie i SBOM, atestacja, chart OCI z digestem przetestowanym | 30 min (p95 2026-10-17: 27,9 min) | nie (czerwony → §3.6) |
 | W4 noc | `schedule`, `workflow_dispatch` | W1 i W2 na `main`; `vulns-issue` z wyjątkami wygasającymi w ciągu tygodnia; `settings-drift`; `main-health` (także na push); w `cluster`: rolling update pod ruchem i negatywy na klastrze [ŻYCZENIE: upgrade N-1 → N] | 40 min (p95 2026-10-17: 17,1 min) | nie |
 | W5 wydanie | tag `vX.Y.Z` | `release`, `attest-release`, `vulns` z polityką wydania, `promote` po zgodzie | 10 min do oczekiwania na zgodę (jeden bieg: 1,4 min) | nie (zatwierdza autor) |
@@ -215,6 +215,16 @@ push i w nocy) prowadzi issue, gdy `main` jest czerwony dłużej niż próg z §
 przyszła [ŻYCZENIE: wstrzymanie auto-merge Dependabota przy czerwonym `main`]. Dowód: issue
 „Zdrowie main”. Warstwa: W3, W4. Wariant negatywny: `main` czerwony od 50 h → issue; czerwony
 od godziny → bez issue (testy `stages/mainhealth`). Decyzja: 22, 36, 45, 54.
+
+**3.7 Profil integracji zmiany.** Profil PR-a — fast, medium albo heavy — wyznaczają reguły
+ścieżek i graf pakietów poleceń klastrowych `dft`, liczone kodem z commita bazowego; ścieżka,
+której reguły nie znają, to heavy [ŻYCZENIE: `integration` wymaga klastra według profilu — dziś
+tryb cienia, klaster biegnie na każdym PR-ze].
+Egzekwuje: zadanie `plan` (`dft ci plan`, `stages/plan`, reguły w `core/ci`) — kod z katalogu
+commita bazowego, z PR-a tylko historia gita. Dowód: podsumowanie zadania `plan`, raport
+`plan.json`. Warstwa: W2. Wariant negatywny: zmiana charta, platformy albo kodu bramek
+klastrowych sklasyfikowana jako fast → czerwony `test` (testy `core/ci`); nieznana ścieżka →
+heavy; pakiet w grafie poleceń klastrowych → heavy (testy `stages/plan`, `cmd/dft`). Decyzja: 75.
 
 ## 4. Artefakty
 

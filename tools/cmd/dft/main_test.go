@@ -12,6 +12,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
+	"github.com/mateuszf757/Docfind/tools/internal/stages/plan"
 )
 
 func quiet(t *testing.T) {
@@ -202,6 +203,30 @@ func TestHelpCoversChecks(t *testing.T) {
 	for name, c := range commands {
 		if c.usage == "" || c.help == "" || !strings.HasPrefix(c.usage, "dft "+name) {
 			t.Errorf("polecenie %s: użycie %q, opis %q", name, c.usage, c.help)
+		}
+	}
+}
+
+// Graf pakietów klastrowych repozytorium: bramki klastrowe w nim, bramki
+// obrazu i budżety poza nim.
+func TestRepositoryClusterDirs(t *testing.T) {
+	root, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &workspace{root: root, runner: proc.Exec{}}
+	dirs, err := plan.Planner{ModuleDir: filepath.Join(root, "tools"), Packages: w.gotool()}.ClusterDirs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{"tools/internal/stages/drain", "tools/internal/stages/deploy", "tools/internal/adapters/kube", "tools/internal/adapters/k3d", "tools/internal/adapters/helm", "tools/internal/core/environment"} {
+		if !dirs[dir] {
+			t.Errorf("%s poza grafem pakietów klastrowych", dir)
+		}
+	}
+	for _, dir := range []string{"tools/internal/stages/budget", "tools/internal/stages/lifecycle", "tools/internal/stages/gocode"} {
+		if dirs[dir] {
+			t.Errorf("%s w grafie pakietów klastrowych", dir)
 		}
 	}
 }

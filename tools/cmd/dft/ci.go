@@ -3,20 +3,26 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
+	"github.com/mateuszf757/Docfind/tools/internal/adapters/git"
 	"github.com/mateuszf757/Docfind/tools/internal/core/ci"
 	"github.com/mateuszf757/Docfind/tools/internal/core/contract"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/budget"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/mainhealth"
+	"github.com/mateuszf757/Docfind/tools/internal/stages/plan"
 )
 
-const ciUsage = "dft ci require | main-health [--dry-run] | budget [--enforce] | go-cache"
+const ciUsage = "dft ci require | main-health [--dry-run] | budget [--enforce] | go-cache | plan --base <commit> [--repo <katalog>]"
 
 // runCI — polecenia o samym CI. `dft ci require`: wynik zadania
 // zbierającego warstwę (fast-feedback, integration) z wyników jego needs,
@@ -42,6 +48,9 @@ func runCI(ctx context.Context, w *workspace, args []string) error {
 			return err
 		}
 		return c.Warm(ctx, "docker")
+	}
+	if len(args) > 0 && args[0] == "plan" {
+		return ciPlan(ctx, w, args[1:])
 	}
 	if len(args) > 0 && args[0] == "budget" {
 		if len(args) > 2 || (len(args) == 2 && args[1] != "--enforce") {
@@ -150,4 +159,59 @@ func ciBudget(ctx context.Context, w *workspace, enforce bool) error {
 		}
 	}
 	return v.Err("budżety CI")
+}
+
+// ciPlan — `dft ci plan`: profil integracji zmiany (stages/plan, decyzja 75).
+// Kod planu to drzewo, z którego biegnie dft — w CI commit bazowy PR-a —
+// a zmienione pliki są z repozytorium --repo (PR), czytane tylko przez git.
+// Wynik: wiersz w logu, wyjście kroku `profile`, podsumowanie i raport
+// plan.json.
+func ciPlan(ctx context.Context, w *workspace, args []string) error {
+	fs := flag.NewFlagSet("ci plan", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var base, repo string
+	fs.StringVar(&base, "base", "", "")
+	fs.StringVar(&repo, "repo", "", "")
+	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || base == "" {
+		return cli.Usage("użycie: %s", ciUsage)
+	}
+	if err := requireTools("go", "git"); err != nil {
+		return err
+	}
+	dir := w.root
+	if repo != "" {
+		abs, err := filepath.Abs(repo)
+		if err != nil {
+			return err
+		}
+		dir = abs
+	}
+	planner := plan.Planner{ModuleDir: filepath.Join(w.root, "tools"), Changes: git.Repo{Dir: dir, Runner: w.runner}, Packages: w.gotool()}
+	p, err := planner.Plan(ctx, base)
+	if err != nil {
+		return err
+	}
+	var md strings.Builder
+	fmt.Fprintf(&md, "### Profil integracji zmiany: %s\n\nDecyzja 75; reguły w `core/ci`, kod planu z commita bazowego.\n\n| Profil | Pliki |\n|---|---|\n", p.Profile)
+	for _, profile := range []ci.Profile{ci.ProfileHeavy, ci.ProfileMedium, ci.ProfileFast} {
+		files := p.Files[profile]
+		if len(files) == 0 {
+			continue
+		}
+		shown := files[:min(len(files), 10)]
+		more := ""
+		if len(files) > len(shown) {
+			more = fmt.Sprintf(" i %d innych", len(files)-len(shown))
+		}
+		cli.Step("%s: %s%s", profile, strings.Join(shown, ", "), more)
+		fmt.Fprintf(&md, "| %s | `%s`%s |\n", profile, strings.Join(shown, "`, `"), more)
+	}
+	cli.Step("profil zmiany: %s (decyzja 75)", p.Profile)
+	if err := githubOutput("profile=" + string(p.Profile) + "\n"); err != nil {
+		return err
+	}
+	if err := appendSummary(md.String()); err != nil {
+		return err
+	}
+	return w.writeReport("plan", p)
 }
