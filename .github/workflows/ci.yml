@@ -810,20 +810,12 @@ jobs:
         working-directory: baza
         run: ./bin/mise exec -- ci/dft --help > /dev/null
 
-      # Pierwszy PR z planem: commit bazowy go jeszcze nie zna — profil heavy,
-      # jak dotąd każdy PR. Gałąź do usunięcia, gdy plan będzie na main.
       - name: profil zmiany
         id: plan
         working-directory: baza
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if ! grep -q '^\[tasks."ci:plan"\]' mise.toml; then
-            echo "profile=heavy" >> "$GITHUB_OUTPUT"
-            echo "::notice::commit bazowy bez dft ci plan — profil heavy (decyzja 75)"
-            exit 0
-          fi
-          ./bin/mise run ci:plan -- --repo ../pr --base "$BASE_SHA"
+        run: ./bin/mise run ci:plan -- --repo ../pr --base "$BASE_SHA"
 
   # Środowisko ci (deploy/environments/ci.yaml): efemeryczny klaster k3d na
   # runnerze z obrazem z zadania build — nigdy budowanym od nowa — i te same
@@ -860,6 +852,11 @@ jobs:
       # mise nakłada mise.ci.toml: DOCFIND_ENV=ci dla dft i KUBECONFIG
       # klastra CI dla kubectl.
       MISE_ENV: ci
+      # Profil klastra (decyzja 76): full — wszystkie bramki; smoke — ta sama
+      # topologia i platforma, wdrożenie z tożsamością na podach i TLS przez
+      # bramę, bez drainu, OpenBao po drainach i rotacji. Dopóki plan jest
+      # w trybie cienia (decyzja 75), zawsze full.
+      CLUSTER_PROFILE: full
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -917,12 +914,14 @@ jobs:
         run: ./bin/mise run cluster:up -- --image "$IMAGE" --chart-package
 
       - name: drain każdego węzła z repliką
+        if: env.CLUSTER_PROFILE == 'full'
         run: ./bin/mise run cluster:drain
 
       # Po drainach: OpenBao przeżył wyjazd replik z każdego węzła (PDB,
       # kworum Raft z dwóch), każda replika odpieczętowana i głosująca,
       # a usunięty pod standby wraca sam — bez człowieka (decyzja 42).
       - name: OpenBao po drainach
+        if: env.CLUSTER_PROFILE == 'full'
         run: ./bin/mise run check:openbao
 
       # Warunek Etapu 4 (decyzja 44): nowy token metryk z OpenBao przez ESO
@@ -930,12 +929,14 @@ jobs:
       # potem sam. Naturalna droga, bez wymuszania synchronizacji: ok. 1 min
       # na fazę.
       - name: rotacja sekretu do podów
+        if: env.CLUSTER_PROFILE == 'full'
         run: ./bin/mise run cluster:rotation
 
       - name: odnowienie certyfikatu pod ruchem
         run: ./bin/mise run cluster:tls
 
-      # Drain przeniósł repliki: nowe pody też mają mieć ten obraz.
+      # Drain przeniósł repliki (profil full): nowe pody też mają mieć ten
+      # obraz. W profilu smoke — druga kontrola po TLS.
       - name: tożsamość na podach po drainach
         run: ./bin/mise run cluster:identity
 
