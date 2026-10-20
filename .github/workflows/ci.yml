@@ -817,6 +817,17 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: ./bin/mise run ci:plan -- --repo ../pr --base "$BASE_SHA"
 
+      # Raport planu dla trybu cienia: noc porównuje profil z wynikiem cluster
+      # na tym samym biegu (zadanie budget, decyzja 77).
+      - name: raport planu
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: plan-zmiany
+          path: baza/.cache/reports/plan.json
+          include-hidden-files: true
+          retention-days: 30
+          if-no-files-found: error
+
   # Środowisko ci (deploy/environments/ci.yaml): efemeryczny klaster k3d na
   # runnerze z obrazem z zadania build — nigdy budowanym od nowa — i te same
   # bramki klastrowe co lokalnie: tożsamość na każdym podzie, drain każdego
@@ -1302,3 +1313,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: ./bin/mise run ci:budget
+
+      # Plan w trybie cienia (decyzja 77): profil z artefaktów PR-ów kontra
+      # wynik cluster — rozjazd to ostrzeżenie, gotowość do włączenia planu
+      # to wiersz w podsumowaniu.
+      - name: plan w trybie cienia
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: ./bin/mise run ci:plan-trial

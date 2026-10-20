@@ -115,6 +115,10 @@ const (
 	// na zadanie, w tym 37–54 s zimnej kompilacji dft.
 	SetupTaxJob = 30 * time.Second
 	SetupTaxRun = 3 * time.Minute
+	// PlanShadowRuns — biegi PR-ów z profilem planu w trybie cienia bez
+	// rozjazdu z wynikiem cluster, po których plan może pomijać klaster
+	// (§3.7, decyzja 77).
+	PlanShadowRuns = 20
 	// BudgetRuns, BudgetWarn, BudgetFail — budżet liczy się z tylu ostatnich
 	// zielonych biegów pierwszego podejścia; przekroczenie w BudgetWarn
 	// z nich to ostrzeżenie, w BudgetFail — czerwona noc (§0.5).
@@ -152,6 +156,7 @@ func Thresholds() []Threshold {
 		{"§3.1", "budżet warstw W1 / W2 / W3 / W4 / W5 (p95)", fmt.Sprintf("%v / %v / %v / %v / %v", BudgetW1, BudgetW2, BudgetW3, BudgetW4, BudgetW5), "stages/budget"},
 		{"§0.5", "przekroczenia budżetu w ostatnich biegach", fmt.Sprintf("z %d: ostrzeżenie od %d, czerwona noc od %d", BudgetRuns, BudgetWarn, BudgetFail), "stages/budget"},
 		{"§3.1", "podatek startowy: p50 zadania W1 / p50 sumy zadań W1 w biegu", fmt.Sprintf("≤ %v / ≤ %v; ponad — ostrzeżenie, sygnał do obrazu CI", SetupTaxJob, SetupTaxRun), "stages/budget"},
+		{"§3.7", "tryb cienia planu przed pomijaniem klastra", fmt.Sprintf("≥ %d biegów PR-ów z planem, 0 rozjazdów (profil fast albo medium przy czerwonym cluster)", PlanShadowRuns), "stages/plan"},
 		{"§3.3", "przerwa między biegami nocnymi w serii", fmt.Sprintf("≤ %v", NightlyGap), "stages/trial, stages/mainhealth"},
 		{"§3.6", "czerwony main bez issue", fmt.Sprintf("≤ %v", MainRedLimit), "stages/mainhealth"},
 		{"§6.2", "ważność wyjątku podatności", fmt.Sprintf("≤ %d dni", vuln.MaxExceptionDays), "core/vuln"},

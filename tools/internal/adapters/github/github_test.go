@@ -266,3 +266,12 @@ func TestReleaseTag(t *testing.T) {
 		t.Errorf("lekki tag: %v", err)
 	}
 }
+
+func TestDownloadArtifact(t *testing.T) {
+	f := &proc.Fake{Responses: map[string]proc.FakeResponse{
+		"gh run download 7 --name plan-zmiany --dir /tmp/7": {},
+	}}
+	if err := (CLI{Runner: f}).DownloadArtifact(context.Background(), 7, "plan-zmiany", "/tmp/7"); err != nil {
+		t.Errorf("pobranie artefaktu: %v", err)
+	}
+}

@@ -271,6 +271,10 @@ run = "ci/dft ci go-cache"
 description = "Profil integracji zmiany: fast, medium albo heavy — które bramki klastrowe PR ma przejść (decyzja 75); --base <commit> [--repo <katalog PR-a>]"
 run = "ci/dft ci plan"
 
+[tasks."ci:plan-trial"]
+description = "Plan w trybie cienia: profil z PR-ów kontra wynik cluster — gotowość do pomijania klastra wg profilu (decyzja 77)"
+run = "ci/dft ci plan-trial"
+
 [tasks."ci:budget"]
 description = "Budżety warstw CI: p50/p95 z 20 zielonych biegów PR, push i nocy, kolejka, czasy zadań (decyzja 57); --enforce czerwieni przy 5 przekroczeniach z 20"
 run = "ci/dft ci budget"
