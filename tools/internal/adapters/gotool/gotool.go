@@ -53,6 +53,16 @@ func (g Go) Test(ctx context.Context, race bool, coverprofile string) error {
 	return g.check(ctx, env, append(args, "./...")...)
 }
 
+// Deps zwraca ścieżki importu pakietów pkgs i wszystkich, od których
+// zależą (`go list -deps`).
+func (g Go) Deps(ctx context.Context, pkgs ...string) ([]string, error) {
+	out, err := proc.Output(ctx, g.Runner, proc.Cmd{Name: "go", Args: append([]string{"list", "-deps"}, pkgs...), Dir: g.ModuleDir})
+	if err != nil {
+		return nil, fmt.Errorf("go list -deps: %w", err)
+	}
+	return strings.Fields(out), nil
+}
+
 // CompileTests kompiluje testy wszystkich pakietów do katalogu out bez
 // uruchamiania (-c) — z tymi samymi flagami co Test (race, pokrycie) albo
 // TestTagged (tag), żeby wpisy w pamięci podręcznej kompilacji były tymi,

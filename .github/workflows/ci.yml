@@ -764,6 +764,67 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: ./bin/mise run promote -- "$IMAGE" "$RELEASE_TAG"
 
+  # Profil integracji zmiany (decyzja 75): fast, medium albo heavy — które
+  # bramki klastrowe PR ma przejść. Na razie tryb cienia: profil trafia do
+  # podsumowania i raportu, a cluster biegnie na każdym PR-ze jak dotąd.
+  # Kod planu pochodzi z commita bazowego (katalog baza), a z PR-a (katalog
+  # pr) czytana jest tylko historia gita — żaden kod PR-a tu nie biegnie,
+  # więc zmiana nie obniży sobie profilu.
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      profile: ${{ steps.plan.outputs.profile }}
+    env:
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      - name: kod planu z commita bazowego
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: baza
+          persist-credentials: false
+
+      - name: zmiana z PR-a (tylko historia gita)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: pr
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Go (mise)
+        working-directory: baza
+        run: ./bin/mise install go
+
+      - name: pamięć podręczna Go (odczyt)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: go-dft-${{ runner.os }}-${{ hashFiles('baza/tools/go.mod', 'baza/tools/go.sum') }}
+          restore-keys: go-dft-${{ runner.os }}-
+
+      - name: dft
+        working-directory: baza
+        run: ./bin/mise exec -- ci/dft --help > /dev/null
+
+      # Pierwszy PR z planem: commit bazowy go jeszcze nie zna — profil heavy,
+      # jak dotąd każdy PR. Gałąź do usunięcia, gdy plan będzie na main.
+      - name: profil zmiany
+        id: plan
+        working-directory: baza
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if ! grep -q '^\[tasks."ci:plan"\]' mise.toml; then
+            echo "profile=heavy" >> "$GITHUB_OUTPUT"
+            echo "::notice::commit bazowy bez dft ci plan — profil heavy (decyzja 75)"
+            exit 0
+          fi
+          ./bin/mise run ci:plan -- --repo ../pr --base "$BASE_SHA"
+
   # Środowisko ci (deploy/environments/ci.yaml): efemeryczny klaster k3d na
   # runnerze z obrazem z zadania build — nigdy budowanym od nowa — i te same
   # bramki klastrowe co lokalnie: tożsamość na każdym podzie, drain każdego
@@ -1106,7 +1167,7 @@ jobs:
         run: ./bin/mise run ci:require
 
   integration:
-    needs: [cluster]
+    needs: [plan, cluster]
     if: ${{ always() && github.event_name == 'pull_request' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5

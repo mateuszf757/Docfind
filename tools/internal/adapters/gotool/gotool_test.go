@@ -155,3 +155,13 @@ func TestCompileTests(t *testing.T) {
 		t.Errorf("testy z tagiem: %v, %v", f.Calls[1].Env, err)
 	}
 }
+
+func TestDeps(t *testing.T) {
+	f := &proc.Fake{Responses: map[string]proc.FakeResponse{
+		"go list -deps example.com/m/a example.com/m/b": {Stdout: "fmt\nexample.com/m/a\nexample.com/m/b\n"},
+	}}
+	deps, err := Go{ModuleDir: "/m", Runner: f}.Deps(context.Background(), "example.com/m/a", "example.com/m/b")
+	if err != nil || len(deps) != 3 || deps[2] != "example.com/m/b" {
+		t.Errorf("Deps: %q, %v", deps, err)
+	}
+}
