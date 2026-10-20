@@ -3123,6 +3123,38 @@ kroki należą tylko do `full`.
 **Kiedy zmieniam zdanie:** gdy `full` na `main` złapie błąd zmiany
 aplikacji, który smoke przepuścił — wtedy medium dostaje drain.
 
+## 77. Tryb cienia planu mierzony co noc
+
+> Dokończenie kroku 7 planu z `docs/ANALIZA-CI-NARZEDZIA-I-WARSTWY.md`
+> (§9.2: „noc porównuje plan z tym, co klaster złapał”). Decyzja 75
+> obiecała pomijanie klastra dopiero po 20 biegach cienia bez rozjazdu, ale
+> nic tego nie liczyło.
+
+**Wybieram pomiar w nocy z artefaktów, a nie ręczne przeglądanie
+podsumowań.** Zadanie `plan` zapisuje `plan.json` jako artefakt
+`plan-zmiany` (30 dni). `dft ci plan-trial` w nocnym zadaniu `budget`
+przegląda ostatnie 100 biegów PR-ów: profil bierze z artefaktu, wynik
+`cluster` z API. Rozjazd to profil fast albo medium przy czerwonym
+`cluster`, czyli błąd, który klaster złapał, a plan by przepuścił. Heavy
+przy czerwonym klastrze to plan, który zadziałał. Próg z rejestru (§3.7,
+§10): ≥ 20 biegów z planem i zero rozjazdów. Wtedy podsumowanie nocy mówi
+„gotowe do włączenia planu”, a włączenie to osobny PR (krok 9).
+
+Pomiar tylko informuje: rozjazd to ostrzeżenie do przejrzenia, a nie
+czerwona noc. Czerwony klaster może znaczyć zawodną bramkę, a nie złą
+regułę — to rozstrzyga człowiek przy przeglądzie rozjazdu.
+
+**Co tracę:**
+- artefakt na każdy PR (kilkaset bajtów, 30 dni);
+- czerwony `cluster` z migotania na PR-ze z profilem fast liczy się jako
+  rozjazd i wymaga przejrzenia;
+- bieg ponowiony daje wynik ostatniego podejścia, więc ponowiony czerwony
+  klaster nie trafi do rozjazdów (ponowienia liczy `ci:trial`).
+
+**Kiedy zmieniam zdanie:** gdy plan zostanie włączony (krok 9), pomiar
+przechodzi w nadzór: rozjazd po włączeniu to błąd, który przeszedł na
+`main` bez klastra — wtedy czerwona noc zamiast ostrzeżenia.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

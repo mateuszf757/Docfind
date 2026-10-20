@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -22,7 +23,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/stages/plan"
 )
 
-const ciUsage = "dft ci require | main-health [--dry-run] | budget [--enforce] | go-cache | plan --base <commit> [--repo <katalog>]"
+const ciUsage = "dft ci require | main-health [--dry-run] | budget [--enforce] | go-cache | plan --base <commit> [--repo <katalog>] | plan-trial"
 
 // runCI — polecenia o samym CI. `dft ci require`: wynik zadania
 // zbierającego warstwę (fast-feedback, integration) z wyników jego needs,
@@ -51,6 +52,15 @@ func runCI(ctx context.Context, w *workspace, args []string) error {
 	}
 	if len(args) > 0 && args[0] == "plan" {
 		return ciPlan(ctx, w, args[1:])
+	}
+	if len(args) > 0 && args[0] == "plan-trial" {
+		if len(args) != 1 {
+			return cli.Usage("użycie: %s", ciUsage)
+		}
+		if err := requireTools("gh"); err != nil {
+			return err
+		}
+		return ciPlanTrial(ctx, w)
 	}
 	if len(args) > 0 && args[0] == "budget" {
 		if len(args) > 2 || (len(args) == 2 && args[1] != "--enforce") {
@@ -214,4 +224,39 @@ func ciPlan(ctx context.Context, w *workspace, args []string) error {
 		return err
 	}
 	return w.writeReport("plan", p)
+}
+
+// ciPlanTrial — `dft ci plan-trial`: tryb cienia planu (stages/plan.Shadow,
+// decyzja 77) — profil z artefaktu planu kontra wynik cluster na ostatnich
+// biegach PR-ów. Tylko informuje: rozjazd to ostrzeżenie do przejrzenia,
+// a nie czerwona noc; gotowość do włączenia planu (krok 9) — wiersz w logu
+// i podsumowaniu.
+func ciPlanTrial(ctx context.Context, w *workspace) (err error) {
+	tmp, err := os.MkdirTemp("", "dft-plan-trial-")
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, os.RemoveAll(tmp)) }()
+	res, err := plan.Shadow(ctx, w.gh(), tmp, 100)
+	if err != nil {
+		return err
+	}
+	counts := fmt.Sprintf("fast %d, medium %d, heavy %d", res.ByProfile[ci.ProfileFast], res.ByProfile[ci.ProfileMedium], res.ByProfile[ci.ProfileHeavy])
+	cli.Step("plan w trybie cienia: %d biegów PR-ów z planem (%s)", res.Runs, counts)
+	for _, m := range res.Mismatches {
+		cli.Warn("rozjazd planu z klastrem: %s", m)
+	}
+	verdict := fmt.Sprintf("jeszcze nie: %d z %d biegów z planem, rozjazdów: %d", res.Runs, contract.PlanShadowRuns, len(res.Mismatches))
+	if res.Ready() {
+		verdict = fmt.Sprintf("gotowe do włączenia planu: %d biegów bez rozjazdu (krok 9, decyzja 77)", res.Runs)
+	}
+	cli.Step("%s", verdict)
+	md := fmt.Sprintf("### Plan w trybie cienia\n\n%d biegów PR-ów z planem (%s), rozjazdów: %d. %s.\n", res.Runs, counts, len(res.Mismatches), verdict)
+	for _, m := range res.Mismatches {
+		md += "- " + m + "\n"
+	}
+	if err := appendSummary(md); err != nil {
+		return err
+	}
+	return w.writeReport("plan-trial", res)
 }

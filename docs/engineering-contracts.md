@@ -223,11 +223,14 @@ tryb cienia, klaster biegnie na każdym PR-ze]. Profilowi medium odpowiada klast
 smoke: ta sama topologia, platforma i render, wdrożenie z tożsamością na podach i TLS przez
 bramę, bez drainu, OpenBao po drainach i rotacji; heavy — profil full.
 Egzekwuje: zadanie `plan` (`dft ci plan`, `stages/plan`, reguły w `core/ci`) — kod z katalogu
-commita bazowego, z PR-a tylko historia gita. Dowód: podsumowanie zadania `plan`, raport
-`plan.json`. Warstwa: W2. Wariant negatywny: zmiana charta, platformy albo kodu bramek
+commita bazowego, z PR-a tylko historia gita; noc porównuje profil z artefaktu `plan-zmiany`
+z wynikiem `cluster` na tych samych biegach (`dft ci plan-trial` w zadaniu `budget`) — pomijanie
+klastra dopiero po progu z §10. Dowód: podsumowanie zadania `plan`, raport `plan.json`,
+podsumowanie nocy (tryb cienia), raport `plan-trial.json`. Warstwa: W2, W4. Wariant negatywny: zmiana charta, platformy albo kodu bramek
 klastrowych sklasyfikowana jako fast → czerwony `test` (testy `core/ci`); nieznana ścieżka →
 heavy; pakiet w grafie poleceń klastrowych → heavy (testy `stages/plan`, `cmd/dft`); drain
-w profilu smoke → czerwony `test` (testy `core/workflow`). Decyzja: 75, 76.
+w profilu smoke → czerwony `test` (testy `core/workflow`); profil medium przy czerwonym
+`cluster` → rozjazd w nocy (testy `stages/plan`). Decyzja: 75, 76, 77.
 
 ## 4. Artefakty
 
@@ -611,6 +614,7 @@ docelowe bez strażnika (budżety warstw, Z, pokrycie) stoją w klauzulach, w zn
 | §3.1 | budżet warstw W1 / W2 / W3 / W4 / W5 (p95) | 6m0s / 20m0s / 30m0s / 40m0s / 10m0s | stages/budget |
 | §0.5 | przekroczenia budżetu w ostatnich biegach | z 20: ostrzeżenie od 3, czerwona noc od 5 | stages/budget |
 | §3.1 | podatek startowy: p50 zadania W1 / p50 sumy zadań W1 w biegu | ≤ 30s / ≤ 3m0s; ponad — ostrzeżenie, sygnał do obrazu CI | stages/budget |
+| §3.7 | tryb cienia planu przed pomijaniem klastra | ≥ 20 biegów PR-ów z planem, 0 rozjazdów (profil fast albo medium przy czerwonym cluster) | stages/plan |
 | §3.3 | przerwa między biegami nocnymi w serii | ≤ 48h0m0s | stages/trial, stages/mainhealth |
 | §3.6 | czerwony main bez issue | ≤ 24h0m0s | stages/mainhealth |
 | §6.2 | ważność wyjątku podatności | ≤ 90 dni | core/vuln |

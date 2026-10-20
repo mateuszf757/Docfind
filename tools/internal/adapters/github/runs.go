@@ -112,6 +112,12 @@ func (c CLI) JobSteps(ctx context.Context, runID int64) ([]ci.JobSteps, error) {
 	return jobs.Jobs, nil
 }
 
+// DownloadArtifact pobiera artefakt biegu i rozpakowuje go do katalogu dir.
+func (c CLI) DownloadArtifact(ctx context.Context, runID int64, name, dir string) error {
+	_, err := c.gh(ctx, "run", "download", strconv.FormatInt(runID, 10), "--name", name, "--dir", dir)
+	return err
+}
+
 // FindIssue zwraca numer otwartego issue o dokładnie tym tytule; 0 — nie ma.
 func (c CLI) FindIssue(ctx context.Context, title string) (int, error) {
 	out, err := c.gh(ctx, "issue", "list", "--state", "open", "--search", title+" in:title", "--json", "number,title")
