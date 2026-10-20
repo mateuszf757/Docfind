@@ -339,8 +339,9 @@ jobs:
   negatives:
     if: github.ref_type != 'tag'
     runs-on: ubuntu-24.04
-    # Typowy bieg: build ~2 min, warianty ~2,5 min; każdy wariant ma budżet
-    # z rejestru progów (contract.NegativeVariantBudget).
+    # Warianty biegną równolegle (decyzja 73): razem tyle, co najdłuższy
+    # (~45 s), a nie suma (~110 s). Każdy ma budżet z rejestru progów
+    # (contract.NegativeVariantBudget).
     timeout-minutes: 20
     env:
       MISE_AUTO_INSTALL: "false"

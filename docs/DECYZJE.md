@@ -2974,6 +2974,41 @@ zmiany stałej to czerwony `lint` — jedno źródło prawdy albo test zgodnośc
 69) — ustawienia prosto z renderu, bez stałej. Gdy aplikacja zacznie czytać
 sekrety przy starcie — dym z zamontowanym przykładowym Secretem.
 
+## 73. Warianty negatywne obrazu równolegle
+
+> Krok 5 planu z `docs/ANALIZA-CI-NARZEDZIA-I-WARSTWY.md` (§8.3). Szablon
+> warstwy Fast mówi „na PR-ze tylko krytyczne negatywy, reszta nocą”. Tu
+> wszystkie cztery są krytyczne, więc skracam czas, a nie zakres.
+
+**Wybieram równoległość zamiast okrojenia.** Cztery warianty z tagiem
+`docker` (obraz bez odmowy startu, PID 1 bez SIGTERM, żądanie w locie
+ponad limit, zapis poza emptyDir) biegły po kolei: ~113 s lokalnie, w CI
+78 s dla trzech. Każdy sprawdza inną bramkę Etapu 1 na prawdziwym obrazie,
+więc żaden nie jest „mniej krytyczny”. Są niezależne:
+- osobne kontenery — nazwa z wariantu i PID;
+- porty od Dockera na 127.0.0.1;
+- osobne katalogi tymczasowe.
+
+Teraz `t.Parallel()`, a całość trwa tyle, co najdłuższy wariant. Lokalnie
+trzy biegi z rzędu: 50–53 s, wszystkie zielone. Najdłuższy — obraz bez
+odmowy startu — 45 s, bo każda próba odmowy czeka limit.
+
+`cli.Out` i `cli.Err` to zmienne pakietu, więc podmiana w każdym teście
+byłaby wyścigiem. Testy z tagiem `docker` podmieniają je raz, w `TestMain`,
+na bufor z blokadą. Przy porażce test pokazuje całe wyjście — wiersze
+wariantów rozróżniają nazwy kontenerów.
+
+**Co tracę:**
+- wyjście przy porażce jest przemieszane z innymi wariantami;
+- pomiary czasu (koszt zamykania, żądanie w locie) biegną przy rywalizacji
+  o 4 vCPU. Progi wariantów mają duży zapas: PID 1 bez SIGTERM czeka pełny
+  limit `docker stop`, a żądanie w locie przekracza okres łaski o 2 s.
+  Budżet wariantu (2 min) zostaje.
+
+**Kiedy zmieniam zdanie:** gdy wariant zacznie migotać w CI (`ci:trial`
+liczy ponowienia jako porażki) — wtedy pomiary czasu sekwencyjnie, a reszta
+równolegle.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta
