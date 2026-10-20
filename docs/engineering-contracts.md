@@ -148,7 +148,7 @@ wersji charta w trakcie → kod 1, bez tagu; kod bramek z niezatwierdzonymi zmia
 
 | Warstwa | Zdarzenia | Zadania i zakres | Budżet (p95, §0.5) | Wymagana |
 |---|---|---|---|---|
-| W1 szybka | PR, push `main`, noc | równolegle: `test` — wersje, lint, kontrakt, gitleaks na historii, Python, charty z politykami, Go z `-race`, govulncheck; `build` albo `build-publish` — obraz, baza, testy na musl, warunki Etapu 1, powtarzalność; `negatives` — warianty negatywne; `tools` — powtarzalność narzędzi | 6 min [ŻYCZENIE: p95 2026-10-17 — 15,3 min na PR-ach, 15,6 na push; biegi sprzed zrównoleglenia] | tak: `fast-feedback` |
+| W1 szybka | PR, push `main`, noc | równolegle: `lint` — wersje, workflowy, kontrakt, gitleaks na historii, Python, charty z politykami; `test` — Go z `-race`, pokrycie, govulncheck; `build` albo `build-publish` — obraz, baza, testy na musl, warunki Etapu 1, powtarzalność; `negatives` — warianty negatywne; `tools` — powtarzalność narzędzi | 6 min [ŻYCZENIE: p95 2026-10-17 — 15,3 min na PR-ach, 15,6 na push; biegi sprzed zrównoleglenia] | tak: `fast-feedback` |
 | W2 integracja przed scaleniem | PR, push `main`, noc | po `test` i `build`: `cluster` — klaster `ci`, wdrożenie, tożsamość, drain każdego węzła, OpenBao, rotacja, TLS, dowody; `vulns` — skan obrazu | 20 min [ŻYCZENIE: p95 2026-10-17 — 23,1 min na PR-ach, 22,5 na push] | tak: `integration` |
 | W3 po scaleniu | push `main` | `attest`, `chart`, `attest-chart`: pochodzenie i SBOM, atestacja, chart OCI z digestem przetestowanym | 30 min (p95 2026-10-17: 27,9 min) | nie (czerwony → §3.6) |
 | W4 noc | `schedule`, `workflow_dispatch` | W1 i W2 na `main`; `vulns-issue` z wyjątkami wygasającymi w ciągu tygodnia; `settings-drift`; `main-health` (także na push); w `cluster`: rolling update pod ruchem i negatywy na klastrze [ŻYCZENIE: upgrade N-1 → N] | 40 min (p95 2026-10-17: 17,1 min) | nie |
@@ -171,13 +171,14 @@ pominięte, i przechodzą tylko wtedy, gdy każde zadanie warstwy ma wynik succe
 (`ci:require`). Pominięte zadanie wymagane raportuje sukces, więc żadne zadanie, które
 wykonuje bramkę, nie jest wymaganym statusem.
 Egzekwuje: `dft check workflows` — wymagany status to zadanie workflowu na pull_request
-z `always()` w warunku; `ci:require`; ruleset stosowany przez `dft repo-settings`; pola
+z `always()` w warunku, a zadanie zbierające ma w needs każde zadanie swojej warstwy, które
+może ruszyć na pull_request; `ci:require`; ruleset stosowany przez `dft repo-settings`; pola
 chronione (§8.3); noc porównuje reguły działające na `main` z plikiem
 (`dft repo-settings --check`, §6.7). Dowód: efektywne reguły
 `GET /repos/…/rules/branches/main`, log zadań zbierających. Warstwa: W1, W2.
 Wariant negatywny: wynik skipped w `NEEDS` → `ci:require` kod 1; wymagany status bez
-`always()` albo bez zadania → czerwony `test` (testy `core/workflow`, `cmd/dft`).
-Decyzja: 22, 36, 38, 47, 52.
+`always()` albo bez zadania → czerwony `test`; zadanie W1 spoza needs `fast-feedback` →
+czerwony `test` (testy `core/workflow`, `cmd/dft`). Decyzja: 22, 36, 38, 47, 52, 71.
 
 **3.3 Okres próbny.** Nowa bramka wchodzi do wymaganych po 10 kolejnych biegach na `main`
 (push i noc) za pierwszym podejściem. Zadanie, którego tryb na PR-ze różni się od trybu na

@@ -2891,6 +2891,48 @@ cache, lecz actionlint 1.7.12 odrzuca ten klucz jako nieznany.
 - pomiar po wdrożeniu (podatek startowy w budżetach) bez zysku ≥ 20 s na
   zadanie — pisarz i reguła do usunięcia.
 
+## 71. Bramki jakości w dwóch zadaniach W1: `lint` i `test` (kod Go)
+
+> Krok 3 planu z `docs/ANALIZA-CI-NARZEDZIA-I-WARSTWY.md` (§9.3). Pierwszy
+> krok warstwy Fast: sygnał W1 nie czeka już na sumę wszystkich bramek
+> jakości po kolei.
+
+**Wybieram dwa zadania równolegle zamiast jednego.** Zadanie `test` robiło
+wszystkie grupy po kolei i było najdłuższe w W1: p50 292 s, z czego kod Go
+~190 s, a reszta — wersje, workflowy, kontrakt, gitleaks, Python i charty —
+~15 s. Teraz:
+- `lint` (`./bin/mise run test -- --part lint`) — wszystko poza kodem Go;
+- `test` (`--part go`) — warstwy, gofmt, vet, staticcheck, testy z `-race`
+  i pokryciem, govulncheck, z pamięcią podręczną `go-test` (decyzja 70).
+
+Lokalnie `./bin/mise run test` dalej robi wszystko — jedno wejście (§1.4).
+Nazwa `test` zostaje przy kodzie Go, bo od niego zależą raport govulncheck
+dla `vulns-issue` i nazwa w pakiecie dowodów.
+
+Z podziałem przychodzą dwie straże:
+- `dft check workflows` sprawdza, że zadanie zbierające (`fast-feedback`,
+  `integration`) ma w needs każde zadanie swojej warstwy, które może ruszyć
+  na pull_request. Bez tego nowe zadanie W1 pominięte w needs nie blokowałoby
+  scalenia, choć kontrakt mówi, że blokuje (§3.2). Ten sam błąd łatwo zrobić
+  przy przenoszeniu `vulns`.
+- Pakiet dowodów wydania wymaga zielonego `lint` obok `test`
+  (`artifact.MainJobs`). Commit sprzed podziału nie dostanie już numeru:
+  jego bieg `main` nie ma zadania `lint`.
+
+`build-publish`, `vulns` i `cluster` czekają na oba zadania — publikacja
+i klaster tylko po wszystkich bramkach jakości, jak dotąd.
+
+**Co tracę:**
+- drugi runner na każdy PR — limit równoczesnych zadań konta wyczerpuje się
+  szybciej przy seriach scaleń;
+- podatek startowy płacony dwa razy, ~15–20 s po decyzji 70;
+- wydanie commita sprzed podziału wymaga nowego biegu `main` (nowego commita).
+
+**Kiedy zmieniam zdanie:** gdy `lint` przestanie być krótszy od `test`
+o więcej niż podatek startowy — wtedy jedno zadanie znowu. Gdy kolejka
+konta zacznie opóźniać W1 bardziej, niż zysk z podziału (budżety mierzą
+kolejkę osobno) — też.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

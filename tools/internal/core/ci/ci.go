@@ -76,12 +76,17 @@ const (
 // funkcja CI zaczyna od miejsca w warstwach i budżetu. Zadanie, które biegnie
 // w kilku zdarzeniach, ma warstwę zdarzenia, dla którego powstało.
 var Layers = map[string]Layer{
-	"test": W1, "build": W1, "build-publish": W1, "tools": W1, "negatives": W1, "fast-feedback": W1,
+	"lint": W1, "test": W1, "build": W1, "build-publish": W1, "tools": W1, "negatives": W1, "fast-feedback": W1,
 	"cluster": W2, "vulns": W2, "integration": W2,
 	"attest": W3, "chart": W3, "attest-chart": W3, "go-cache": W3,
 	"vulns-issue": W4, "settings-drift": W4, "main-health": W4, "budget": W4,
 	"release": W5, "attest-release": W5, "promote": W5,
 }
+
+// Aggregators — zadania zbierające warstwy, wymagane statusy reguły main
+// (decyzja 52). Każde czeka na wszystkie zadania swojej warstwy, które mogą
+// ruszyć na pull_request (§3.2, decyzja 71).
+var Aggregators = map[string]Layer{"fast-feedback": W1, "integration": W2}
 
 // PullRequest — scalony PR: ostatni commit (ten, na którym CI dało wynik
 // przed scaleniem) i chwila scalenia.

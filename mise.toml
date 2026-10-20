@@ -102,7 +102,7 @@ GOPROXY = "https://proxy.golang.org"
 CGO_ENABLED = "0"
 
 [tasks.test]
-description = "Wersje, workflowy, kontrakt, sekrety w historii gita, Python, charty z politykami, kod Go — to samo co zadanie test w CI; --base <commit> ocenia zmianę jak na PR-ze (decyzje 37, 50)"
+description = "Wersje, workflowy, kontrakt, sekrety w historii gita, Python, charty z politykami, kod Go — to samo co zadania lint i test w CI; --part lint|go — jedna część (decyzja 71); --base <commit> ocenia zmianę jak na PR-ze (decyzje 37, 50)"
 run = "ci/dft test"
 
 [tasks."check:contract"]
