@@ -34,8 +34,13 @@
 version: 2
 updates:
   # Akcje przypięte SHA z komentarzem wersji — Dependabot aktualizuje oba.
+  # `directory: /` czyta tylko .github/workflows i action.yml w korzeniu, więc
+  # akcje złożone z .github/actions/* są wymienione osobno: bez tego
+  # build-image została przy upload-artifact v7.0.1, gdy ci.yml dostał v7.0.2
+  # (#51). Pokrycie sprawdza `dft check workflows`. Grupy działają w każdym
+  # katalogu osobno, więc ta sama łatka przychodzi PR-em na katalog.
   - package-ecosystem: github-actions
-    directory: /
+    directories: ["/", "/.github/actions/*"]
     schedule:
       interval: weekly
     cooldown:

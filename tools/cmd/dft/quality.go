@@ -167,6 +167,16 @@ func checkWorkflows(ctx context.Context, w *workspace) error {
 	if len(checks) == 0 {
 		cli.Step("wymagane statusy %s: zadania zbierające z always() na pull_request (decyzja 52)", strings.Join(required, ", "))
 	}
+	uncovered, err := workflow.DependabotCoverage(w.root)
+	if err != nil {
+		return err
+	}
+	for _, dir := range uncovered {
+		v.Fail("%s: akcja złożona poza Dependabotem — przypięcia w niej się nie zaktualizują; dopisz /%s do directories wpisu github-actions w %s (decyzja 22)", dir, dir, workflow.DependabotFile)
+	}
+	if len(uncovered) == 0 {
+		cli.Step("Dependabot: każda akcja złożona z %s w directories wpisu github-actions (decyzja 22)", workflow.ActionsDir)
+	}
 	return v.Err("reguły workflowów")
 }
 
