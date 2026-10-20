@@ -168,3 +168,55 @@ func TestImmutableConfig(t *testing.T) {
 		t.Errorf("chart z zewnątrz oceniony regułą ConfigMapy: %v", got)
 	}
 }
+
+const hardenedApp = `apiVersion: apps/v1
+kind: Deployment
+metadata: {name: docfind-api}
+spec:
+  template:
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001}
+      containers:
+      - name: api
+        securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+        volumeMounts:
+        - {name: config, mountPath: /app/config, readOnly: true}
+        - {name: tmp, mountPath: /tmp}
+      - name: inny
+        securityContext: {readOnlyRootFilesystem: false}
+      volumes:
+      - {name: config, configMap: {name: c}}
+      - {name: tmp, emptyDir: {sizeLimit: 16Mi}}
+`
+
+func TestPodHardening(t *testing.T) {
+	docs := parse(t, hardenedApp)
+	h, err := PodHardening(docs, "api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !Same(h, APIHardening) {
+		t.Errorf("PodHardening = %s, oczekiwano %s", h, APIHardening)
+	}
+	other, err := PodHardening(docs, "inny")
+	if err != nil || other.ReadOnlyRoot || other.CapDropAll || other.User != "10001:10001" || len(other.Tmpfs) != 0 {
+		t.Errorf("drugi kontener: %+v, %v", other, err)
+	}
+	if _, err := PodHardening(docs, "brak"); err == nil {
+		t.Error("brak kontenera bez błędu")
+	}
+	// Ten sam kontener w dwóch workloadach z różnymi ustawieniami.
+	twice := parse(t, hardenedApp+"---\n"+strings.Replace(hardenedApp, "readOnlyRootFilesystem: true", "readOnlyRootFilesystem: false", 1))
+	if _, err := PodHardening(twice, "api"); err == nil || !strings.Contains(err.Error(), "różne ustawienia") {
+		t.Errorf("rozjazd workloadów: %v", err)
+	}
+}
+
+func parse(t *testing.T, yaml string) []map[string]any {
+	t.Helper()
+	docs, err := manifest.Parse(strings.NewReader(yaml))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return docs
+}

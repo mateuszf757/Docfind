@@ -2933,6 +2933,47 @@ o więcej niż podatek startowy — wtedy jedno zadanie znowu. Gdy kolejka
 konta zacznie opóźniać W1 bardziej, niż zysk z podziału (budżety mierzą
 kolejkę osobno) — też.
 
+## 72. Dym obrazu z ustawieniami poda z charta
+
+> Krok 4 planu z `docs/ANALIZA-CI-NARZEDZIA-I-WARSTWY.md` (§8.2). Warunek
+> planu wg ryzyka zmiany: jeśli klaster nie biegnie na każdym PR-ze, to,
+> co dziś łapie tylko on, musi mieć bramkę w warstwie Fast.
+
+**Wybieram dym z ustawieniami poda w `check:runtime`, ze stałą w kodzie
+i testem zgodności z renderem.** Chart uruchamia API z ustawieniami:
+- `readOnlyRootFilesystem`;
+- zapis tylko w emptyDir `/tmp`;
+- `drop: [ALL]`;
+- `allowPrivilegeEscalation: false`;
+- użytkownik i grupa 10001.
+
+Polityki (decyzja 55) sprawdzają je w renderze, ale obraz nigdy z nimi nie
+wstawał przed klastrem. Aplikacja, która przy starcie pisze poza `/tmp`,
+odpadała dopiero na klastrze — sprawdziłem na obrazie: użytkownik 10001
+pisze do `/var/tmp` (1777) bez tych ustawień, a z nimi dostaje
+„Read-only file system”.
+
+Teraz `check:runtime` uruchamia kontener z tymi ustawieniami
+(`--read-only`, `--tmpfs`, `--cap-drop ALL`, `no-new-privileges`, `--user`).
+Obraz ma wstać (`/healthz` 200) i podać na `/version` commit, z którego go
+zbudowano. Zadanie `build` nie ma Helma, więc ustawienia są stałą
+`policy.APIHardening`. `dft check charts` (zadanie `lint`) porównuje ją
+z renderem każdego środowiska i z chartem z rejestru. Zmiana w charcie bez
+zmiany stałej to czerwony `lint` — jedno źródło prawdy albo test zgodności.
+
+**Co tracę:**
+- jeden start kontenera w `check:runtime` (~5 s) i czwarty wariant
+  negatywny (~18 s, równoległość w kroku 5);
+- rozmiar emptyDir (`sizeLimit: 16Mi`) jest poza dymem — `--tmpfs` bez
+  limitu;
+- sekrety jako pliki (`/run/secrets`) też — dym nie montuje Secreta, a
+  `/healthz` i `/version` ich nie czytają;
+- stała w kodzie obok charta: dwie kopie pilnowane testem, nie konstrukcją.
+
+**Kiedy zmieniam zdanie:** gdy build dostanie Helma (np. obraz CI z decyzji
+69) — ustawienia prosto z renderu, bez stałej. Gdy aplikacja zacznie czytać
+sekrety przy starcie — dym z zamontowanym przykładowym Secretem.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

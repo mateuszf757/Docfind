@@ -56,6 +56,10 @@ type engine struct {
 	refuse  container.Exit
 	running map[string]container.Spec
 	removed []string
+	// hardenedFails — obraz nie wstaje z ustawieniami poda (pisze poza
+	// emptyDir); hardened — kontenery uruchomione z ustawieniami poda.
+	hardenedFails bool
+	hardened      []string
 }
 
 // Save zapisuje prawdziwe archiwum obrazu z jedną warstwą: binarką
@@ -105,6 +109,9 @@ func (e *engine) Start(_ context.Context, s container.Spec) error {
 		e.running = map[string]container.Spec{}
 	}
 	e.running[s.Name] = s
+	if s.Hardening != nil {
+		e.hardened = append(e.hardened, s.Name)
+	}
 	return nil
 }
 
@@ -119,6 +126,12 @@ func (e *engine) HostPort(_ context.Context, name string, port int) (int, error)
 	if port != 8000 {
 		return 0, errors.New("zły port")
 	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	// Kontener, który nie wstał, nie odpowiada: web odrzuca ten port.
+	if e.hardenedFails && e.running[name].Hardening != nil {
+		return 49154, nil
+	}
 	return 49153, nil
 }
 
@@ -127,13 +140,21 @@ func (e *engine) Remove(_ context.Context, names ...string) error {
 	return nil
 }
 
-type web struct{ status int }
+type web struct {
+	status int
+	// commit — commit w odpowiedzi /version.
+	commit string
+}
 
 func (w web) Get(_ context.Context, r loopback.Request) (loopback.Response, error) {
 	if r.Port != 49153 || r.TLS != nil {
 		return loopback.Response{}, errors.New("zły adres")
 	}
-	return loopback.Response{Status: w.status, Elapsed: time.Millisecond}, nil
+	resp := loopback.Response{Status: w.status, Elapsed: time.Millisecond}
+	if r.Path == "/version" && r.ReadBody > 0 {
+		resp.Body = []byte(`{"commit":"` + w.commit + `","version":"0.4.0"}`)
+	}
+	return resp, nil
 }
 
 func checker(t *testing.T, e *engine, w web) *Checker {
@@ -202,5 +223,52 @@ func TestRunRejectsSize(t *testing.T) {
 	// Warstwa to strumień tar: binarka plus nagłówki i wyrównanie.
 	if rep.ImageUnpackedBytes < 50_000 || rep.ImageUnpackedBytes > 52_000 {
 		t.Errorf("rozmiar z warstw: %d", rep.ImageUnpackedBytes)
+	}
+}
+
+var podSettings = &container.Hardening{ReadOnlyRoot: true, Tmpfs: []string{"/tmp"}, CapDropAll: true, NoNewPrivileges: true, User: "10001:10001"}
+
+// TestRunPodSmoke: dym z ustawieniami poda — kontener uruchomiony z nimi,
+// /version z commitem obrazu, wynik w raporcie.
+func TestRunPodSmoke(t *testing.T) {
+	oldOut, oldErr := cli.Out, cli.Err
+	cli.Out, cli.Err = io.Discard, io.Discard
+	defer func() { cli.Out, cli.Err = oldOut, oldErr }()
+	e := &engine{size: 4096, refuse: container.Exit{Code: 1, Stderr: "BŁĄD KONFIGURACJI"}}
+	c := checker(t, e, web{status: 200, commit: "abc"})
+	c.Pod, c.Commit = podSettings, "abc"
+	rep, err := c.Run(context.Background())
+	if err != nil {
+		t.Fatalf("%v (%+v)", err, rep.Unmet)
+	}
+	if rep.Pod == nil || !rep.Pod.Ready || rep.Pod.Commit != "abc" || rep.Pod.VersionStatus != 200 || !strings.Contains(rep.Pod.Settings, "tylko do odczytu") {
+		t.Errorf("raport dymu: %+v", rep.Pod)
+	}
+	if !slices.Equal(e.hardened, []string{"dft-test-pod"}) || !slices.Contains(e.removed, "dft-test-pod") {
+		t.Errorf("kontener z ustawieniami poda: %v, usunięte %v", e.hardened, e.removed)
+	}
+}
+
+func TestRunPodSmokeRejects(t *testing.T) {
+	oldOut, oldErr := cli.Out, cli.Err
+	cli.Out, cli.Err = io.Discard, io.Discard
+	defer func() { cli.Out, cli.Err = oldOut, oldErr }()
+	for _, tt := range []struct {
+		name   string
+		engine *engine
+		commit string
+		want   string
+	}{
+		{"nie wstaje z ustawieniami poda", &engine{size: 1, hardenedFails: true, refuse: container.Exit{Code: 1, Stderr: "BŁĄD KONFIGURACJI"}}, "abc", "z ustawieniami poda (system plików tylko do odczytu"},
+		{"inny commit na /version", &engine{size: 1, refuse: container.Exit{Code: 1, Stderr: "BŁĄD KONFIGURACJI"}}, "zzz", `/version podaje commit "zzz", a obraz jest z "abc"`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := checker(t, tt.engine, web{status: 200, commit: tt.commit})
+			c.Pod, c.Commit = podSettings, "abc"
+			rep, err := c.Run(context.Background())
+			if cli.ExitCode(err) != cli.ExitUnmet || !slices.ContainsFunc(rep.Unmet, func(u string) bool { return strings.Contains(u, tt.want) }) {
+				t.Errorf("oczekiwano niespełnionego z %q: %v (%q)", tt.want, err, rep.Unmet)
+			}
+		})
 	}
 }

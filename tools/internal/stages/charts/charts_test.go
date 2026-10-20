@@ -49,8 +49,13 @@ spec:
 
 // app — Deployment aplikacji z kontenerem api i wersją wdrożenia,
 // utwardzony jak chart (decyzja 55); readOnly — system plików kontenera
-// tylko do odczytu.
-func app(image, version string, readOnly bool) string {
+// tylko do odczytu; tmp — emptyDir na /tmp, jedyne miejsce zapisu.
+func app(image, version string, readOnly, tmp bool) string {
+	mounts, volumes := "", ""
+	if tmp {
+		mounts = "\n        volumeMounts: [{name: tmp, mountPath: /tmp}]"
+		volumes = "\n      volumes: [{name: tmp, emptyDir: {sizeLimit: 16Mi}}]"
+	}
 	return `apiVersion: apps/v1
 kind: Deployment
 metadata: {name: docfind-api}
@@ -58,13 +63,13 @@ spec:
   template:
     spec:
       automountServiceAccountToken: false
-      securityContext: {runAsNonRoot: true, runAsUser: 10001, seccompProfile: {type: RuntimeDefault}}
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
       containers:
       - name: api
         image: ` + image + `
         env: [{name: DOCFIND_VERSION, value: "` + version + `"}]
         resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {memory: 64Mi}}
-        securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: ` + fmt.Sprint(readOnly) + `, capabilities: {drop: [ALL]}}
+        securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: ` + fmt.Sprint(readOnly) + `, capabilities: {drop: [ALL]}}` + mounts + volumes + `
 `
 }
 
@@ -86,7 +91,9 @@ type helm struct {
 	writableRoot bool
 	// mutableConfig — ConfigMapa aplikacji bez immutable.
 	mutableConfig bool
-	renders       []string
+	// noTmp — chart aplikacji bez emptyDir na /tmp.
+	noTmp   bool
+	renders []string
 }
 
 func (h *helm) Lint(context.Context, string, ...string) error { return nil }
@@ -125,7 +132,7 @@ func (h *helm) Template(_ context.Context, r cluster.Release, includeCRDs bool, 
 		if h.badConfig {
 			config = "service: {port: 0}"
 		}
-		out = app(`"ghcr.io/x/docfind-api:`+tag+digest+`"`, version, !h.writableRoot) + "---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: c}\nimmutable: " + fmt.Sprint(!h.mutableConfig) + "\ndata:\n  app.yml: \"" + config + "\"\n"
+		out = app(`"ghcr.io/x/docfind-api:`+tag+digest+`"`, version, !h.writableRoot, !h.noTmp) + "---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: c}\nimmutable: " + fmt.Sprint(!h.mutableConfig) + "\ndata:\n  app.yml: \"" + config + "\"\n"
 	case strings.HasSuffix(r.Chart, "platform"):
 		out = "apiVersion: v1\nkind: Namespace\nmetadata: {name: n}\n"
 	case strings.HasSuffix(r.Chart, "delivery"):
@@ -219,6 +226,9 @@ func TestRunRejects(t *testing.T) {
 		{"zła konfiguracja w renderze", &helm{}, rejectingConfig{}, "konfiguracja w renderze docfind-ci jest nieprawidłowa"},
 		{"zapisywalny system plików aplikacji", &helm{writableRoot: true}, appConfig{}, "render docfind-ci łamie polityki"},
 		{"zmienna ConfigMapa aplikacji", &helm{mutableConfig: true}, appConfig{}, "render docfind-ci łamie polityki"},
+		// Chart bez emptyDir na /tmp: dym obrazu sprawdzałby inny kontener
+		// niż ten, który stanie na klastrze.
+		{"chart inny niż dym obrazu", &helm{noTmp: true}, appConfig{}, "dym obrazu (check:runtime) uruchamia go z"},
 		// Nowy rodzaj zasobu w charcie aplikacji bez dopisania do projektu:
 		// Argo odmówiłby synchronizacji dopiero na stagingu.
 		{"projekt Argo CD bez rodzaju z charta", &helm{projectWithout: "ConfigMap"}, appConfig{}, "projekt Argo CD środowiska staging nie dopuszcza"},

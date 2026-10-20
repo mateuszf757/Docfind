@@ -25,6 +25,13 @@ func TestRunArgs(t *testing.T) {
 	if got := strings.Join(runArgs(container.Spec{Image: "img:1"}), " "); got != "img:1" {
 		t.Errorf("obraz jak w produkcji: %q", got)
 	}
+	got = strings.Join(runArgs(container.Spec{Image: "img:1", Hardening: &container.Hardening{
+		ReadOnlyRoot: true, Tmpfs: []string{"/tmp"}, CapDropAll: true, NoNewPrivileges: true, User: "10001:10001",
+	}}), " ")
+	want = "--read-only --tmpfs /tmp:rw,exec --cap-drop ALL --security-opt no-new-privileges --user 10001:10001 img:1"
+	if got != want {
+		t.Errorf("ustawienia poda:\n%s\noczekiwano:\n%s", got, want)
+	}
 }
 
 // TestRunToExit: kod wyjścia różny od zera to wynik, a niemożność

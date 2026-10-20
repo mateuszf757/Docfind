@@ -83,6 +83,23 @@ func TestGetHTTP(t *testing.T) {
 	}
 }
 
+// TestReadBody: treść zachowana tylko na żądanie i tylko do limitu.
+func TestReadBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{"commit":"abc"}`)) }))
+	defer srv.Close()
+	ctx := context.Background()
+	resp, err := Client{}.Get(ctx, loopback.Request{Port: port(t, srv), Path: "/version", Timeout: time.Second, ReadBody: 1024})
+	if err != nil || string(resp.Body) != `{"commit":"abc"}` {
+		t.Errorf("treść: %q, %v", resp.Body, err)
+	}
+	if resp, _ := (Client{}).Get(ctx, loopback.Request{Port: port(t, srv), Path: "/version", Timeout: time.Second, ReadBody: 4}); string(resp.Body) != `{"co` {
+		t.Errorf("limit treści: %q", resp.Body)
+	}
+	if resp, _ := (Client{}).Get(ctx, loopback.Request{Port: port(t, srv), Path: "/version", Timeout: time.Second}); resp.Body != nil {
+		t.Errorf("treść bez żądania: %q", resp.Body)
+	}
+}
+
 // TestBearer: token idzie w nagłówku Authorization tylko wtedy, gdy jest.
 func TestBearer(t *testing.T) {
 	var got []string

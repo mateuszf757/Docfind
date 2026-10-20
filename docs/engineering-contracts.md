@@ -377,13 +377,19 @@ CPU, obrazy z zewnątrz po digeście, sekrety jako wolumen bez subPath. Przestrz
 seccomp `RuntimeDefault` — w API serverze.
 Ruch do podów aplikacji: dziś bez NetworkPolicy w `docfind` [ŻYCZENIE: domyślna odmowa
 z wyjątkami (brama, ESO) — przed pierwszą zależnością stanową w `docfind`, Etap 6, decyzja 67].
+Obraz aplikacji wstaje z ustawieniami poda z charta: system plików tylko do odczytu, zapis tylko
+w emptyDir, bez capabilities, bez eskalacji, użytkownik z charta — i podaje commit na `/version`.
 Egzekwuje: `core/policy` w `dft check charts` — w charcie aplikacji także readOnlyRootFilesystem,
 allowPrivilegeEscalation false, drop ALL, runAsNonRoot, runAsUser różny od 0, seccomp
-RuntimeDefault i automountServiceAccountToken false; PSA w API serverze, `test:cluster` w nocy
-w zadaniu `cluster`. Dowód: log `test`, log `test:cluster`. Warstwa: W1 (render), W4 (klaster). Wariant negatywny: limit CPU w charcie → czerwony `test`;
-readOnlyRootFilesystem false w charcie aplikacji → czerwony `test` (testy `core/policy`,
-`stages/charts`); sonda bez `securityContext` → odrzucona przez API server.
-Decyzja: 16, 20, 31, 44, 55.
+RuntimeDefault i automountServiceAccountToken false; dym obrazu z tymi ustawieniami
+w `check:runtime` (`stages/lifecycle`), a ich zgodność z renderem każdego środowiska w `dft check
+charts` (`policy.APIHardening`); PSA w API serverze, `test:cluster` w nocy w zadaniu `cluster`.
+Dowód: log `lint`, raport `runtime-api.json` (pole `pod`), log `test:cluster`. Warstwa: W1
+(render, obraz), W4 (klaster). Wariant negatywny: limit CPU w charcie → czerwony `lint`;
+readOnlyRootFilesystem false w charcie aplikacji → czerwony `lint` (testy `core/policy`,
+`stages/charts`); chart bez emptyDir na `/tmp` → czerwony `lint`; obraz, który przy starcie
+pisze poza emptyDir → `check:runtime` kod 1 (test z tagiem docker); sonda bez
+`securityContext` → odrzucona przez API server. Decyzja: 16, 20, 31, 44, 55, 72.
 
 **6.5 Poświadczenia w CI.** Tylko `GITHUB_TOKEN` z uprawnieniami na zadanie i OIDC
 w zadaniach atestacji; `persist-credentials: false`; bez `pull_request_target`. Jedyny wyjątek:

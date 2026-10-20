@@ -34,6 +34,25 @@ func runArgs(s container.Spec) []string {
 		// Port hosta przydziela Docker, zawsze na 127.0.0.1 (decyzja 17).
 		args = append(args, "-p", fmt.Sprintf("127.0.0.1::%d", p))
 	}
+	if h := s.Hardening; h != nil {
+		if h.ReadOnlyRoot {
+			args = append(args, "--read-only")
+		}
+		for _, path := range h.Tmpfs {
+			// emptyDir pozwala wykonywać pliki; domyślne noexec Dockera
+			// różniłoby się od poda.
+			args = append(args, "--tmpfs", path+":rw,exec")
+		}
+		if h.CapDropAll {
+			args = append(args, "--cap-drop", "ALL")
+		}
+		if h.NoNewPrivileges {
+			args = append(args, "--security-opt", "no-new-privileges")
+		}
+		if h.User != "" {
+			args = append(args, "--user", h.User)
+		}
+	}
 	if len(s.Entrypoint) > 0 {
 		args = append(args, "--entrypoint", s.Entrypoint[0])
 	}

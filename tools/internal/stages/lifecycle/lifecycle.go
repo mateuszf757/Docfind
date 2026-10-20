@@ -7,6 +7,7 @@ package lifecycle
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -104,6 +105,12 @@ type Checker struct {
 	// Name — przedrostek nazw kontenerów; nazwy są unikalne dla przebiegu,
 	// żeby dwa równoległe biegi nie zatrzymywały sobie kontenerów.
 	Name string
+	// Pod — ustawienia poda z charta (policy.APIHardening); nil — bez dymu
+	// z nimi (decyzja 72).
+	Pod *container.Hardening
+	// Commit — pełny commit obrazu; /version w dymie ma go podać. Pusty —
+	// bez porównania.
+	Commit string
 
 	containers []string
 }
@@ -117,6 +124,7 @@ type Report struct {
 	Refusals              []Refusal `json:"refusals"`
 	Shutdown              *Shutdown `json:"shutdown,omitempty"`
 	Inflight              *Inflight `json:"inflight,omitempty"`
+	Pod                   *PodSmoke `json:"pod,omitempty"`
 	Unmet                 []string  `json:"unmet"`
 	Finished              time.Time `json:"finished"`
 }
@@ -137,6 +145,14 @@ type Shutdown struct {
 	TotalMedian     float64   `json:"total_median_seconds"`
 	OwnSeconds      float64   `json:"own_seconds"`
 	MaxOwnSeconds   float64   `json:"max_own_seconds"`
+}
+
+// PodSmoke — dym z ustawieniami poda z charta (decyzja 72).
+type PodSmoke struct {
+	Settings      string `json:"settings"`
+	Ready         bool   `json:"ready"`
+	VersionStatus int    `json:"version_status,omitempty"`
+	Commit        string `json:"commit,omitempty"`
 }
 
 // Inflight — żądanie w toku w chwili SIGTERM.
@@ -179,6 +195,9 @@ func (c *Checker) Run(ctx context.Context) (rep Report, err error) {
 	if err := c.checkUser(ctx, &rep, fail); err != nil {
 		return rep, err
 	}
+	if err := c.checkPod(ctx, tmp, &rep, fail); err != nil {
+		return rep, err
+	}
 	if err := c.checkRefusals(ctx, tmp, &rep, fail); err != nil {
 		return rep, err
 	}
@@ -217,6 +236,68 @@ func (c *Checker) checkSize(ctx context.Context, tmp string, rep *Report, fail f
 		return nil
 	}
 	cli.Step("rozmiar obrazu rozpakowanego (suma warstw z archiwum): %d B (%.1f MB), limit %d B", size, float64(size)/1e6, limit)
+	return nil
+}
+
+// checkPod — dym z ustawieniami poda z charta (decyzja 72): system plików
+// tylko do odczytu z zapisem tylko w emptyDir, bez capabilities, bez
+// eskalacji, jako użytkownik z charta. Obraz ma wstać (/healthz 200)
+// i podać na /version commit, z którego go zbudowano. Klaster wymusza te
+// ustawienia (decyzja 55); bez dymu aplikacja, która pisze poza /tmp,
+// odpadałaby dopiero na klastrze.
+func (c *Checker) checkPod(ctx context.Context, tmp string, rep *Report, fail func(string, ...any)) error {
+	if c.Pod == nil {
+		return nil
+	}
+	example, err := os.ReadFile(c.ConfigExample)
+	if err != nil {
+		return err
+	}
+	dir, err := configDir(tmp, "pod", string(example))
+	if err != nil {
+		return err
+	}
+	spec := c.app("pod", dir)
+	spec.Hardening = c.Pod
+	smoke := &PodSmoke{Settings: c.Pod.String()}
+	rep.Pod = smoke
+	if err := c.Containers.Start(ctx, spec); err != nil {
+		return err
+	}
+	c.containers = append(c.containers, spec.Name)
+	port, err := c.waitReady(ctx, spec.Name)
+	if err != nil {
+		// Kontener, który padł zaraz po starcie (zapis poza emptyDir,
+		// uprawnienia), nie ma już portu: `docker port` zawodzi przed
+		// pierwszym /healthz. W tym dymie to oczekiwana postać porażki,
+		// a nie awaria narzędzia — awarię Dockera zgłosiły już wcześniejsze
+		// kroki.
+		if ctx.Err() != nil {
+			return err
+		}
+		fail("z ustawieniami poda (%s): kontener nie wstał: %v", smoke.Settings, err)
+		return nil
+	}
+	smoke.Ready = true
+	resp, err := c.HTTP.Get(ctx, loopback.Request{Port: port, Path: "/version", Timeout: 5 * time.Second, ReadBody: 64 << 10})
+	if err != nil {
+		fail("z ustawieniami poda: /version bez odpowiedzi: %v", err)
+		return nil
+	}
+	smoke.VersionStatus = resp.Status
+	var version struct {
+		Commit string `json:"commit"`
+	}
+	_ = json.Unmarshal(resp.Body, &version)
+	smoke.Commit = version.Commit
+	switch {
+	case resp.Status != 200:
+		fail("z ustawieniami poda: /version odpowiedział %d", resp.Status)
+	case c.Commit != "" && version.Commit != c.Commit:
+		fail("z ustawieniami poda: /version podaje commit %q, a obraz jest z %q", version.Commit, c.Commit)
+	default:
+		cli.Step("z ustawieniami poda (%s): /healthz 200, /version z commitem %s", smoke.Settings, version.Commit)
+	}
 	return nil
 }
 
