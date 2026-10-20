@@ -511,6 +511,18 @@ Workflow używa `pull_request`, nie `pull_request_target`, `GITHUB_TOKEN` ma
 w nim tylko odczyt, a metadane PR-a idą przez zmienne środowiskowe zamiast do
 skryptu. Workflowy sprawdzają actionlint i zizmor w `dft test`.
 
+**Korekta (2026-10-20): akcje złożone poza Dependabotem.** Wpis
+`github-actions` z `directory: /` czyta tylko `.github/workflows` i `action.yml`
+w korzeniu, nie akcje złożone z `.github/actions/`. Gdy #51 podniósł
+`upload-artifact` do v7.0.2 w `ci.yml`, akcja `build-image` została przy v7.0.1:
+dwie wersje tej samej akcji w jednym biegu i przypięcie, które starzało się po
+cichu. Teraz wpis ma `directories: ["/", "/.github/actions/*"]`, a `dft check
+workflows` odrzuca akcję złożoną spoza tych katalogów. Grupy działają w każdym
+katalogu osobno, więc ta sama łatka przychodzi osobnym PR-em na katalog.
+`group-by: dependency-name` dałby jeden PR na zależność we wszystkich
+katalogach, ale rozbiłby grupy według typu zmiany — zostaję przy grupach, bo oba
+PR-y przechodzą auto-merge tak samo.
+
 **Co tracę:** łatka, której testy nie pokrywają, wejdzie bez ludzkiego oka —
 bramka jest tak dobra jak CI, a CI nie ćwiczy jeszcze aplikacji na klastrze
 (e2e przychodzi na Etapie 9). Aplikacja GitHuba to nowy sekret z prawem zapisu:

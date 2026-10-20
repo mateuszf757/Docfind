@@ -394,14 +394,16 @@ Decyzja: 22, 49, 64.
 GitHuba), obrazy digestem, narzędzia z `mise.lock` (`locked = true`), charty sumą, moduły Go
 z `go.sum` i tylko z `proxy.golang.org`; cooldown Dependabota 7 dni (major 14).
 Egzekwuje: mise, ustawienie `sha_pinning_required` (`dft repo-settings`), `core/policy`
-(digest), `dft check versions`; obrazy systemowe k3s z archiwum airgap przypiętego sumą
+(digest), `dft check versions`; każda akcja złożona w `directories` Dependabota (`dft check
+workflows`); obrazy systemowe k3s z archiwum airgap przypiętego sumą
 i bramka obrazów na klastrze w `dft cluster` (`stages/deploy`); nadpisania z otoczenia w CI —
 `GOPROXY` i `GOTOOLCHAIN` inne niż w `mise.toml`, `GOFLAGS`, `GONOSUMDB`, `GOINSECURE`,
 `GOPRIVATE`, `GOSUMDB` inny niż `sum.golang.org`, podmiana mise — jako błąd w `dft check
 versions` [ŻYCZENIE: obraz równoważnika obciążenia k3d po tagu]. Dowód: log `test`, log
 `cluster` (obrazy na klastrze). Warstwa: W1, W2. Wariant negatywny: obraz z zewnątrz bez
 `@sha256:` w charcie → czerwony `test`; obraz systemowy spoza archiwum albo z archiwum, ale
-pobierany z sieci → `dft cluster` kod 1; `GONOSUMDB=*` w CI → kod 1 (testy `core/cluster`,
+pobierany z sieci → `dft cluster` kod 1; `GONOSUMDB=*` w CI → kod 1; akcja złożona bez wpisu
+w `directories` Dependabota → czerwony `test` (testy `core/cluster`, `core/workflow`,
 `stages/deploy`, `stages/versions`). Decyzja: 20, 22, 23, 56, 64.
 
 **6.7 Ustawienia repozytorium.** Reguły `main` i tagów, środowiska, auto-merge, push
