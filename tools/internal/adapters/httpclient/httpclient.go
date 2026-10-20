@@ -77,6 +77,13 @@ func (Client) Get(ctx context.Context, r loopback.Request) (loopback.Response, e
 	if err != nil {
 		return loopback.Response{Elapsed: time.Since(started)}, err
 	}
+	var body []byte
+	if r.ReadBody > 0 {
+		if body, err = io.ReadAll(io.LimitReader(resp.Body, r.ReadBody)); err != nil {
+			_ = resp.Body.Close()
+			return loopback.Response{Elapsed: time.Since(started)}, err
+		}
+	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	if err := resp.Body.Close(); err != nil {
 		return loopback.Response{}, err
@@ -85,7 +92,7 @@ func (Client) Get(ctx context.Context, r loopback.Request) (loopback.Response, e
 	for k := range resp.Header {
 		header[k] = resp.Header.Get(k)
 	}
-	return loopback.Response{Status: resp.StatusCode, Header: header, Elapsed: time.Since(started)}, nil
+	return loopback.Response{Status: resp.StatusCode, Header: header, Elapsed: time.Since(started), Body: body}, nil
 }
 
 // Certificate zwraca certyfikat, który serwer podaje w handshake'u z tą

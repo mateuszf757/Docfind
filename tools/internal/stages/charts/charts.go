@@ -261,6 +261,25 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 		}
 	}
 
+	// Dym obrazu w `check:runtime` uruchamia kontener z ustawieniami poda
+	// z policy.APIHardening (build nie ma Helma). Każdy render aplikacji ma
+	// dać te same — inaczej dym sprawdzałby inny kontener niż ten na klastrze
+	// (decyzja 72).
+	for _, name := range appRenders {
+		docs, err := parseFile(filepath.Join(tmp, name+".yaml"))
+		if err != nil {
+			return err
+		}
+		pod, err := policy.PodHardening(docs, "api")
+		if err != nil {
+			return cli.Unmet("render %s: %v", name, err)
+		}
+		if !policy.Same(pod, policy.APIHardening) {
+			return cli.Unmet("render %s: kontener api z ustawieniami: %s, a dym obrazu (check:runtime) uruchamia go z: %s — popraw policy.APIHardening razem z chartem (decyzja 72)", name, pod, policy.APIHardening)
+		}
+	}
+	cli.Step("ustawienia poda api w każdym renderze jak w dymie obrazu: %s", policy.APIHardening)
+
 	// Konfiguracja z values.yaml trafia do ConfigMapy i jest walidowana
 	// dopiero przy starcie poda. Sprawdzamy ją tym samym modelem już tutaj,
 	// w renderze każdego środowiska — zła konfiguracja ma zatrzymać pipeline,

@@ -14,6 +14,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/registry"
 	"github.com/mateuszf757/Docfind/tools/internal/core/artifact"
 	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
+	"github.com/mateuszf757/Docfind/tools/internal/core/policy"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/admission"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/baseimage"
@@ -143,6 +144,13 @@ func runCheckRuntime(ctx context.Context, w *workspace, args []string) error {
 	if err != nil {
 		return err
 	}
+	commit, err := w.git().Commit(ctx)
+	if err != nil {
+		return err
+	}
+	// Ustawienia poda z charta (decyzja 72); ich zgodność z renderem
+	// sprawdza `dft check charts`.
+	pod := policy.APIHardening
 	checker := &lifecycle.Checker{
 		Containers:    w.docker(),
 		HTTP:          httpclient.Client{},
@@ -150,6 +158,8 @@ func runCheckRuntime(ctx context.Context, w *workspace, args []string) error {
 		ConfigExample: filepath.Join(w.root, "deploy", "config", "app.yml.example"),
 		Limits:        limits,
 		Name:          fmt.Sprintf("dft-runtime-%d", os.Getpid()),
+		Pod:           &pod,
+		Commit:        commit,
 	}
 	report, err := checker.Run(ctx)
 	if err == nil {

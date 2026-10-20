@@ -21,6 +21,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/docker"
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/httpclient"
 	"github.com/mateuszf757/Docfind/tools/internal/core/contract"
+	"github.com/mateuszf757/Docfind/tools/internal/core/policy"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 )
@@ -118,4 +119,17 @@ func TestInflightLongerThanGraceIsRejected(t *testing.T) {
 	c.Limits.StopTimeout = 10 * time.Second
 	rep, err := runBounded(t, c)
 	requireUnmet(t, rep, err, "żądanie w locie przy SIGTERM nie zostało dokończone")
+}
+
+// Obraz, który przy starcie pisze poza emptyDir — do /var/tmp, zapisywalnego
+// w obrazie dla każdego: bez ustawień poda wstaje i przechodzi resztę bramki,
+// z nimi pada. Dym z ustawieniami poda ma go odrzucić, zanim zrobi to klaster
+// (decyzja 72).
+func TestWritesOutsideEmptyDirIsRejected(t *testing.T) {
+	c := dockerChecker(t, "zapis-poza-tmp")
+	c.Entrypoint = []string{"/bin/sh", "-c", "touch /var/tmp/zapis && exec python -m docfind_api"}
+	pod := policy.APIHardening
+	c.Pod = &pod
+	rep, err := runBounded(t, c)
+	requireUnmet(t, rep, err, "z ustawieniami poda")
 }

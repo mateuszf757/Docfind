@@ -67,9 +67,10 @@ runs:
       run: ./bin/mise run test:image
 
     # Warunki zakończenia Etapu 1 sprawdzane na artefakcie, nie na kodzie:
-    # rozmiar obrazu, odmowa startu bez konfiguracji i ze złą konfiguracją,
-    # koszt zamykania, żądanie w locie przy SIGTERM. Raport JSON zostaje
-    # w .cache/reports.
+    # rozmiar obrazu, dym z ustawieniami poda z charta (system plików tylko
+    # do odczytu, użytkownik z charta, /version z commitem — decyzja 72),
+    # odmowa startu bez konfiguracji i ze złą konfiguracją, koszt zamykania,
+    # żądanie w locie przy SIGTERM. Raport JSON zostaje w .cache/reports.
     - name: warunki zakończenia etapu
       shell: bash
       run: ./bin/mise run check:runtime

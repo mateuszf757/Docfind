@@ -10,8 +10,10 @@ package policy
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
+	"github.com/mateuszf757/Docfind/tools/internal/core/container"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/manifest"
 )
 
@@ -214,4 +216,91 @@ func boolIn(field string, container, pod map[string]any) bool {
 
 func profile(sc map[string]any) string {
 	return manifest.String(manifest.Map(sc, "seccompProfile"), "type")
+}
+
+// APIHardening — ustawienia bezpieczeństwa kontenera api z charta
+// (deploy/charts/docfind), z którymi dym obrazu w `check:runtime` uruchamia
+// kontener (decyzja 72). Build obrazu nie ma Helma, więc ustawienia są
+// tutaj, a zgodność z renderem charta sprawdza stages/charts — zmiana
+// w charcie bez zmiany tutaj to czerwony `lint`.
+var APIHardening = container.Hardening{
+	ReadOnlyRoot:    true,
+	Tmpfs:           []string{"/tmp"},
+	CapDropAll:      true,
+	NoNewPrivileges: true,
+	User:            "10001:10001",
+}
+
+// PodHardening — ustawienia bezpieczeństwa kontenera name z workloadów
+// w manifestach: kontekst kontenera i poda (runAsUser, runAsGroup) oraz
+// wolumeny emptyDir jako miejsca zapisu. Kontener w kilku workloadach musi
+// mieć wszędzie te same.
+func PodHardening(manifests []map[string]any, name string) (container.Hardening, error) {
+	var found []container.Hardening
+	for _, m := range manifests {
+		spec := podSpec(m)
+		if spec == nil {
+			continue
+		}
+		emptyDirs := map[string]bool{}
+		for _, v := range manifest.List(spec, "volumes") {
+			if vol, _ := v.(map[string]any); vol != nil && vol["emptyDir"] != nil {
+				emptyDirs[manifest.String(vol, "name")] = true
+			}
+		}
+		pod := manifest.Map(spec, "securityContext")
+		for _, c := range manifest.List(spec, "containers") {
+			ctr, _ := c.(map[string]any)
+			if manifest.String(ctr, "name") != name {
+				continue
+			}
+			sc := manifest.Map(ctr, "securityContext")
+			h := container.Hardening{CapDropAll: dropsAll(manifest.Map(sc, "capabilities"))}
+			if v, ok := sc["readOnlyRootFilesystem"].(bool); ok && v {
+				h.ReadOnlyRoot = true
+			}
+			if v, ok := sc["allowPrivilegeEscalation"].(bool); ok && !v {
+				h.NoNewPrivileges = true
+			}
+			if uid := securityField("runAsUser", sc, pod); uid != "" {
+				h.User = uid
+				if gid := securityField("runAsGroup", sc, pod); gid != "" {
+					h.User += ":" + gid
+				}
+			}
+			for _, vm := range manifest.List(ctr, "volumeMounts") {
+				if mount, _ := vm.(map[string]any); emptyDirs[manifest.String(mount, "name")] {
+					h.Tmpfs = append(h.Tmpfs, manifest.String(mount, "mountPath"))
+				}
+			}
+			slices.Sort(h.Tmpfs)
+			found = append(found, h)
+		}
+	}
+	if len(found) == 0 {
+		return container.Hardening{}, fmt.Errorf("brak kontenera %s w workloadach renderu", name)
+	}
+	for _, h := range found[1:] {
+		if !Same(h, found[0]) {
+			return container.Hardening{}, fmt.Errorf("kontener %s ma różne ustawienia w workloadach: %s i %s", name, found[0], h)
+		}
+	}
+	return found[0], nil
+}
+
+// Same — te same ustawienia poda.
+func Same(a, b container.Hardening) bool {
+	return a.ReadOnlyRoot == b.ReadOnlyRoot && a.CapDropAll == b.CapDropAll && a.NoNewPrivileges == b.NoNewPrivileges &&
+		a.User == b.User && slices.Equal(a.Tmpfs, b.Tmpfs)
+}
+
+// securityField — pole kontekstu kontenera, a bez niego poda.
+func securityField(field string, container, pod map[string]any) string {
+	if v, ok := container[field]; ok {
+		return fmt.Sprint(v)
+	}
+	if v, ok := pod[field]; ok {
+		return fmt.Sprint(v)
+	}
+	return ""
 }

@@ -24,6 +24,9 @@ type Request struct {
 	Timeout time.Duration
 	// Bearer — token w nagłówku Authorization; pusty — bez nagłówka.
 	Bearer sensitive.Value
+	// ReadBody — ile bajtów odpowiedzi zachować w Response.Body; 0 — treść
+	// odrzucana (pętle sond nie buforują odpowiedzi).
+	ReadBody int64
 }
 
 // URL — adres żądania, do komunikatów i nagłówka Location.
@@ -57,4 +60,6 @@ type Response struct {
 	// Elapsed — czas od wysłania do przeczytania całej odpowiedzi (zegar
 	// monotoniczny).
 	Elapsed time.Duration
+	// Body — początek treści, gdy Request.ReadBody > 0.
+	Body []byte
 }
