@@ -9,7 +9,7 @@
 #
 # full — narzędzia, moduły i kompilacja Go w obrazie — dopiero na progi
 # z decyzji 69.
-FROM ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac AS light
+FROM ubuntu:25.10@sha256:7cc5e35f6567ee8c66d2abb4aab0fd866669e6207c237c3a8f0947a5c7f17092 AS light
 
 # Pakiety z migawki archiwum Ubuntu o ustalonej dacie: ten sam Dockerfile
 # daje te same wersje pakietów, dopóki data się nie zmieni. Migawka idzie
