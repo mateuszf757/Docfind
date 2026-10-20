@@ -11,6 +11,7 @@ package gitops
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	semver "github.com/Masterminds/semver/v3"
@@ -67,6 +68,27 @@ func Latest(constraint string, tags []string) (string, error) {
 		return "", fmt.Errorf("żadna z %d wersji w repozytorium charta nie spełnia zakresu %q", len(tags), constraint)
 	}
 	return latest.Original(), nil
+}
+
+// Descending — tagi wersji SemVer od najwyższej, w zapisie z repozytorium
+// („_” zamiast „+”); tagi spoza SemVer (np. podpisy sha256-…) pominięte.
+func Descending(tags []string) []string {
+	type tagged struct {
+		tag string
+		v   *semver.Version
+	}
+	var list []tagged
+	for _, tag := range tags {
+		if v, err := semver.NewVersion(strings.ReplaceAll(tag, "_", "+")); err == nil {
+			list = append(list, tagged{tag, v})
+		}
+	}
+	slices.SortStableFunc(list, func(a, b tagged) int { return b.v.Compare(a.v) })
+	out := make([]string, len(list))
+	for i, t := range list {
+		out[i] = t.tag
+	}
+	return out
 }
 
 // Newer mówi, czy wersja a jest wyższa od b w porządku SemVer. Napis spoza

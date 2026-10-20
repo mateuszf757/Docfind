@@ -1,6 +1,7 @@
 package gitops
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -167,5 +168,13 @@ func TestNewer(t *testing.T) {
 		if got := Newer(tc.a, tc.b); got != tc.want {
 			t.Errorf("Newer(%q, %q) = %v", tc.a, tc.b, got)
 		}
+	}
+}
+
+func TestDescending(t *testing.T) {
+	got := Descending([]string{"0.3.2-dev.9", "sha256-abc", "0.3.2-dev.44", "0.3.1", "0.3.2-dev.10", "0.4.0-dev.1_abc"})
+	want := []string{"0.4.0-dev.1_abc", "0.3.2-dev.44", "0.3.2-dev.10", "0.3.2-dev.9", "0.3.1"}
+	if !slices.Equal(got, want) {
+		t.Errorf("Descending = %q, oczekiwano %q", got, want)
 	}
 }

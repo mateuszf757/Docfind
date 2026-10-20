@@ -249,6 +249,10 @@ func (f fakeCharts) Install(_ context.Context, _ cluster.Target, r cluster.Relea
 	if r.Name == "docfind" && strings.HasSuffix(r.Chart, ".tgz") {
 		values = append(values, "chart="+filepath.Base(r.Chart))
 	}
+	// Chart z rejestru w wersji (upgrade do N-1, decyzja 79).
+	if r.Version != "" {
+		values = append(values, "chart="+r.Chart+":"+r.Version)
+	}
 	return f.call("install %s %s", r.Name, strings.Join(values, " "))
 }
 

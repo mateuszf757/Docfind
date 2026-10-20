@@ -275,6 +275,7 @@ i bez sudo.
 ./bin/mise run cluster:rotation   # warunek zakończenia Etapu 4: rotacja sekretu do podów bez restartu
 ./bin/mise run check:openbao      # OpenBao: repliki, Raft, restart standby bez człowieka
 ./bin/mise run cluster:identity   # na każdym podzie obraz, commit z obrazu i wersja wdrożenia
+./bin/mise run cluster:upgrade    # upgrade N-1 → N i rollback pod ruchem; N-1 — chart z rejestru
 ./bin/mise run test:cluster       # to, co API server ma odrzucić (sonda bez securityContext)
 ./bin/mise run cluster:evidence   # dowody z klastra do .cache/reports (jak artefakt w CI)
 ./bin/mise run ci:trial           # okres próbny zadań cluster i vulns: serie zielonych biegów na main

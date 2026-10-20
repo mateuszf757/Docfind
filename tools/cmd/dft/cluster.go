@@ -32,6 +32,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/stages/evidence"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/identity"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/ingress"
+	"github.com/mateuszf757/Docfind/tools/internal/stages/upgrade"
 )
 
 // sourceArgs czyta, skąd wziąć obraz: bez flag — z definicji środowiska
@@ -125,7 +126,7 @@ func (w *workspace) deployer(def environment.Definition) (deploy.Deployer, error
 			}
 			return c, nil
 		},
-		Builder: w.builder(), Admission: w.admission(), Versions: w.git(), ChartRegistry: registry.Client{},
+		Builder: w.builder(), Admission: w.admission(), Versions: w.git(), ChartRegistry: registry.Client{}, AppChart: chartName(),
 		Download: func(ctx context.Context, url, sha string) (string, error) {
 			return fetch.URL(ctx, w.root, url, sha)
 		},
@@ -276,12 +277,51 @@ func runCheckRollout(ctx context.Context, w *workspace, args []string) error {
 	if err != nil {
 		return err
 	}
-	checker := &ingress.Checker{Cluster: c, Edge: httpclient.Client{}, Cfg: ingress.Config{
+	report, err := trafficChecker(def, c).Rollout(ctx, def.App.Release+"-api", 3*time.Minute)
+	return w.withReport("rollout-"+def.Name, report, err)
+}
+
+// runCheckUpgrade — upgrade z N-1 do N i rollback pod ruchem przez bramę,
+// z tożsamością na podach po każdym przejściu (decyzja 79). N-1 to chart
+// z rejestru z obrazem z innego commita, przyjęty polityką środowiska.
+func runCheckUpgrade(ctx context.Context, w *workspace, args []string) error {
+	if err := expectArgs(args, 0, 0, "dft check upgrade"); err != nil {
+		return err
+	}
+	def, err := w.environmentOf()
+	if err != nil {
+		return err
+	}
+	if err := requireTools("kubectl", "helm"); err != nil {
+		return err
+	}
+	d, err := w.deployer(def)
+	if err != nil {
+		return err
+	}
+	if err := d.RequireChartInstall(); err != nil {
+		return err
+	}
+	c, err := w.connect(def)
+	if err != nil {
+		return err
+	}
+	gate := &upgrade.Gate{
+		Releases: w.helm(), Charts: d, Traffic: trafficChecker(def, c), Pods: c,
+		Target: def.Target(w.root), Namespace: def.App.Namespace, Release: def.App.Release,
+		Deployment: def.App.Release + "-api", Container: "api", Wait: 3 * time.Minute,
+	}
+	report, err := gate.Run(ctx)
+	return w.withReport("upgrade-"+def.Name, report, err)
+}
+
+// trafficChecker — akcja na aplikacji pod ruchem HTTPS przez bramę
+// środowiska: rolling update, upgrade, rollback.
+func trafficChecker(def environment.Definition, c *kube.Cluster) *ingress.Checker {
+	return &ingress.Checker{Cluster: c, Edge: httpclient.Client{}, Cfg: ingress.Config{
 		GatewayNamespace: def.Gateway.Namespace, Gateway: def.Gateway.Name, AppNamespace: def.App.Namespace,
 		Route: def.App.Release + "-api", HTTPPort: def.Cluster.Ports.HTTP, HTTPSPort: def.Cluster.Ports.HTTPS,
 	}}
-	report, err := checker.Rollout(ctx, def.App.Release+"-api", 3*time.Minute)
-	return w.withReport("rollout-"+def.Name, report, err)
 }
 
 // ingressGate składa i uruchamia bramkę wejścia (TLS i odnowienie

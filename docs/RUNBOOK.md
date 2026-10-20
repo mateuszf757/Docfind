@@ -241,7 +241,8 @@ a PR z nią idzie zaraz potem. Powrót do śledzenia: `">=0.0.0-0"`.
 Czasu cofnięcia nikt jeszcze nie zmierzył. Przy pierwszym użyciu zapisz
 czas od zmiany definicji do `Synced <przypięta wersja> Healthy` i zielonego
 `cluster:identity` — dla porównania warunek Etapu 10 to `helm rollback`
-u klienta w < 15 min.
+u klienta w < 15 min. Samo przejście `helm rollback` pod ruchem mierzy nocą
+`cluster:upgrade` w `ci`: `rollout_seconds` w `upgrade-ci.json`.
 
 ### Ręczna zmiana „nie trzyma się"
 
@@ -385,8 +386,8 @@ a w repozytorium publicznym wyłącza go po 60 dniach bez aktywności.
   `./bin/mise exec -- gh workflow enable ci.yml`;
 - noc ręcznie: `./bin/mise exec -- gh workflow run ci.yml --ref main`.
   `workflow_dispatch` biegnie jak noc: W1 i W2, raport podatności
-  z wygasającymi wyjątkami, dryf ustawień, budżety, rolling update pod
-  ruchem i negatywy na klastrze.
+  z wygasającymi wyjątkami, dryf ustawień, budżety, rolling update,
+  upgrade N-1 → N i rollback pod ruchem oraz negatywy na klastrze.
 
 Bieg ręczny daje nocne sprawdzenia, ale nie dowodzi, że harmonogram działa.
 `main-health` i `ci:trial` liczą tylko biegi `schedule`, więc issue zamknie

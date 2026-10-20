@@ -6,12 +6,15 @@ package helm
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
+	"time"
 
 	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
 	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
@@ -29,6 +32,9 @@ type Helm struct {
 
 func valueArgs(r cluster.Release) []string {
 	var args []string
+	if r.Version != "" {
+		args = append(args, "--version", r.Version)
+	}
 	if r.Namespace != "" {
 		args = append(args, "--namespace", r.Namespace)
 	}
@@ -60,6 +66,32 @@ func (h Helm) Install(ctx context.Context, t cluster.Target, r cluster.Release) 
 	args = append(args, wait, "--timeout", r.Timeout.String(), "--kubeconfig", t.Kubeconfig, "--kube-context", t.Context)
 	if _, err := h.Runner.Run(ctx, proc.Cmd{Name: "helm", Args: args, Stdout: h.Out, Stderr: h.Err}); err != nil {
 		return fmt.Errorf("helm upgrade --install %s: %w", r.Name, err)
+	}
+	return nil
+}
+
+// Revision — numer bieżącej rewizji release (`helm status -o json`).
+func (h Helm) Revision(ctx context.Context, t cluster.Target, namespace, release string) (int, error) {
+	out, err := proc.Output(ctx, h.Runner, proc.Cmd{Name: "helm", Args: []string{"status", release, "--namespace", namespace, "--output", "json", "--kubeconfig", t.Kubeconfig, "--kube-context", t.Context}})
+	if err != nil {
+		return 0, fmt.Errorf("helm status %s: %w", release, err)
+	}
+	var status struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal([]byte(out), &status); err != nil || status.Version < 1 {
+		return 0, fmt.Errorf("helm status %s: nieczytelna rewizja (%v)", release, err)
+	}
+	return status.Version, nil
+}
+
+// Rollback cofa release do rewizji revision i czeka na gotowość zasobów,
+// jak Install. Rollback to nowa rewizja z manifestem tamtej — na klastrze te
+// same operacje co upgrade do niej.
+func (h Helm) Rollback(ctx context.Context, t cluster.Target, namespace, release string, revision int, timeout time.Duration) error {
+	args := []string{"rollback", release, strconv.Itoa(revision), "--namespace", namespace, "--wait=watcher", "--timeout", timeout.String(), "--kubeconfig", t.Kubeconfig, "--kube-context", t.Context}
+	if _, err := h.Runner.Run(ctx, proc.Cmd{Name: "helm", Args: args, Stdout: h.Out, Stderr: h.Err}); err != nil {
+		return fmt.Errorf("helm rollback %s %d: %w", release, revision, err)
 	}
 	return nil
 }

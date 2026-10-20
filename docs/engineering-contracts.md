@@ -151,7 +151,7 @@ wersji charta w trakcie → kod 1, bez tagu; kod bramek z niezatwierdzonymi zmia
 | W1 szybka | PR, push `main`, noc | równolegle: `lint` — wersje, workflowy, kontrakt, gitleaks na historii, Python, charty z politykami; `test` — Go z `-race`, pokrycie, govulncheck; `build` albo `build-publish` — obraz, baza, testy na musl, warunki Etapu 1, powtarzalność; `negatives` — warianty negatywne; `tools` — powtarzalność narzędzi; `vulns` — skan obrazu zaraz po `build` | 6 min [ŻYCZENIE: p95 2026-10-17 — 15,3 min na PR-ach, 15,6 na push; biegi sprzed zrównoleglenia] | tak: `fast-feedback` |
 | W2 integracja przed scaleniem | PR, push `main`, noc | `plan` — profil zmiany (§3.7, na PR-ach); po `lint`, `test` i `build`: `cluster` — klaster `ci`, wdrożenie, tożsamość, drain każdego węzła, OpenBao, rotacja, TLS, dowody | 20 min [ŻYCZENIE: p95 2026-10-17 — 23,1 min na PR-ach, 22,5 na push] | tak: `integration` |
 | W3 po scaleniu | push `main` | `attest`, `chart`, `attest-chart`: pochodzenie i SBOM, atestacja, chart OCI z digestem przetestowanym | 30 min (p95 2026-10-17: 27,9 min) | nie (czerwony → §3.6) |
-| W4 noc | `schedule`, `workflow_dispatch` | W1 i W2 na `main`; `vulns-issue` z wyjątkami wygasającymi w ciągu tygodnia; `settings-drift`; `main-health` (także na push); w `cluster`: rolling update pod ruchem i negatywy na klastrze [ŻYCZENIE: upgrade N-1 → N] | 40 min (p95 2026-10-17: 17,1 min) | nie |
+| W4 noc | `schedule`, `workflow_dispatch` | W1 i W2 na `main`; `vulns-issue` z wyjątkami wygasającymi w ciągu tygodnia; `settings-drift`; `main-health` (także na push); w `cluster`: rolling update, upgrade N-1 → N i rollback pod ruchem, negatywy na klastrze | 40 min (p95 2026-10-17: 17,1 min) | nie |
 | W5 wydanie | tag `vX.Y.Z` | `release`, `attest-release`, `vulns` z polityką wydania, `promote` po zgodzie | 10 min do oczekiwania na zgodę (jeden bieg: 1,4 min) | nie (zatwierdza autor) |
 
 Egzekwuje: `dft check workflows` — zadanie workflowu ci bez warstwy w `core/ci` to błąd;
@@ -323,19 +323,26 @@ samonaprawy — zmiana nie wraca w budżecie → NIESPEŁNIONE. Decyzja: 46.
 
 **5.7 Upgrade bez przestoju.** Rolling update aplikacji pod ruchem przez Gateway: przestój
 (najdłuższa przerwa między udanymi odpowiedziami) ≤ Z, 0 nieudanych żądań — progi w §10
-(w drainach zmierzono najdłuższą przerwę 0,17–0,25 s). Upgrade charta N-1 → N i synchronizacja
-Argo CD idą tą samą ścieżką rolling update; rollback przez przypięcie wersji ≤ 15 min od
-decyzji do `Synced`. Konfiguracja aplikacji stoi w ConfigMapie z sumą treści w nazwie,
+(w drainach zmierzono najdłuższą przerwę 0,17–0,25 s). Upgrade charta N-1 → N, rollback Helmem
+i synchronizacja Argo CD idą tą samą ścieżką rolling update, a po każdym przejściu każdy pod
+podaje tożsamość wersji docelowej (§5.8); rollback przez przypięcie wersji ≤ 15 min od decyzji
+do `Synced`. Konfiguracja aplikacji stoi w ConfigMapie z sumą treści w nazwie,
 niezmiennej (`immutable: true`): stary pod w trakcie rolloutu i po rollbacku czyta swoją
 konfigurację, a nie nową.
 Egzekwuje: `cluster:rollout` (`stages/ingress`) — restart Deploymentu pod pętlą HTTPS przez
-bramę, w nocy w zadaniu `cluster`; niezmienna ConfigMapa charta aplikacji — `core/policy`
-w `dft check charts` [ŻYCZENIE: upgrade z charta N-1 z rejestru do N z kluczem dodanym w N
-i restartem starego poda w trakcie; synchronizacja Argo CD na stagingu]. Dowód: `rollout-<env>.json`, log `test`. Warstwa: W1 (render), W4. Wariant negatywny: błędy
-w trakcie rolloutu albo przerwa 1,2 s bez błędu → kod 1 (testy `stages/ingress`); ConfigMapa
-aplikacji bez `immutable` → czerwony `test` (testy `core/policy`, `stages/charts`)
-[ŻYCZENIE: chart N z opóźnieniem zaślepki dłuższym niż grace → czerwony na klastrze].
-Decyzja: 13, 45, 46, 60, 63.
+bramę, w nocy w zadaniu `cluster`; `cluster:upgrade` (`stages/upgrade`) — w nocy po rolloucie:
+upgrade do N-1 (chart z rejestru z obrazem z innego commita, przyjętym polityką środowiska),
+upgrade N-1 → N i rollback N → N-1 przez `helm rollback`, każde pod tą samą pętlą
+i z tożsamością na podach; niezmienna ConfigMapa charta aplikacji — `core/policy`
+w `dft check charts` [ŻYCZENIE: restart starego poda w trakcie upgrade'u z kluczem dodanym
+w N; synchronizacja Argo CD na stagingu]. Dowód: `rollout-<env>.json`, `upgrade-<env>.json`,
+log `test`. Warstwa: W1 (render), W4. Wariant negatywny: błędy w trakcie rolloutu albo przerwa
+1,2 s bez błędu → kod 1 (testy `stages/ingress`); pody przy starej wersji po przejściu albo
+nieudane żądania przy rollbacku → kod 1, brak N-1 w rejestrze → kod 1 bez zmiany klastra
+(testy `stages/upgrade`, `stages/deploy`); ConfigMapa aplikacji bez `immutable` → czerwony
+`test` (testy `core/policy`, `stages/charts`) [ŻYCZENIE: chart N z opóźnieniem zaślepki
+dłuższym niż grace → czerwony na klastrze].
+Decyzja: 13, 45, 46, 60, 63, 79.
 
 **5.8 Tożsamość artefaktu.** Każdy pod aplikacji ma obraz z Deploymentu, commit z obrazu
 i `DOCFIND_VERSION` z Deploymentu; liczba podów = repliki.
@@ -610,7 +617,7 @@ docelowe bez strażnika (budżety warstw, Z, pokrycie) stoją w klauzulach, w zn
 | §5.4 | żądania HTTPS w trakcie odnowienia | ≥ 50, 0 nieudanych, 0 restartów proxy | cmd/dft (tls) |
 | §5.4 | nowy certyfikat na proxy (Y) | ≤ 1m0s od odnowienia, potwierdzony 20 kolejnymi pełnymi handshake'ami | stages/ingress |
 | §5.5 | faza rotacji sekretu na podzie | ≤ 4m0s | cmd/dft (rotation) |
-| §5.7 | przestój w rolling update przez bramę (Z) | ≤ 1s, ≥ 100 żądań, 0 nieudanych | stages/ingress (rollout) |
+| §5.7 | przestój w rolling update, upgradzie i rollbacku przez bramę (Z) | ≤ 1s, ≥ 100 żądań, 0 nieudanych w każdym przejściu | stages/ingress (rollout), stages/upgrade |
 | §5.6 | samonaprawa jednej zmiany | ≤ 1m0s | cmd/dft (selfheal) |
 | §6.1 | pokrycie pakietu: stages / core / adapters / kit | ≥ 70% / 70% / 55% / 60% instrukcji (z -coverpkg) | stages/gocode |
 | §6.2 | punkt odniesienia skanu obrazu na PR-ze | obraz commita bazowego albo najbliższego z 10 przodków | stages/vulns |

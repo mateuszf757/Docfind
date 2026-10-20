@@ -97,6 +97,36 @@ func Verify(ctx context.Context, c Cluster, namespace, deployment, container str
 	return results, nil
 }
 
+// Current — tożsamość tego, co stoi teraz na podach Deploymentu: obraz
+// z pierwszego niewygaszanego poda, wersja i commit z jego /version.
+// Upgrade i rollback (decyzja 79) wracają do niej po przejściu przez inną
+// wersję — Verify z wynikiem sprawdza wtedy każdy pod.
+func Current(ctx context.Context, c Cluster, namespace, deployment, container string) (artifact.Expected, error) {
+	rollout, err := c.Rollout(ctx, namespace, deployment)
+	if err != nil {
+		return artifact.Expected{}, err
+	}
+	pods, err := c.Pods(ctx, namespace, rollout.Selector)
+	if err != nil {
+		return artifact.Expected{}, fmt.Errorf("pody %s: %w", rollout.Selector, err)
+	}
+	for _, p := range pods {
+		if p.Terminating {
+			continue
+		}
+		raw, err := c.ProxyGet(ctx, namespace, p.Name, "8000", "/version")
+		if err != nil {
+			return artifact.Expected{}, fmt.Errorf("%s: /version: %w", p.Name, err)
+		}
+		var r Reported
+		if err := json.Unmarshal(raw, &r); err != nil {
+			return artifact.Expected{}, fmt.Errorf("%s: nieczytelne /version: %w", p.Name, err)
+		}
+		return artifact.Expected{Image: p.Images[container], Version: r.Version, Commit: r.Commit}, nil
+	}
+	return artifact.Expected{}, cli.Unmet("Deployment %s nie ma działającego poda", deployment)
+}
+
 // Registry — publikacja w rejestrze (adapters/registry).
 type Registry interface {
 	Inspect(ctx context.Context, ref string) (artifact.Publication, error)
