@@ -3155,6 +3155,54 @@ regułę — to rozstrzyga człowiek przy przeglądzie rozjazdu.
 przechodzi w nadzór: rozjazd po włączeniu to błąd, który przeszedł na
 `main` bez klastra — wtedy czerwona noc zamiast ostrzeżenia.
 
+## 78. Obraz ci-light: mise i podstawy, `-race` lokalnie bez sudo
+
+> Krok 13 planu z `docs/ANALIZA-CI-NARZEDZIA-I-WARSTWY.md` (§5.4). Pierwszy
+> z dwóch obrazów CI z decyzji 69; pełny czeka na progi.
+
+**Wybieram obraz lekki do zadań mise w kontenerze, na razie lokalnie.**
+Obraz `ci-light` (`ci/images/Dockerfile`, etap `light`) zawiera:
+- system jak runner GitHuba: Ubuntu 24.04 przypięte digestem, wydanie
+  sprzed 18 dni;
+- podstawy z migawki archiwum Ubuntu o ustalonej dacie: ten sam Dockerfile
+  daje te same wersje pakietów;
+- gcc i libc6-dev — dla cgo, którego wymaga `-race`;
+- mise przez launcher repozytorium — wersja i suma z `bin/mise`.
+
+`./bin/mise run ci:container -- <zadanie> [argumenty]` uruchamia zadanie
+w tym obrazie z repozytorium pod tą samą ścieżką. Narzędzia z `.mise`
+repozytorium działają bez zmian, a pamięć podręczna Go leży w
+`~/.cache/docfind-ci`. Tag obrazu to suma jego plików, więc obraz buduje się
+przy pierwszym użyciu i po ich zmianie. Docker rootless mapuje roota
+kontenera na użytkownika hosta; klasyczny dostaje `--user` z uid i gid.
+
+Domyka lukę z WYMAGAŃ: wyścig w kodzie Go wychodził dopiero w CI, bo gcc na
+hoście wymaga sudo. Teraz `./bin/mise run ci:container -- test --part go`
+daje `-race` lokalnie. Zmierzone na tym repozytorium:
+- pierwszy bieg — 197 s (obraz z warstw w pamięci BuildKitu i zimna
+  kompilacja z `-race`);
+- drugi — 15 s;
+- pliki raportów należą do użytkownika hosta.
+
+**Migawka bywa zawodna.** Pierwszy build dostał `502 Bad Gateway` od
+`snapshot.ubuntu.com` dla `noble-updates` i `noble-security`; po chwili
+odpowiadała, ale po 5–7 s na plik, i build trwał 428 s. Migawka idzie przez
+HTTPS, więc `ca-certificates` przychodzi najpierw ze zwykłego archiwum —
+jedyny pakiet bez ustalonej daty. W CI obrazu nie używam (§5.4 analizy):
+na runnerze GitHuba nie przyspiesza zadań, a dokładałby pobranie obrazu.
+
+**Co tracę:**
+- 637 MB obrazu w magazynie Dockera i ~3 GB pamięci podręcznej Go
+  w `~/.cache/docfind-ci`;
+- w kontenerze nie ma Dockera: build, warianty negatywne i klaster biegną
+  na hoście;
+- build zależy od migawki archiwum Ubuntu.
+
+**Kiedy zmieniam zdanie:** gdy migawka zawiedzie przy dwóch buildach z rzędu
+— zwykłe archiwum, z wersjami pakietów w raporcie zamiast daty. Gdy próg
+z decyzji 69 zostanie przekroczony — etap `full` z narzędziami i kompilacją
+Go, także w CI.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

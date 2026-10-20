@@ -53,7 +53,8 @@ updates:
 
   # Obrazy bazowe w FROM, razem z digestami.
   - package-ecosystem: docker
-    directory: /services/api
+    # Obraz aplikacji i obrazy środowiska CI (ci/images, decyzja 78).
+    directories: ["/services/api", "/ci/images"]
     schedule:
       interval: weekly
     cooldown:

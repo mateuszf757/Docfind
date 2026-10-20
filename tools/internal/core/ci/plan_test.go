@@ -13,6 +13,7 @@ func TestClassify(t *testing.T) {
 		"README.md":                                    ProfileFast,
 		".github/rulesets/main.json":                   ProfileFast,
 		"ci/vuln-exceptions.yaml":                      ProfileFast,
+		"ci/images/Dockerfile":                         ProfileFast,
 		"services/api/uv.lock":                         ProfileMedium,
 		"services/api/Dockerfile":                      ProfileMedium,
 		"deploy/config/app.yml.example":                ProfileMedium,

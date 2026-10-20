@@ -530,10 +530,13 @@ kod 2, nie 1. Decyzja: 23.
 lokalnie i w CI dla tego samego wejścia jest błędem bramki.
 Egzekwuje: `./bin/mise run ci` (te same zadania), `dft check versions`, tryb `dft test`
 wybierany w `dft` z argumentów, a nie w workflowie; rozmiar obrazu liczony z warstw archiwum,
-nie z magazynu demona (§4.4) [ŻYCZENIE: porównanie pozostałych miar lokalnych z podsumowaniem
-biegu]. Dowód: raporty `.cache/reports` i podsumowanie biegu. Warstwa: W1. Wariant negatywny:
-ten sam obraz w magazynie containerd i overlay2 daje ten sam rozmiar (testy `kit/ociarchive`,
-`stages/lifecycle`). Decyzja: 23, 65.
+nie z magazynu demona (§4.4); testy Go z `-race` lokalnie w obrazie `ci-light`, gdy hostowi
+brakuje kompilatora C (`./bin/mise run ci:container -- test --part go`) [ŻYCZENIE: porównanie
+pozostałych miar lokalnych z podsumowaniem biegu]. Dowód: raporty `.cache/reports`
+i podsumowanie biegu. Warstwa: W1. Wariant negatywny: ten sam obraz w magazynie containerd
+i overlay2 daje ten sam rozmiar (testy `kit/ociarchive`, `stages/lifecycle`); niespełniona
+bramka w kontenerze to kod 1 na hoście, a nie sukces ani awaria (testy `cmd/dft`).
+Decyzja: 23, 65, 78.
 
 **8.6 Każda nowa funkcja CI** ma warstwę, budżet, wariant negatywny i okres próbny (§3), a jej
 wprowadzenie — wpis w DECYZJE (§8.3).
