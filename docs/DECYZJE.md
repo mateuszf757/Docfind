@@ -3087,6 +3087,42 @@ Pomijanie (krok 9) wchodzi po 20 biegach cienia bez rozjazdu: żaden czerwony
 z profilem fast albo medium — najpierw reguła, potem włączenie. Gdy pojawi
 się kolejka scalania — heavy w kolejce zamiast na PR-ze.
 
+## 76. Profil smoke klastra: mniej bramek, ta sama topologia
+
+> Krok 8 planu z `docs/ANALIZA-CI-NARZEDZIA-I-WARSTWY.md` (§8.4). Szablon
+> chce w warstwie Medium „lżejszy klaster jednowęzłowy”.
+
+**Wybieram lżejszy zestaw bramek zamiast lżejszej topologii.** Jednowęzłowy
+klaster nie zmieści platformy: OpenBao ma trzy repliki po jednej na węzeł
+(anti-affinity z charta). Inne wartości to nowe środowisko z inną topologią,
+wbrew decyzji 35 i parytetowi z §2.4. Zysk i tak byłby mały — z ~5 minut
+zakładania klastra cztery to gotowość kolejnych komponentów, a pobrania
+obrazów trwają 1–3,6 s (zdarzenia z biegu PR #80).
+
+Profil `smoke` zadania `cluster` to:
+- to samo środowisko `ci`, trzy węzły, ta sama platforma i render;
+- wdrożenie z tożsamością na każdym podzie;
+- TLS przez bramę — jedyna bramka, która idzie przez Envoya end-to-end;
+- tożsamość i dowody.
+
+Bez drainu (~90 s), OpenBao po drainach (~25 s) i rotacji (~175 s), więc
+~5 min zamiast ~9,5 min [szacunek]. Profil `full` to wszystko jak dotąd.
+Zmienną `CLUSTER_PROFILE` czytają warunki kroków. Dopóki plan jest w trybie
+cienia (decyzja 75), profil to zawsze `full`; wybór wg profilu zmiany
+(medium → smoke) włącza krok 9. Test na prawdziwym `ci.yml` pilnuje, które
+kroki należą tylko do `full`.
+
+**Co tracę:**
+- PR z profilem medium (aplikacja, jej zależności) nie przejdzie drainu
+  i rotacji przed scaleniem. Złapie je `full` na pushu na `main`, zanim
+  chart trafi na staging (decyzja 61), i noc. Do tego dym z ustawieniami
+  poda (decyzja 72) i bramki zamykania z Etapu 1 pokrywają to, co w drainie
+  zależy od aplikacji;
+- jeszcze jedna zmienna w workflowie, czytana tylko przez warunki kroków.
+
+**Kiedy zmieniam zdanie:** gdy `full` na `main` złapie błąd zmiany
+aplikacji, który smoke przepuścił — wtedy medium dostaje drain.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

@@ -160,3 +160,39 @@ func TestRepositoryCacheRules(t *testing.T) {
 		}
 	}
 }
+
+// Profil smoke klastra (decyzja 76): drain, OpenBao po drainach i rotacja
+// tylko w profilu full; wdrożenie, TLS przez bramę, tożsamość i dowody —
+// w obu.
+func TestRepositoryClusterProfile(t *testing.T) {
+	workflows, err := Load("../../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cluster *Job
+	for _, w := range workflows {
+		if j, ok := w.Jobs["cluster"]; ok {
+			cluster = &j
+		}
+	}
+	if cluster == nil {
+		t.Fatal("brak zadania cluster")
+	}
+	fullOnly := map[string]bool{"drain każdego węzła z repliką": true, "OpenBao po drainach": true, "rotacja sekretu do podów": true}
+	both := []string{"klaster i wdrożenie archiwum z zadania build", "klaster i wdrożenie obrazu z GHCR po digeście", "odnowienie certyfikatu pod ruchem", "tożsamość na podach po drainach", "dowody z klastra"}
+	seen := map[string]string{}
+	for _, s := range cluster.Steps {
+		seen[s.Name] = s.If
+	}
+	for name := range fullOnly {
+		if seen[name] != "env.CLUSTER_PROFILE == 'full'" {
+			t.Errorf("krok %q: warunek %q, oczekiwano tylko w profilu full", name, seen[name])
+		}
+	}
+	for _, name := range both {
+		cond, ok := seen[name]
+		if !ok || strings.Contains(cond, "CLUSTER_PROFILE") {
+			t.Errorf("krok %q: warunek %q (obecny: %v), oczekiwano w obu profilach", name, cond, ok)
+		}
+	}
+}

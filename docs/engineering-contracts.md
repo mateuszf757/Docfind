@@ -219,12 +219,15 @@ od godziny → bez issue (testy `stages/mainhealth`). Decyzja: 22, 36, 45, 54.
 **3.7 Profil integracji zmiany.** Profil PR-a — fast, medium albo heavy — wyznaczają reguły
 ścieżek i graf pakietów poleceń klastrowych `dft`, liczone kodem z commita bazowego; ścieżka,
 której reguły nie znają, to heavy [ŻYCZENIE: `integration` wymaga klastra według profilu — dziś
-tryb cienia, klaster biegnie na każdym PR-ze].
+tryb cienia, klaster biegnie na każdym PR-ze]. Profilowi medium odpowiada klaster w profilu
+smoke: ta sama topologia, platforma i render, wdrożenie z tożsamością na podach i TLS przez
+bramę, bez drainu, OpenBao po drainach i rotacji; heavy — profil full.
 Egzekwuje: zadanie `plan` (`dft ci plan`, `stages/plan`, reguły w `core/ci`) — kod z katalogu
 commita bazowego, z PR-a tylko historia gita. Dowód: podsumowanie zadania `plan`, raport
 `plan.json`. Warstwa: W2. Wariant negatywny: zmiana charta, platformy albo kodu bramek
 klastrowych sklasyfikowana jako fast → czerwony `test` (testy `core/ci`); nieznana ścieżka →
-heavy; pakiet w grafie poleceń klastrowych → heavy (testy `stages/plan`, `cmd/dft`). Decyzja: 75.
+heavy; pakiet w grafie poleceń klastrowych → heavy (testy `stages/plan`, `cmd/dft`); drain
+w profilu smoke → czerwony `test` (testy `core/workflow`). Decyzja: 75, 76.
 
 ## 4. Artefakty
 
