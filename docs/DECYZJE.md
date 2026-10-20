@@ -2775,6 +2775,51 @@ poprawki — sprawdzanie flag z `--help` poleceń dft i ze specyfikacji
 `usage` zadań w `mise.toml`. Gdy README zacznie podawać liczby jako
 bieżące, np. dla klienta od Etapu 10 — generator z raportów `main`.
 
+## 69. Narzędzia w CI: mise bez cache, miara podatku startowego, obrazy na progi
+
+> Część I planu z `docs/ANALIZA-CI-NARZEDZIA-I-WARSTWY.md`. Ten wpis ustala
+> strategię i miarę. Wdrażają ją kolejne kroki: pamięć podręczna kompilacji Go
+> (krok 2) i obraz lekki (krok 13), każdy z własnym wpisem.
+
+**Wybieram pomiar, potem najtańszą zmianę, a obrazy CI dopiero na progi.**
+Strategia hybrydowa — `mise install` z dobrym cache, a obrazy z narzędziami,
+gdy instalacja zaczyna boleć — ma tu inny środek ciężkości niż w szablonie.
+Pomiar z 21 zielonych biegów PR-ów (2026-10-18/19):
+- `./bin/mise install` instaluje 12 narzędzi z `mise.lock` w 5 s, równolegle
+  i z sumami;
+- pierwsze wywołanie `dft` w każdym zadaniu to 37–54 s zimnej kompilacji Go;
+- w zadaniu `test` kod Go zajmuje ~190 s, głównie kompilacja.
+
+Cache binarek z mise byłby wolniejszy od pobrania i dokładałby ścieżkę
+zatrucia bez zysku, więc zostaje `mise install` bez cache. Boli kompilacja —
+na nią jest pamięć podręczna kompilacji Go (krok 2). Obrazy CI na runnerach
+GitHuba dziś niczego nie przyspieszą. Pełny obraz ma ~3 GB po rozpakowaniu.
+Zadania z Dockerem i k3d nie mogą biec w kontenerze zadania: GitHub nie
+obsługuje tam `--network`, a bramki łączą się z 127.0.0.1 hosta (decyzja 17).
+
+Miara jest w CI od tego wpisu. **Podatek startowy** zadania to kroki przed
+pierwszą bramką: przydział maszyny, checkout, narzędzia z mise i build `dft`
+w osobnym kroku `dft`. Liczy go nocny `dft ci budget` z kroków w API zadań,
+z progami w rejestrze (§3.1, §10): p50 zadania W1 ≤ 30 s i p50 sumy zadań W1
+w biegu ≤ 3 min. Ponad progiem jest ostrzeżenie, nie czerwień — to sygnał do
+obrazu pełnego (narzędzia, moduły i kompilacja Go w obrazie). Dwa progi leżą
+poza miarą: dwa czerwone biegi w 30 dniach przez pobieranie narzędzi albo
+modułów oraz runner bez internetu. Obraz lekki (mise i podstawy z gcc) ma
+powód niezależny od progów: `-race` lokalnie bez sudo (krok 13).
+
+**Co tracę:**
+- krok `dft` w każdym zadaniu — linijki YAML-a i ~1 s;
+- akcja `build-image` nie instaluje już Go sama — wymaga kroków
+  `Go (mise)` i `dft` w zadaniu przed nią;
+- noc ostrzega o podatku, dopóki nie wejdzie krok 2: dziś oba progi
+  przekracza zimna kompilacja.
+
+**Kiedy zmieniam zdanie:** obraz pełny wchodzi, gdy po kroku 2 podatek zostanie
+ponad progami przez 20 biegów, gdy pobieranie da dwa czerwone biegi
+w 30 dniach albo przy runnerze bez internetu. Wcześniej — jeśli odtworzenie
+~1 GB obrazu okaże się szybsze niż pobranie narzędzi przez mise (pomiar
+w podsumowaniu).
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

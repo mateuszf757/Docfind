@@ -116,6 +116,7 @@ func TestRunsAndIssues(t *testing.T) {
 	f := &proc.Fake{Responses: map[string]proc.FakeResponse{
 		"gh api repos/{owner}/{repo}/actions/workflows/ci.yml/runs?branch=main&status=completed&per_page=50": {Stdout: `{"workflow_runs":[{"id":7,"event":"schedule","run_attempt":1}]}`},
 		"gh api repos/{owner}/{repo}/actions/runs/7/jobs":                                                    {Stdout: `{"jobs":[{"name":"cluster","conclusion":"success"}]}`},
+		"gh api repos/{owner}/{repo}/actions/runs/7/jobs?per_page=100":                                       {Stdout: `{"jobs":[{"name":"cluster","conclusion":"success","started_at":"2026-10-20T10:00:00Z","steps":[{"name":"dft","conclusion":"success","started_at":"2026-10-20T10:00:05Z","completed_at":"2026-10-20T10:00:50Z"}]}]}`},
 		"gh issue list --state open --search " + title + " in:title --json number,title":                     {Stdout: `[{"number":9,"title":"` + title + ` — stare"},{"number":7,"title":"` + title + `"}]`},
 	}}
 	c := CLI{Runner: f}
@@ -127,6 +128,10 @@ func TestRunsAndIssues(t *testing.T) {
 	jobs, err := c.Jobs(ctx, 7)
 	if err != nil || len(jobs) != 1 || jobs[0].Conclusion != "success" {
 		t.Errorf("zadania: %+v, %v", jobs, err)
+	}
+	steps, err := c.JobSteps(ctx, 7)
+	if err != nil || len(steps) != 1 || steps[0].Name != "cluster" || len(steps[0].Steps) != 1 || steps[0].Steps[0].CompletedAt != "2026-10-20T10:00:50Z" {
+		t.Errorf("zadania z krokami: %+v, %v", steps, err)
 	}
 	if n, err := c.FindIssue(ctx, title); err != nil || n != 7 {
 		t.Errorf("issue o dokładnie tym tytule: %d, %v", n, err)

@@ -108,6 +108,13 @@ const (
 	BudgetW3 = 30 * time.Minute
 	BudgetW4 = 40 * time.Minute
 	BudgetW5 = 10 * time.Minute
+	// SetupTaxJob, SetupTaxRun — podatek startowy (kroki przygotowania przed
+	// pierwszą bramką: checkout, narzędzia z mise, build dft): p50 jednego
+	// zadania W1 i p50 sumy zadań W1 w biegu. Ponad nimi — ostrzeżenie
+	// i sygnał do obrazu CI z narzędziami (decyzja 69). 2026-10-19: 45–60 s
+	// na zadanie, w tym 37–54 s zimnej kompilacji dft.
+	SetupTaxJob = 30 * time.Second
+	SetupTaxRun = 3 * time.Minute
 	// BudgetRuns, BudgetWarn, BudgetFail — budżet liczy się z tylu ostatnich
 	// zielonych biegów pierwszego podejścia; przekroczenie w BudgetWarn
 	// z nich to ostrzeżenie, w BudgetFail — czerwona noc (§0.5).
@@ -144,6 +151,7 @@ func Thresholds() []Threshold {
 		{"§6.2", "punkt odniesienia skanu obrazu na PR-ze", fmt.Sprintf("obraz commita bazowego albo najbliższego z %d przodków", VulnsBaselineAncestors), "stages/vulns"},
 		{"§3.1", "budżet warstw W1 / W2 / W3 / W4 / W5 (p95)", fmt.Sprintf("%v / %v / %v / %v / %v", BudgetW1, BudgetW2, BudgetW3, BudgetW4, BudgetW5), "stages/budget"},
 		{"§0.5", "przekroczenia budżetu w ostatnich biegach", fmt.Sprintf("z %d: ostrzeżenie od %d, czerwona noc od %d", BudgetRuns, BudgetWarn, BudgetFail), "stages/budget"},
+		{"§3.1", "podatek startowy: p50 zadania W1 / p50 sumy zadań W1 w biegu", fmt.Sprintf("≤ %v / ≤ %v; ponad — ostrzeżenie, sygnał do obrazu CI", SetupTaxJob, SetupTaxRun), "stages/budget"},
 		{"§3.3", "przerwa między biegami nocnymi w serii", fmt.Sprintf("≤ %v", NightlyGap), "stages/trial, stages/mainhealth"},
 		{"§3.6", "czerwony main bez issue", fmt.Sprintf("≤ %v", MainRedLimit), "stages/mainhealth"},
 		{"§6.2", "ważność wyjątku podatności", fmt.Sprintf("≤ %d dni", vuln.MaxExceptionDays), "core/vuln"},

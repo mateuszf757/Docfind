@@ -21,3 +21,22 @@ func TestUnmet(t *testing.T) {
 		}
 	}
 }
+
+func TestSetupStep(t *testing.T) {
+	for name, want := range map[string]bool{
+		"Set up job":            true,
+		"Initialize containers": true,
+		"Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1": true,
+		"narzędzia (mise)": true,
+		"Go i gh (mise)":   true,
+		"dft":              true,
+		"przypięte wersje": false,
+		"wynik warstwy W1": false,
+		"Complete job":     false,
+		"Run actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9": false,
+	} {
+		if got := SetupStep(name); got != want {
+			t.Errorf("SetupStep(%q) = %v, oczekiwano %v", name, got, want)
+		}
+	}
+}
