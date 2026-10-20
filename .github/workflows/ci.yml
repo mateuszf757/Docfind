@@ -32,8 +32,8 @@ name: ci
 # bazowego sprawdzona samymi testami jednostkowymi trafiłaby do main, zanim
 # ktokolwiek zbudował z nią obraz. Tak wszedł PR #7 od Dependabota.
 #
-# Warstwy (decyzja 52): W1 — lint, test, build, tools, negatives, równolegle;
-# W2 — cluster i vulns. Reguła gałęzi main wymaga dwóch statusów:
+# Warstwy (decyzja 52): W1 — lint, test, build, tools, negatives, równolegle,
+# i vulns zaraz po build (decyzja 74); W2 — cluster. Reguła gałęzi main wymaga dwóch statusów:
 # fast-feedback (W1) i integration (W2) — zadań zbierających z always(),
 # które oceniają wyniki warstwy przez `ci:require`. Na nich czeka auto-merge
 # łatek (dependabot-auto-merge.yml). Zadanie wymagane pominięte warunkiem
@@ -570,11 +570,12 @@ jobs:
   # bieg, polityka i wyjątki z datą w dft. Na PR-ze punktem odniesienia jest
   # obraz z main dla commita bazowego — blokuje tylko to, co PR wnosi.
   vulns:
-    needs: [lint, test, build, build-publish, release]
-    # Obraz przychodzi z jednego z trzech zadań: archiwum z build (PR, noc —
-    # jak cluster, także po zielonym test), digest z build-publish (push na
-    # main) albo wydanie z release (tag, bez test).
-    if: ${{ !cancelled() && ((needs.lint.result == 'success' && needs.test.result == 'success' && needs.build.result == 'success') || needs.build-publish.result == 'success' || needs.release.result == 'success') }}
+    needs: [build, build-publish, release]
+    # Obraz przychodzi z jednego z trzech zadań: archiwum z build (PR, noc),
+    # digest z build-publish (push na main) albo wydanie z release (tag).
+    # Warstwa W1 (decyzja 74): skan zaraz po obrazie, bez czekania na lint
+    # i test — od nich nie zależy, a jego wynik ma przyjść w szybkim sygnale.
+    if: ${{ !cancelled() && (needs.build.result == 'success' || needs.build-publish.result == 'success' || needs.release.result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -1075,7 +1076,7 @@ jobs:
   # needs, a nie wyrażenie w YAML-u — reguła ma test. Tylko na PR-ach: reguła
   # sprawdza statusy przy scaleniu, a na main build zastępuje build-publish.
   fast-feedback:
-    needs: [lint, test, build, tools, negatives]
+    needs: [lint, test, build, tools, negatives, vulns]
     if: ${{ always() && github.event_name == 'pull_request' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -1105,7 +1106,7 @@ jobs:
         run: ./bin/mise run ci:require
 
   integration:
-    needs: [cluster, vulns]
+    needs: [cluster]
     if: ${{ always() && github.event_name == 'pull_request' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5

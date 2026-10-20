@@ -114,10 +114,10 @@ zero nieudanych), i sprząta po sobie także po przerwaniu.
   odnowienie certyfikatu pod ruchem, tożsamość na podach, dowody z klastra
   jako artefakt; po okresie próbnym (dziesięć zielonych biegów z rzędu)
   wymagany przez status `integration` (decyzje 36, 52)
-- dwa wymagane statusy przed scaleniem: `fast-feedback` (lint, testy, obraz,
-  warianty negatywne, powtarzalność narzędzi — równolegle) i `integration`
-  (klaster, skan obrazu); pominięte zadanie warstwy to czerwony status
-  (decyzje 47, 52)
+- dwa wymagane statusy przed scaleniem: `fast-feedback` (lint, testy, obraz
+  z dymem w ustawieniach poda, warianty negatywne, powtarzalność narzędzi,
+  skan obrazu — równolegle) i `integration` (klaster); pominięte zadanie
+  warstwy to czerwony status (decyzje 47, 52, 74)
 
 Zrobione w Etapach 0–1:
 

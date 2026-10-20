@@ -148,8 +148,8 @@ wersji charta w trakcie → kod 1, bez tagu; kod bramek z niezatwierdzonymi zmia
 
 | Warstwa | Zdarzenia | Zadania i zakres | Budżet (p95, §0.5) | Wymagana |
 |---|---|---|---|---|
-| W1 szybka | PR, push `main`, noc | równolegle: `lint` — wersje, workflowy, kontrakt, gitleaks na historii, Python, charty z politykami; `test` — Go z `-race`, pokrycie, govulncheck; `build` albo `build-publish` — obraz, baza, testy na musl, warunki Etapu 1, powtarzalność; `negatives` — warianty negatywne; `tools` — powtarzalność narzędzi | 6 min [ŻYCZENIE: p95 2026-10-17 — 15,3 min na PR-ach, 15,6 na push; biegi sprzed zrównoleglenia] | tak: `fast-feedback` |
-| W2 integracja przed scaleniem | PR, push `main`, noc | po `test` i `build`: `cluster` — klaster `ci`, wdrożenie, tożsamość, drain każdego węzła, OpenBao, rotacja, TLS, dowody; `vulns` — skan obrazu | 20 min [ŻYCZENIE: p95 2026-10-17 — 23,1 min na PR-ach, 22,5 na push] | tak: `integration` |
+| W1 szybka | PR, push `main`, noc | równolegle: `lint` — wersje, workflowy, kontrakt, gitleaks na historii, Python, charty z politykami; `test` — Go z `-race`, pokrycie, govulncheck; `build` albo `build-publish` — obraz, baza, testy na musl, warunki Etapu 1, powtarzalność; `negatives` — warianty negatywne; `tools` — powtarzalność narzędzi; `vulns` — skan obrazu zaraz po `build` | 6 min [ŻYCZENIE: p95 2026-10-17 — 15,3 min na PR-ach, 15,6 na push; biegi sprzed zrównoleglenia] | tak: `fast-feedback` |
+| W2 integracja przed scaleniem | PR, push `main`, noc | po `lint`, `test` i `build`: `cluster` — klaster `ci`, wdrożenie, tożsamość, drain każdego węzła, OpenBao, rotacja, TLS, dowody | 20 min [ŻYCZENIE: p95 2026-10-17 — 23,1 min na PR-ach, 22,5 na push] | tak: `integration` |
 | W3 po scaleniu | push `main` | `attest`, `chart`, `attest-chart`: pochodzenie i SBOM, atestacja, chart OCI z digestem przetestowanym | 30 min (p95 2026-10-17: 27,9 min) | nie (czerwony → §3.6) |
 | W4 noc | `schedule`, `workflow_dispatch` | W1 i W2 na `main`; `vulns-issue` z wyjątkami wygasającymi w ciągu tygodnia; `settings-drift`; `main-health` (także na push); w `cluster`: rolling update pod ruchem i negatywy na klastrze [ŻYCZENIE: upgrade N-1 → N] | 40 min (p95 2026-10-17: 17,1 min) | nie |
 | W5 wydanie | tag `vX.Y.Z` | `release`, `attest-release`, `vulns` z polityką wydania, `promote` po zgodzie | 10 min do oczekiwania na zgodę (jeden bieg: 1,4 min) | nie (zatwierdza autor) |
@@ -200,7 +200,8 @@ Decyzja: 36.
 
 **3.5 Feedback.** Czas do pierwszego czerwonego sygnału na PR-ze ≤ budżet W1; warstwa W2 nie
 opóźnia sygnału W1.
-Egzekwuje: graf zadań — zadania W1 bez needs między sobą, W2 po `test` i `build`; pola
+Egzekwuje: graf zadań — zadania W1 bez needs między sobą (poza `vulns` po `build`), W2 po `lint`,
+`test` i `build`; pola
 chronione (§8.3); `dft ci budget` mierzy wall-clock W1 i W2 na PR-ach [ŻYCZENIE: czas do
 pierwszego czerwonego sygnału — dziś mierzone są tylko zielone biegi]. Dowód: podsumowanie
 nocy. Warstwa: W1, W2. Wariant negatywny: [ŻYCZENIE: zadanie
@@ -236,7 +237,7 @@ odmawia publikacji innego (`stages/chartpub`). Dowód: wyjścia zadań (`chart-d
 złożony w `chart` o innym digeście niż przetestowany → `chart` kod 1 (testy `stages/chartpub`).
 Decyzja: 36, 45, 61.
 
-**4.3 Klaster tylko po zielonym buildzie.** `cluster` biegnie po sukcesie `test` i `build`
+**4.3 Klaster tylko po zielonym buildzie.** `cluster` biegnie po sukcesie `lint`, `test` i `build`
 (PR, noc) albo `build-publish` i `attest` (push).
 Egzekwuje: warunek zadania `cluster` w `ci.yml` — pole chronione (§8.3). Dowód: graf biegu.
 Warstwa: W2. Wariant negatywny: zmiana warunku bez wpisu w DECYZJE → czerwony `test`.
@@ -360,9 +361,9 @@ najbliższego przodka (§10), z ostrzeżeniem w raporcie; na tagu — każda; na
 raport i issue.
 Egzekwuje: `check:vulns` (`stages/vulns`), govulncheck w `dft check go` i `dft test`.
 Dowód: `vulns-api.json` (punkt odniesienia i obraz, którego zabrakło), `vulns-go.json`
-z wersjami baz. Warstwa: W1 (Go), W2 (obraz), W5. Wariant negatywny: wygasły wyjątek →
+z wersjami baz. Warstwa: W1 (Go i obraz), W5. Wariant negatywny: wygasły wyjątek →
 blokuje; rejestr bez obrazu commita bazowego → porównanie z obrazem przodka, a bez żadnego
-obrazu — blokuje każda naprawialna (testy `stages/vulns`). Decyzja: 37, 51.
+obrazu — blokuje każda naprawialna (testy `stages/vulns`). Decyzja: 37, 51, 74.
 
 **6.3 Sekrety w gicie.** Skan całej historii sprawdzanego commita z diffem scaleń;
 konfiguracja i wyjątki tylko z `ci/`, znacznik wyciszenia w kodzie nie działa; znalezisko =

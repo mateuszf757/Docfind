@@ -3009,6 +3009,37 @@ wariantów rozróżniają nazwy kontenerów.
 liczy ponowienia jako porażki) — wtedy pomiary czasu sekwencyjnie, a reszta
 równolegle.
 
+## 74. Skan obrazu w warstwie W1, zaraz po buildzie
+
+> Krok 6 planu z `docs/ANALIZA-CI-NARZEDZIA-I-WARSTWY.md` (§8.1). Szablon
+> odkłada skan podatności do warstwy Medium, po scaleniu. Tu skan przed
+> scaleniem jest jedynym, który coś blokuje, więc zostaje — ale wcześniej.
+
+**Wybieram skan w szybkim sygnale zamiast w integracji.** `vulns` czekał na
+`test` i `build` i należał do W2. Wynik przychodził z klastrem, ~7 min po
+utworzeniu biegu, choć skan zależy tylko od obrazu. Za scalenie go nie
+przeniosę: na `main` i nocą skan tylko raportuje (decyzja 37). Przeniesiony
+przestałby cokolwiek blokować przed wydaniem, a wydanie zatrzymałoby się na
+podatności, którą PR wniósł tygodnie wcześniej.
+
+Teraz `vulns` należy do W1 i rusza zaraz po zadaniu, które dało obraz
+(`build`, `build-publish` albo `release`), bez czekania na `lint` i `test`.
+`fast-feedback` czeka na niego, a `integration` zbiera już sam klaster.
+Reguła z decyzji 71 pilnuje, żeby zadanie W1 było w needs `fast-feedback`.
+Z pamięcią podręczną (decyzja 70) skan to ~15–20 s pracy, więc koniec W1
+wyznacza dalej najdłuższe zadanie, a nie skan.
+
+**Co tracę:**
+- skan biegnie także na PR-ze z czerwonym `lint` albo `test` — ~1 min
+  runnera, bo wcześniej czekał na nie;
+- `fast-feedback` zależy od sieci: bazy OSV i obraz przodka z GHCR. Ich
+  awaria czerwieni szybki sygnał, a nie integrację.
+
+**Kiedy zmieniam zdanie:** gdy skan zacznie trwać dłużej niż najdłuższe
+zadanie W1 — wtedy z powrotem do W2. Gdy awarie baz OSV albo GHCR dadzą
+dwa czerwone `fast-feedback` w miesiącu — ponowienie w adapterze (§3.4)
+albo kopia baz.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta
