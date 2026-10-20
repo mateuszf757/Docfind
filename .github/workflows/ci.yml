@@ -963,6 +963,18 @@ jobs:
         if: github.event_name != 'pull_request' && github.event_name != 'push'
         run: ./bin/mise run test:cluster
 
+      # Noc (decyzja 79): upgrade do N-1, upgrade N-1 → N i rollback N → N-1
+      # (helm rollback) pod ruchem przez bramę — każde przejście ≤ Z, zero
+      # nieudanych, tożsamość na każdym podzie — i powrót do N. N-1 to chart
+      # z GHCR z obrazem z innego commita; obraz przechodzi politykę
+      # środowiska ci jak przy wdrożeniu z GHCR, więc gh czyta atestację
+      # z API (attestations: read).
+      - name: upgrade i rollback pod ruchem (noc)
+        if: github.event_name != 'pull_request' && github.event_name != 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./bin/mise run cluster:upgrade
+
       # Także po porażce — klaster znika z maszyną runnera, a przyczyna jest
       # w jego stanie: zdarzenia, logi (także sprzed restartu), zasoby
       # platformy, logi kontenerów węzłów.

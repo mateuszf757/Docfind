@@ -122,3 +122,19 @@ func TestVerifyWithoutVersion(t *testing.T) {
 		t.Errorf("inny commit bez wersji wdrożenia: %v", err)
 	}
 }
+
+func TestCurrent(t *testing.T) {
+	terminating := pod("stary", "img:0")
+	terminating.Terminating = true
+	c := fakeCluster{2, []cluster.Pod{terminating, pod("a", "img:1"), pod("b", "img:1")}, map[string]string{"a": `{"version":"1.0.0","commit":"abc"}`}}
+	got, err := Current(context.Background(), c, "docfind", "docfind-api", "api")
+	if err != nil || got != (artifact.Expected{Image: "img:1", Version: "1.0.0", Commit: "abc"}) {
+		t.Errorf("Current: %+v, %v", got, err)
+	}
+	if _, err := Current(context.Background(), fakeCluster{1, []cluster.Pod{terminating}, nil}, "docfind", "docfind-api", "api"); cli.ExitCode(err) != cli.ExitUnmet {
+		t.Errorf("bez działającego poda: %v", err)
+	}
+	if _, err := Current(context.Background(), fakeCluster{1, []cluster.Pod{pod("a", "img:1")}, nil}, "docfind", "docfind-api", "api"); err == nil {
+		t.Error("pod bez /version przepuszczony")
+	}
+}

@@ -146,6 +146,9 @@ type Deployer struct {
 	DNSTokens func(t cluster.Target) (DNSToken, error)
 	// ChartRegistry — chart aplikacji w rejestrze, który śledzi Argo CD.
 	ChartRegistry ChartRegistry
+	// AppChart — repozytorium charta aplikacji w rejestrze (<rejestr>/charts/
+	// docfind): stamtąd upgrade pod ruchem bierze N-1 (decyzja 79).
+	AppChart string
 	// Download — plik spoza repozytorium w pamięci podręcznej, po sprawdzeniu
 	// sumy z ci/pins.env (kit/fetch): archiwum airgap i lista obrazów k3s.
 	Download func(ctx context.Context, url, sha string) (string, error)

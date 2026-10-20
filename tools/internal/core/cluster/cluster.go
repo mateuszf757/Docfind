@@ -193,8 +193,11 @@ type LocalCluster struct {
 
 // Release — instalacja charta Helma (`helm upgrade --install`).
 type Release struct {
-	Name            string
-	Chart           string
+	Name  string
+	Chart string
+	// Version — wersja charta z repozytorium OCI (--version); pusta przy
+	// charcie z katalogu albo archiwum.
+	Version         string
 	Namespace       string
 	CreateNamespace bool
 	ValuesFiles     []string

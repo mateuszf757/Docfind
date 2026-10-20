@@ -227,6 +227,10 @@ run = "ci/dft check tls"
 description = "Rolling update aplikacji pod ruchem przez bramę: przestój ≤ Z, zero nieudanych (decyzja 60); nie na środowisku z Argo CD"
 run = "ci/dft check rollout"
 
+[tasks."cluster:upgrade"]
+description = "Upgrade N-1 → N i rollback pod ruchem przez bramę: N-1 to chart z rejestru, każde przejście ≤ Z z tożsamością na podach (decyzja 79); nie na środowisku z Argo CD"
+run = "ci/dft check upgrade"
+
 [tasks."cluster:drain"]
 description = "Warunek Etapu 2: drain każdego węzła z repliką bez utraty żądania (DRAIN_NODE — jeden węzeł)"
 run = "ci/dft check drain"

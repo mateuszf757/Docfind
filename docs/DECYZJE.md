@@ -3203,6 +3203,58 @@ na runnerze GitHuba nie przyspiesza zadań, a dokładałby pobranie obrazu.
 z decyzji 69 zostanie przekroczony — etap `full` z narzędziami i kompilacją
 Go, także w CI.
 
+## 79. Upgrade N-1 → N i rollback pod ruchem co noc
+
+> Krok 12 planu z `docs/ANALIZA-CI-NARZEDZIA-I-WARSTWY.md` (§9.5). Spełnia
+> [ŻYCZENIE: upgrade N-1 → N] z warstwy W4 i część życzenia z §5.7.
+
+**Wybieram cztery przejścia na klastrze nocy, który już stoi na N.** Nowy
+klaster z N-1 to ~5 minut zakładania, a wdrożenie N sprawdziły już
+wcześniejsze kroki zadania `cluster`. Przejścia (`dft check upgrade`,
+zadanie mise `cluster:upgrade`):
+1. upgrade do N-1 — `helm upgrade` do charta z GHCR, najnowszego z obrazem
+   z innego commita niż N, z wartościami środowiska. Tak cofa się wersję
+   w GitOps: przypięcie wersji przy bieżących wartościach;
+2. upgrade N-1 → N — `helm rollback` do rewizji N. Rollback to nowa
+   rewizja z manifestem tamtej, więc na klastrze idą te same operacje co
+   przy upgradzie do N; chart nie ma hooków, które by to rozróżniały;
+3. rollback N → N-1 — `helm rollback` do rewizji N-1, jak u klienta;
+4. powrót do N — dowody i następne kroki widzą wersję tego commita.
+
+Każde przejście biegnie pod pętlą HTTPS przez bramę jak rolling update
+(decyzja 60): przestój ≤ Z, ≥ 100 żądań, zero nieudanych. Po każdym każdy
+pod podaje tożsamość wersji docelowej — obraz, wersję i commit z
+`/version`. Tożsamość N bramka czyta z podów na starcie.
+
+**N-1 przechodzi tę samą politykę co każde wdrożenie.** Wybór N-1
+i polityka środowiska (decyzja 35; w `ci` atestacja) idą przed jakąkolwiek
+zmianą na klastrze. Tag obrazu w wartościach charta musi się zgadzać
+z commitem z etykiety obrazu po digeście. Odmowa:
+- bez operacji `deploy` — prod;
+- z Argo CD — staging: samonaprawa cofnęłaby zmianę obok niego, a cofnięcie
+  to tam przypięcie wersji w definicji.
+
+**Po porażce klaster zostaje w stanie z nieudanego przejścia.** Dowody idą
+z tego stanu, a raport `upgrade-<env>.json` podaje polecenie powrotu do N.
+
+**Co tracę:**
+- ~2 min nocy [szacunek: krok rolling update w nocy 2026-10-19 trwał 20 s,
+  tu cztery przejścia z Helmem]; W4 ma budżet 40 min przy p95 17,1 min;
+- noc zależy od GHCR: rejestru chartów i pobrania obrazu N-1 przez węzły;
+- chart N-1 renderuje się z wartościami środowiska z HEAD. Zmiana wartości
+  niezgodna ze schematem N-1 czerwieni noc do następnego charta na `main` —
+  ten sam sygnał dostałby rollback przez przypięcie wersji w GitOps;
+- obraz N z archiwum musi przetrwać na węzłach do powrotu
+  (`IfNotPresent`); kubelet usunąłby go przy zapełnionym dysku runnera
+  [NIEZWERYFIKOWANE: zapas dysku w nocy];
+- restart starego poda w trakcie upgrade'u z kluczem dodanym w N zostaje
+  życzeniem w §5.7.
+
+**Kiedy zmieniam zdanie:** gdy noc przekroczy budżet W4 — zostają przejścia
+1–2: oba kierunki na klastrze, każde polecenie Helma raz. Gdy Etap 10 da
+klientowi inną procedurę upgrade'u niż `helm upgrade` i `helm rollback` —
+bramka przejdzie na nią.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

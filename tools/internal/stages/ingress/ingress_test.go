@@ -252,7 +252,7 @@ func TestRollout(t *testing.T) {
 		prepare func(*fakeIngress, *Checker)
 		want    string
 	}{
-		"błędy w trakcie rolloutu": {func(f *fakeIngress, _ *Checker) { f.outage = 200 * time.Millisecond }, "nie powiodło się w trakcie rolloutu"},
+		"błędy w trakcie rolloutu": {func(f *fakeIngress, _ *Checker) { f.outage = 200 * time.Millisecond }, "żądań nie powiodło się"},
 		// Odpowiedź wraca po 1,2 s, zanim pętla się zatrzyma: przerwa bez
 		// błędu, ale dłuższa niż Z.
 		"przerwa dłuższa niż Z bez błędu": {func(f *fakeIngress, c *Checker) {
@@ -268,6 +268,28 @@ func TestRollout(t *testing.T) {
 				t.Errorf("oczekiwano niespełnionego z %q, jest %v (%+v)", tt.want, err, rep)
 			}
 		})
+	}
+}
+
+// UnderTraffic z dowolną akcją: akcja biegnie pod ruchem, jej błąd
+// przerywa pomiar, a raport ma jej nazwę.
+func TestUnderTraffic(t *testing.T) {
+	quiet(t)
+	f := newIngress()
+	c := checker(f)
+	var called bool
+	rep, err := c.UnderTraffic(context.Background(), "upgrade do N-1", "docfind-api", 10*time.Second, func(ctx context.Context) error {
+		called = true
+		return f.RestartDeployment(ctx, c.Cfg.AppNamespace, "docfind-api")
+	})
+	if err != nil || !called || rep.Action != "upgrade do N-1" || rep.Requests < 100 {
+		t.Errorf("akcja pod ruchem: %v, %v (%+v)", err, called, rep)
+	}
+	_, err = c.UnderTraffic(context.Background(), "rollback", "docfind-api", 10*time.Second, func(context.Context) error {
+		return errors.New("helm rollback: kod 1")
+	})
+	if err == nil || !strings.Contains(err.Error(), "helm rollback") {
+		t.Errorf("błąd akcji: %v", err)
 	}
 }
 

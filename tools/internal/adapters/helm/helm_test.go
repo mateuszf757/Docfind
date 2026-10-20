@@ -78,3 +78,23 @@ func TestFetchOCI(t *testing.T) {
 		t.Errorf("podmieniony chart przyjęty: %v", err)
 	}
 }
+
+func TestRevisionAndRollback(t *testing.T) {
+	target := cluster.Target{Kubeconfig: "/k", Context: "c"}
+	f := &proc.Fake{Responses: map[string]proc.FakeResponse{
+		"helm status docfind --namespace docfind --output json --kubeconfig /k --kube-context c":                                                                          {Stdout: `{"name":"docfind","version":3}`},
+		"helm rollback docfind 2 --namespace docfind --wait=watcher --timeout 3m0s --kubeconfig /k --kube-context c":                                                      {},
+		"helm upgrade --install docfind oci://r/charts/docfind --version 0.3.2-dev.44 --namespace docfind --wait=watcher --timeout 3m0s --kubeconfig /k --kube-context c": {},
+	}}
+	h := Helm{Runner: f}
+	ctx := context.Background()
+	if rev, err := h.Revision(ctx, target, "docfind", "docfind"); rev != 3 || err != nil {
+		t.Errorf("rewizja: %d, %v", rev, err)
+	}
+	if err := h.Rollback(ctx, target, "docfind", "docfind", 2, 3*time.Minute); err != nil {
+		t.Errorf("rollback: %v", err)
+	}
+	if err := h.Install(ctx, target, cluster.Release{Name: "docfind", Chart: "oci://r/charts/docfind", Version: "0.3.2-dev.44", Namespace: "docfind", Timeout: 3 * time.Minute}); err != nil {
+		t.Errorf("chart z rejestru w wersji: %v", err)
+	}
+}
