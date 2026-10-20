@@ -53,6 +53,26 @@ func (g Go) Test(ctx context.Context, race bool, coverprofile string) error {
 	return g.check(ctx, env, append(args, "./...")...)
 }
 
+// CompileTests kompiluje testy wszystkich pakietów do katalogu out bez
+// uruchamiania (-c) — z tymi samymi flagami co Test (race, pokrycie) albo
+// TestTagged (tag), żeby wpisy w pamięci podręcznej kompilacji były tymi,
+// których szukają bramki (pisarz z decyzji 70).
+func (g Go) CompileTests(ctx context.Context, out string, race, cover bool, tag string) error {
+	args := []string{"test"}
+	var env []string
+	if race {
+		args, env = append(args, "-race"), []string{"CGO_ENABLED=1"}
+	}
+	if cover {
+		args = append(args, "-coverpkg=./...")
+	}
+	if tag != "" {
+		args = append(args, "-tags", tag)
+	}
+	args = append(args, "-c", "-o", strings.TrimSuffix(out, "/")+"/")
+	return g.check(ctx, env, append(args, "./...")...)
+}
+
 // TestTagged uruchamia testy z tagiem budowania (warianty negatywne na
 // prawdziwym obrazie albo klastrze); run — wzorzec nazw testów (pusty —
 // wszystkie), env — dodatkowe zmienne (np. DF_TEST_IMAGE).

@@ -42,13 +42,16 @@ type Workflow struct {
 }
 
 // Job — zadanie: nazwa statusu (pole `name`; puste — identyfikator
-// zadania), bezpośrednie zależności, warunek (pusty — brak `if`)
-// i uprawnienia (nil — dziedziczy z workflowu).
+// zadania), bezpośrednie zależności, warunek (pusty — brak `if`),
+// uprawnienia (nil — dziedziczy z workflowu), środowisko GitHuba
+// (`environment`) i kroki.
 type Job struct {
 	Name        string
 	Needs       []string
 	If          string
 	Permissions *Permissions
+	Environment bool
+	Steps       []Step
 }
 
 // Permissions — uprawnienia tokenu: skrót (`read-all`, `write-all`) albo
@@ -87,10 +90,12 @@ func HasStatusFunction(condition string) bool {
 }
 
 type rawJob struct {
-	Name        string `json:"name"`
-	Needs       any    `json:"needs"`
-	If          any    `json:"if"`
-	Permissions any    `json:"permissions"`
+	Name        string    `json:"name"`
+	Needs       any       `json:"needs"`
+	If          any       `json:"if"`
+	Permissions any       `json:"permissions"`
+	Environment any       `json:"environment"`
+	Steps       []rawStep `json:"steps"`
 }
 
 type rawWorkflow struct {
@@ -102,9 +107,9 @@ type rawWorkflow struct {
 	Jobs        map[string]rawJob `json:"jobs"`
 }
 
-// Parse czyta workflow. Pola poza zdarzeniami, uprawnieniami, needs i if
-// nie mają tu znaczenia, więc odczyt nie jest ścisły — ścisłość zapewnia
-// actionlint.
+// Parse czyta workflow. Pola poza zdarzeniami, uprawnieniami, needs, if,
+// środowiskiem i krokami nie mają tu znaczenia, więc odczyt nie jest
+// ścisły — ścisłość zapewnia actionlint.
 func Parse(file string, raw []byte) (Workflow, error) {
 	var r rawWorkflow
 	if err := yaml.Unmarshal(raw, &r); err != nil {
@@ -136,7 +141,7 @@ func Parse(file string, raw []byte) (Workflow, error) {
 		if err != nil {
 			return Workflow{}, fmt.Errorf("%s: zadanie %s: permissions: %w", file, name, err)
 		}
-		w.Jobs[name] = Job{Name: j.Name, Needs: needs, If: cond, Permissions: jobPerms}
+		w.Jobs[name] = Job{Name: j.Name, Needs: needs, If: cond, Permissions: jobPerms, Environment: j.Environment != nil, Steps: steps(j.Steps)}
 	}
 	return w, nil
 }

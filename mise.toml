@@ -263,6 +263,10 @@ run = "ci/dft ci require"
 description = "Zdrowie main do issue: czerwony main dłużej niż doba, noc, która nie przyszła (decyzja 54); --dry-run tylko wypisuje"
 run = "ci/dft ci main-health"
 
+[tasks."ci:go-cache"]
+description = "Kompilacja bramek kodu Go bez uruchamiania testów — pisarz pamięci podręcznej kompilacji w CI (decyzja 70)"
+run = "ci/dft ci go-cache"
+
 [tasks."ci:budget"]
 description = "Budżety warstw CI: p50/p95 z 20 zielonych biegów PR, push i nocy, kolejka, czasy zadań (decyzja 57); --enforce czerwieni przy 5 przekroczeniach z 20"
 run = "ci/dft ci budget"
