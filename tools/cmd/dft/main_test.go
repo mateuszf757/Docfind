@@ -134,10 +134,17 @@ func TestParseTestFlags(t *testing.T) {
 		{[]string{"--base", "origin/main"}, testMode{vulns: goVulnMode{baseline: "origin/main"}, base: "origin/main"}},
 		{[]string{"--vulns-baseline", "origin/main"}, testMode{vulns: goVulnMode{baseline: "origin/main"}}},
 		{[]string{"--vulns-report-only"}, testMode{vulns: goVulnMode{reportOnly: true}}},
+		{[]string{"--part", "lint", "--event", "pull_request", "--base", "abc"}, testMode{vulns: goVulnMode{baseline: "abc"}, base: "abc", part: "lint"}},
+		{[]string{"--part", "go", "--event", "push", "--base", ""}, testMode{vulns: goVulnMode{reportOnly: true}, part: "go"}},
 	} {
 		got, err := parseTestFlags(tt.args)
 		if err != nil || got != tt.want {
 			t.Errorf("parseTestFlags(%q) = %+v, %v; oczekiwano %+v", tt.args, got, err, tt.want)
+		}
+	}
+	for _, args := range [][]string{{"--part", "python"}, {"--part", "go", "--event", "push", "--base", "abc"}} {
+		if _, err := parseTestFlags(args); cli.ExitCode(err) != cli.ExitFailure {
+			t.Errorf("parseTestFlags(%q) przyjęte: %v", args, err)
 		}
 	}
 }

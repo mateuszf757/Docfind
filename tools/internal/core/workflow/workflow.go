@@ -489,3 +489,28 @@ func Layerless(w Workflow, layers map[string]string) []string {
 	}
 	return found
 }
+
+// AggregatorCoverage — zadanie zbierające warstwę (aggregators: zadanie →
+// warstwa) ma w needs każde zadanie tej warstwy (layers), które może ruszyć
+// na pull_request. Bez tego nowe zadanie warstwy nie blokuje scalenia, choć
+// kontrakt mówi, że blokuje (§3.2, decyzja 71).
+func AggregatorCoverage(w Workflow, layers, aggregators map[string]string) []string {
+	if !triggeredByPR(w) {
+		return nil
+	}
+	var found []string
+	for _, agg := range slices.Sorted(maps.Keys(aggregators)) {
+		job, ok := w.Jobs[agg]
+		if !ok {
+			continue
+		}
+		layer := aggregators[agg]
+		for _, name := range slices.Sorted(maps.Keys(w.Jobs)) {
+			if name == agg || layers[name] != layer || slices.Contains(job.Needs, name) || !w.reachableOnPR(name, map[string]bool{}) {
+				continue
+			}
+			found = append(found, fmt.Sprintf("%s: zadanie zbierające %s nie czeka na %s (warstwa %s, rusza na pull_request) — wynik tej bramki nie blokowałby scalenia; dopisz je do needs (§3.2, decyzja 71)", w.File, agg, name, layer))
+		}
+	}
+	return found
+}

@@ -481,3 +481,42 @@ func TestLayerless(t *testing.T) {
 		t.Errorf("inny workflow oceniony: %q", found)
 	}
 }
+
+func TestAggregatorCoverage(t *testing.T) {
+	w, err := Parse("ci.yml", []byte(`on: [pull_request, push]
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+  test:
+    runs-on: ubuntu-24.04
+  build-publish:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+  cluster:
+    needs: [test]
+    runs-on: ubuntu-24.04
+  fast-feedback:
+    needs: [test]
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-24.04
+  integration:
+    needs: [cluster]
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-24.04
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	layers := map[string]string{"lint": "W1", "test": "W1", "build-publish": "W1", "fast-feedback": "W1", "cluster": "W2", "integration": "W2"}
+	aggregators := map[string]string{"fast-feedback": "W1", "integration": "W2"}
+	found := AggregatorCoverage(w, layers, aggregators)
+	// lint rusza na PR-ze, a fast-feedback na niego nie czeka; build-publish
+	// biegnie tylko na push, więc go nie dotyczy.
+	if len(found) != 1 || !strings.Contains(found[0], "zadanie zbierające fast-feedback nie czeka na lint (warstwa W1") {
+		t.Errorf("AggregatorCoverage: %q", found)
+	}
+	noPR, _ := Parse("noc.yml", []byte("on: [schedule]\njobs:\n  lint:\n    runs-on: ubuntu-24.04\n  fast-feedback:\n    runs-on: ubuntu-24.04\n"))
+	if found := AggregatorCoverage(noPR, layers, aggregators); len(found) != 0 {
+		t.Errorf("workflow bez PR-ów: %q", found)
+	}
+}

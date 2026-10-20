@@ -32,7 +32,7 @@ name: ci
 # bazowego sprawdzona samymi testami jednostkowymi trafiłaby do main, zanim
 # ktokolwiek zbudował z nią obraz. Tak wszedł PR #7 od Dependabota.
 #
-# Warstwy (decyzja 52): W1 — test, build, tools, negatives, równolegle;
+# Warstwy (decyzja 52): W1 — lint, test, build, tools, negatives, równolegle;
 # W2 — cluster i vulns. Reguła gałęzi main wymaga dwóch statusów:
 # fast-feedback (W1) i integration (W2) — zadań zbierających z always(),
 # które oceniają wyniki warstwy przez `ci:require`. Na nich czeka auto-merge
@@ -115,26 +115,32 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
-    # Na tagu wydania nie ma czego testować: tag wskazuje commit z main,
-    # który przeszedł test, build i klaster, zanim wszedł na staging. Bez
-    # test nie rusza też build — tag niczego nie buduje.
+  # Bramki jakości bez kodu Go (decyzja 71): spójność wersji, shellcheck,
+  # actionlint, zizmor i reguły workflowów, kontrakt inżynierski, gitleaks na
+  # całej historii, Python (ruff, mypy, pytest, schemat), charty z politykami.
+  # Równolegle z test (kod Go); razem to samo co `./bin/mise run test`
+  # lokalnie.
+  lint:
+    # Na tagu wydania nie ma czego sprawdzać: tag wskazuje commit z main,
+    # który przeszedł bramki, build i klaster, zanim wszedł na staging.
     if: github.ref_type != 'tag'
     runs-on: ubuntu-24.04
     # Domyślny limit to 360 minut — zawieszony krok trzymałby runner sześć
-    # godzin. Typowy bieg trwa 2–3 minuty.
+    # godzin. Typowy bieg trwa poniżej minuty.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Pełna historia: gitleaks skanuje całą (w płytkim klonie dft
+          # odmawia, bo skan widziałby jej część), a kontrakt porównuje pola
+          # chronione z commitem bazowym.
           fetch-depth: 0
           # Bez tokenu w .git/config: domyślnie zostaje tam na całe zadanie
           # i może go odczytać każdy późniejszy krok. Skrypty nie pushują.
           persist-credentials: false
 
       # Narzędzia z mise.lock, z sumami — te same wersje co lokalnie, w tym Go
-      # dla narzędzi z tools/ (nie Go z obrazu runnera i nie setup-go, który
-      # domyślnie włącza pamięć podręczną modułów).
+      # dla narzędzi z tools/ (nie Go z obrazu runnera i nie setup-go).
       - name: narzędzia (mise)
         env:
           # Tylko w tym kroku: mise sprawdza atestacje GitHuba przez API,
@@ -146,11 +152,9 @@ jobs:
       - name: pamięć podręczna Go (odczyt)
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            ~/.cache/go-build
-            ~/.cache/staticcheck
-          key: go-test-${{ runner.os }}-${{ hashFiles('tools/go.mod', 'tools/go.sum') }}
-          restore-keys: go-test-${{ runner.os }}-
+          path: ~/.cache/go-build
+          key: go-dft-${{ runner.os }}-${{ hashFiles('tools/go.mod', 'tools/go.sum') }}
+          restore-keys: go-dft-${{ runner.os }}-
 
       - name: dft
         run: ./bin/mise exec -- ci/dft --help > /dev/null
@@ -165,36 +169,67 @@ jobs:
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: ${{ steps.pins.outputs.uv }}
-          # Bez cache: workflow publikuje obrazy, a cache zapisany przez jeden
-          # bieg jest odtwarzany w kolejnych (zizmor: cache-poisoning).
-          # uv sync ze świeżego pobrania to kilka sekund.
+          # Bez wbudowanej pamięci: zakazuje jej dft check workflows (decyzja
+          # 70), a uv sync ze świeżego pobrania to kilka sekund.
           enable-cache: false
 
-      # Jedno zadanie mise: spójność wersji, shellcheck, actionlint, zizmor,
-      # kontrakt inżynierski, gitleaks na całej historii (stąd fetch-depth: 0 — w płytkim klonie
-      # dft odmawia, bo skan widziałby jej część), charty, polityki, ruff,
-      # mypy, pytest, schemat i bramki kodu Go
-      # (gofmt, vet, staticcheck, testy z -race, govulncheck). Osobny krok
-      # w CI, którego nie ma w zadaniu, to krok, który lokalnie nie biegnie.
-      #
-      # Zmianę ocenia się względem commita bazowego PR-a: govulncheck
-      # blokuje tylko podatności, których nie ma w kodzie tools/ z commita
-      # bazowego (decyzja 37), a pole chronione kontraktu zmienione bez
-      # wpisu w DECYZJE jest czerwone (decyzja 50). Na main i nocą
-      # govulncheck tylko raportuje — nowa podatność w bazie Go nie
-      # zatrzymuje builda ani nocnego skanu obrazu, tylko trafia do issue.
+      # Zmianę ocenia się względem commita bazowego PR-a: pole chronione
+      # kontraktu zmienione bez wpisu w DECYZJE jest czerwone (decyzja 50).
       # Tryb wybiera dft ze zdarzenia (`dft test --event`), a nie warunek
       # powłoki tutaj — ten lokalnie nie biegnie i nie ma testu. Na push
       # BASE_SHA jest puste.
-      - name: wersje, lint, kontrakt, typy, testy, polityki, schemat, kod Go
+      - name: wersje, workflowy, kontrakt, sekrety, Python, charty
         env:
           EVENT: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: ./bin/mise run test -- --event "$EVENT" --base "$BASE_SHA"
+        run: ./bin/mise run test -- --part lint --event "$EVENT" --base "$BASE_SHA"
+
+  # Kod Go (decyzja 71): warstwy, gofmt, vet, staticcheck, testy z -race
+  # i pokryciem, govulncheck. Najdłuższe zadanie warstwy W1, więc osobno od
+  # lint i z pamięcią podręczną kompilacji testów (decyzja 70).
+  test:
+    if: github.ref_type != 'tag'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      # Tylko Go — reszta narzędzi jest w zadaniu lint.
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Historia dla punktu odniesienia govulncheck: kod tools/ z commita
+          # bazowego PR-a (decyzja 37).
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Go (mise)
+        run: ./bin/mise install go
+
+      - name: pamięć podręczna Go (odczyt)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/.cache/staticcheck
+          key: go-test-${{ runner.os }}-${{ hashFiles('tools/go.mod', 'tools/go.sum') }}
+          restore-keys: go-test-${{ runner.os }}-
+
+      - name: dft
+        run: ./bin/mise exec -- ci/dft --help > /dev/null
+
+      # govulncheck na PR-ze blokuje tylko podatności, których nie ma w kodzie
+      # tools/ z commita bazowego (decyzja 37); na main i nocą tylko
+      # raportuje — nowa podatność w bazie Go trafia do issue, a nie na
+      # czerwono. Tryb wybiera dft ze zdarzenia.
+      - name: kod Go
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: ./bin/mise run test -- --part go --event "$EVENT" --base "$BASE_SHA"
 
       # Raport govulncheck także przy czerwonym kroku — wtedy jest
       # najbardziej potrzebny. Brak pliku znaczy, że test nie doszedł do
-      # kodu Go; nocą zgłosi to vulns-issue.
+      # govulncheck; nocą zgłosi to vulns-issue.
       - name: raport podatności kodu Go
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -210,9 +245,10 @@ jobs:
   # z publikacją przy push miało packages: write także na każdym PR-ze, z kodem
   # PR-a w środku (decyzja 49). Na push na main te same kroki (akcja
   # build-image) wykonuje build-publish, z prawem zapisu do rejestru.
-  # Bez needs: test — biegnie równolegle z nim, więc sygnał z obrazu nie czeka
-  # na lint i testy (decyzja 52). Kosztem jest build także na PR-ze
-  # z czerwonym test; cluster i fast-feedback i tak czekają na oba.
+  # Bez needs: lint i test — biegnie równolegle z nimi, więc sygnał z obrazu
+  # nie czeka na bramki jakości (decyzja 52). Kosztem jest build także na
+  # PR-ze z czerwonym lint albo test; cluster i fast-feedback i tak czekają
+  # na wszystkie.
   build:
     if: github.event_name != 'push'
     runs-on: ubuntu-24.04
@@ -348,8 +384,8 @@ jobs:
   # (decyzja 40). Warunek wyklucza PR-y, więc token z prawem zapisu do
   # rejestru nie trafia do zadania z kodem PR-a (decyzja 49).
   build-publish:
-    needs: test
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref_type == 'branch' && needs.test.result == 'success' }}
+    needs: [lint, test]
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref_type == 'branch' && needs.lint.result == 'success' && needs.test.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -533,11 +569,11 @@ jobs:
   # bieg, polityka i wyjątki z datą w dft. Na PR-ze punktem odniesienia jest
   # obraz z main dla commita bazowego — blokuje tylko to, co PR wnosi.
   vulns:
-    needs: [test, build, build-publish, release]
+    needs: [lint, test, build, build-publish, release]
     # Obraz przychodzi z jednego z trzech zadań: archiwum z build (PR, noc —
     # jak cluster, także po zielonym test), digest z build-publish (push na
     # main) albo wydanie z release (tag, bez test).
-    if: ${{ !cancelled() && ((needs.test.result == 'success' && needs.build.result == 'success') || needs.build-publish.result == 'success' || needs.release.result == 'success') }}
+    if: ${{ !cancelled() && ((needs.lint.result == 'success' && needs.test.result == 'success' && needs.build.result == 'success') || needs.build-publish.result == 'success' || needs.release.result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -737,13 +773,13 @@ jobs:
   # przez zadanie zbierające integration (decyzja 52). Klaster znika razem
   # z maszyną runnera.
   cluster:
-    needs: [test, build, build-publish, attest]
+    needs: [lint, test, build, build-publish, attest]
     # Na PR-ze i nocą obraz to archiwum z build, a klaster czeka też na test:
     # build trwa dłużej, więc nic to nie kosztuje, a PR z czerwonym test nie
     # zajmuje runnera na 20 minut (decyzja 52). Po publikacji — digest
     # z build-publish (ten czeka na test), i wtedy cluster czeka na
     # atestację, którą sprawdza.
-    if: ${{ !cancelled() && ((needs.test.result == 'success' && needs.build.result == 'success') || (needs.build-publish.result == 'success' && needs.attest.result == 'success')) }}
+    if: ${{ !cancelled() && ((needs.lint.result == 'success' && needs.test.result == 'success' && needs.build.result == 'success') || (needs.build-publish.result == 'success' && needs.attest.result == 'success')) }}
     runs-on: ubuntu-24.04
     # Digest charta zainstalowanego z archiwum (push) — zadanie chart
     # publikuje tylko ten sam artefakt (decyzja 61).
@@ -1038,7 +1074,7 @@ jobs:
   # needs, a nie wyrażenie w YAML-u — reguła ma test. Tylko na PR-ach: reguła
   # sprawdza statusy przy scaleniu, a na main build zastępuje build-publish.
   fast-feedback:
-    needs: [test, build, tools, negatives]
+    needs: [lint, test, build, tools, negatives]
     if: ${{ always() && github.event_name == 'pull_request' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -1172,7 +1208,7 @@ jobs:
   budget:
     if: github.event_name != 'pull_request' && github.event_name != 'push'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 5  
     permissions:
       contents: read
       # Biegi workflowu ci i ich zadania.

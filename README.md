@@ -253,7 +253,7 @@ i bez sudo.
 ```bash
 ./bin/mise install                # narzędzia z mise.lock
 ./bin/mise tasks                  # lista zadań
-./bin/mise run test               # wersje, lint, typy, testy, polityki, kod Go — jak zadanie test w CI
+./bin/mise run test               # wersje, lint, typy, testy, polityki, kod Go — jak zadania lint i test w CI
 ./bin/mise run ci                 # cały pipeline po kolei, jak w CI (bez publikacji)
 ./bin/mise run build              # build obrazu z HEAD — niesie commit, nie wersję
 ./bin/mise run test:image         # testy jednostkowe w obrazie na musl

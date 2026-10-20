@@ -72,10 +72,14 @@ func runCheck(ctx context.Context, w *workspace, args []string) error {
 	return check(ctx, w, args[1:])
 }
 
-// runTest to zadanie test z CI: wersje, workflowy i skrypty, kontrakt,
-// sekrety w historii gita, Python aplikacji, charty, kod narzędzi. Kończy się
-// na pierwszej grupie, która nie przeszła — każda zakłada, że poprzednie
+// runTest to bramki jakości: wersje, workflowy i skrypty, kontrakt, sekrety
+// w historii gita, Python aplikacji, charty, kod narzędzi. Kończy się na
+// pierwszej grupie, która nie przeszła — każda zakłada, że poprzednie
 // przeszły (dawniej ci/run-tests.sh). Tryb — testMode.
+//
+// Lokalnie jedno wejście, wszystkie grupy. W CI dwa zadania równolegle
+// (decyzja 71): `--part lint` — wszystko poza kodem Go (zadanie lint),
+// `--part go` — kod Go (zadanie test, najdłuższe w warstwie W1).
 func runTest(ctx context.Context, w *workspace, args []string) error {
 	mode, err := parseTestFlags(args)
 	if err != nil {
@@ -83,21 +87,29 @@ func runTest(ctx context.Context, w *workspace, args []string) error {
 	}
 	// Wymagania na starcie i zgłaszane razem: brak narzędzia w połowie biegu
 	// wyglądałby jak błąd w kodzie, a nie w środowisku.
-	if err := requireTools("uv", "shellcheck", "actionlint", "zizmor", "gitleaks", "helm", "kubeconform", "kubectl", "go"); err != nil {
+	tools := []string{"uv", "shellcheck", "actionlint", "zizmor", "gitleaks", "helm", "kubeconform", "kubectl", "go"}
+	if mode.part == testPartGo {
+		tools = []string{"go"}
+	}
+	if err := requireTools(tools...); err != nil {
 		return err
 	}
 	for _, step := range []struct {
 		name string
+		part string
 		run  func() error
 	}{
-		{"spójność wersji", func() error { return checkVersions(ctx, w) }},
-		{"workflowy i skrypty", func() error { return checkWorkflows(ctx, w) }},
-		{"kontrakt inżynierski", func() error { return checkContract(ctx, w, mode.base) }},
-		{"sekrety w historii gita", func() error { return checkSecrets(ctx, w) }},
-		{"Python aplikacji", func() error { return checkPython(ctx, w) }},
-		{"charty", func() error { return checkCharts(ctx, w) }},
-		{"kod Go", func() error { return checkGo(ctx, w, mode.vulns) }},
+		{"spójność wersji", testPartLint, func() error { return checkVersions(ctx, w) }},
+		{"workflowy i skrypty", testPartLint, func() error { return checkWorkflows(ctx, w) }},
+		{"kontrakt inżynierski", testPartLint, func() error { return checkContract(ctx, w, mode.base) }},
+		{"sekrety w historii gita", testPartLint, func() error { return checkSecrets(ctx, w) }},
+		{"Python aplikacji", testPartLint, func() error { return checkPython(ctx, w) }},
+		{"charty", testPartLint, func() error { return checkCharts(ctx, w) }},
+		{"kod Go", testPartGo, func() error { return checkGo(ctx, w, mode.vulns) }},
 	} {
+		if mode.part != "" && mode.part != step.part {
+			continue
+		}
 		cli.Step("— %s —", step.name)
 		if err := step.run(); err != nil {
 			return err
@@ -157,6 +169,20 @@ func checkWorkflows(ctx context.Context, w *workspace) error {
 	}
 	if layerless == 0 {
 		cli.Step("warstwy: każde zadanie workflowu ci ma warstwę i budżet (decyzja 57)")
+	}
+	aggregators := map[string]string{}
+	for job, layer := range ci.Aggregators {
+		aggregators[job] = string(layer)
+	}
+	var uncollected int
+	for _, wf := range workflows {
+		for _, found := range workflow.AggregatorCoverage(wf, layers, aggregators) {
+			v.Fail("%s", found)
+			uncollected++
+		}
+	}
+	if uncollected == 0 {
+		cli.Step("zadania zbierające czekają na każde zadanie swojej warstwy na pull_request (decyzja 71)")
 	}
 	if skips == 0 {
 		cli.Step("graf zadań: każde zadanie za warunkowym przodkiem patrzy na wyniki jawnie (decyzja 47)")
@@ -279,7 +305,13 @@ type goVulnMode struct {
 }
 
 // testUsage — `dft test`; zdarzenie i commit bazowy podaje CI.
-const testUsage = "dft test [--event <zdarzenie GitHuba> [--base <commit>]] | [--base <commit>] [--vulns-baseline <commit>] [--vulns-report-only]"
+const testUsage = "dft test [--part lint|go] [--event <zdarzenie GitHuba> [--base <commit>]] | [--base <commit>] [--vulns-baseline <commit>] [--vulns-report-only]"
+
+// Części `dft test` (decyzja 71): lint — wszystko poza kodem Go, go — kod Go.
+const (
+	testPartLint = "lint"
+	testPartGo   = "go"
+)
 
 // testMode — tryb `dft test`. Zmiana ocenia się względem commita bazowego:
 // govulncheck blokuje tylko podatności, których tam nie ma (decyzja 37),
@@ -298,20 +330,29 @@ const testUsage = "dft test [--event <zdarzenie GitHuba> [--base <commit>]] | [-
 type testMode struct {
 	vulns goVulnMode
 	base  string
+	// part — testPartLint albo testPartGo; puste — wszystkie grupy.
+	part string
 }
 
 func parseTestFlags(args []string) (testMode, error) {
 	fs := flag.NewFlagSet("dft test", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var event, base string
+	var event, base, part string
 	var vulns goVulnMode
+	fs.StringVar(&part, "part", "", "")
 	fs.StringVar(&event, "event", "", "")
 	fs.StringVar(&base, "base", "", "")
 	fs.StringVar(&vulns.baseline, "vulns-baseline", "", "")
 	fs.BoolVar(&vulns.reportOnly, "vulns-report-only", false, "")
-	if err := fs.Parse(args); err != nil || fs.NArg() > 0 {
+	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || (part != "" && part != testPartLint && part != testPartGo) {
 		return testMode{}, cli.Usage("użycie: %s", testUsage)
 	}
+	mode, err := testModeFor(event, base, vulns)
+	mode.part = part
+	return mode, err
+}
+
+func testModeFor(event, base string, vulns goVulnMode) (testMode, error) {
 	switch {
 	case event == "pull_request":
 		if base == "" || vulns != (goVulnMode{}) {

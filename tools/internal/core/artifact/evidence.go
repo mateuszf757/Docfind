@@ -52,9 +52,9 @@ type EvidenceTools struct {
 }
 
 // MainJobs — zadania biegu main, które muszą być zielone w biegu commita
-// wydania: testy i obraz, publikacja z atestacją, klaster na digeście
-// z GHCR i chart, który trafił na staging.
-var MainJobs = []string{"test", "build-publish", "attest", "cluster", "chart"}
+// wydania: bramki jakości (lint i test — decyzja 71) i obraz, publikacja
+// z atestacją, klaster na digeście z GHCR i chart, który trafił na staging.
+var MainJobs = []string{"lint", "test", "build-publish", "attest", "cluster", "chart"}
 
 // Check sprawdza pakiet: wydanie poprawne, a ostatni bieg push na main dla
 // commita wydania zakończony sukcesem, z zadaniami MainJobs zielonymi —
