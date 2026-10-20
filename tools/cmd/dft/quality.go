@@ -167,6 +167,20 @@ func checkWorkflows(ctx context.Context, w *workspace) error {
 	if len(checks) == 0 {
 		cli.Step("wymagane statusy %s: zadania zbierające z always() na pull_request (decyzja 52)", strings.Join(required, ", "))
 	}
+	actions, err := workflow.LoadActions(w.root)
+	if err != nil {
+		return err
+	}
+	var caches int
+	for _, wf := range workflows {
+		for _, found := range workflow.CacheRules(wf, actions) {
+			v.Fail("%s", found)
+			caches++
+		}
+	}
+	if caches == 0 {
+		cli.Step("pamięć podręczna: odczyt tylko bez prawa zapisu, zapis poza PR-ami, klucze z sumą plików (decyzja 70)")
+	}
 	uncovered, err := workflow.DependabotCoverage(w.root)
 	if err != nil {
 		return err

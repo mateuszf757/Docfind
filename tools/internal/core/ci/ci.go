@@ -45,14 +45,15 @@ type JobSteps struct {
 }
 
 // SetupStep — krok podatku startowego: przygotowanie zadania przed
-// pierwszą bramką — przydział maszyny, checkout, narzędzia z mise, build
-// dft (decyzja 69). Rozpoznawany po nazwie, z konwencji workflowu ci:
-// narzędzia w krokach „… (mise)”, build dft w kroku „dft”.
+// pierwszą bramką — przydział maszyny, checkout, narzędzia z mise,
+// odtworzenie pamięci podręcznej, build dft (decyzje 69, 70). Rozpoznawany
+// po nazwie, z konwencji workflowu ci: narzędzia w krokach „… (mise)”,
+// pamięć w krokach „pamięć podręczna …”, build dft w kroku „dft”.
 func SetupStep(name string) bool {
 	switch {
 	case name == "Set up job", name == "Initialize containers", name == "dft":
 		return true
-	case strings.HasPrefix(name, "Run actions/checkout@"), strings.HasSuffix(name, "(mise)"):
+	case strings.HasPrefix(name, "Run actions/checkout@"), strings.HasSuffix(name, "(mise)"), strings.HasPrefix(name, "pamięć podręczna "):
 		return true
 	}
 	return false
@@ -77,7 +78,7 @@ const (
 var Layers = map[string]Layer{
 	"test": W1, "build": W1, "build-publish": W1, "tools": W1, "negatives": W1, "fast-feedback": W1,
 	"cluster": W2, "vulns": W2, "integration": W2,
-	"attest": W3, "chart": W3, "attest-chart": W3,
+	"attest": W3, "chart": W3, "attest-chart": W3, "go-cache": W3,
 	"vulns-issue": W4, "settings-drift": W4, "main-health": W4, "budget": W4,
 	"release": W5, "attest-release": W5, "promote": W5,
 }

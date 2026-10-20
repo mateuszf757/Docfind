@@ -38,6 +38,7 @@ type Toolchain interface {
 	// Test — testy modułu; coverprofile niepusty — z profilem pokrycia
 	// wszystkich pakietów (-coverpkg=./...).
 	Test(ctx context.Context, race bool, coverprofile string) error
+	CompileTests(ctx context.Context, out string, race, cover bool, tag string) error
 	CCompiler(ctx context.Context) (string, bool)
 	// Vulncheck skanuje moduł w dir (pusty — ModuleDir) i podaje migawkę
 	// bazy, z której jest wynik.
@@ -239,6 +240,47 @@ func (c Checker) Gofmt() error {
 // (`cgo: C compiler "gcc" not found`), na runnerze ubuntu-24.04 jest. Narzędzia
 // mają współbieżny kod — pętle żądań w tle, obserwatory logów, obsługę
 // sygnałów — a wyścig w nim wychodzi jako losowo zły werdykt bramki.
+// Warm kompiluje to, co kompilują bramki kodu Go — vet, staticcheck,
+// testy z -race i pokryciem, testy z tagami (warianty negatywne) — bez
+// uruchamiania testów. Pisarz pamięci podręcznej kompilacji w CI (decyzja
+// 70): flagi i wybór -race te same co w Test, więc wpisy trafiają.
+func (c Checker) Warm(ctx context.Context, tags ...string) error {
+	cc, race := c.Go.CCompiler(ctx)
+	if !race && c.RequireRace {
+		return fmt.Errorf("brak kompilatora C (CC=%s) — w CI testy kompilują się z -race", cc)
+	}
+	tmp, err := os.MkdirTemp("", "dft-warm-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmp)
+	steps := []struct {
+		name string
+		run  func(context.Context) error
+	}{
+		{"go vet", c.Go.Vet},
+		{"staticcheck", c.Go.Staticcheck},
+		{"kompilacja testów", func(ctx context.Context) error {
+			return c.Go.CompileTests(ctx, filepath.Join(tmp, "test"), race, c.Coverage != nil, "")
+		}},
+	}
+	for _, tag := range tags {
+		steps = append(steps, struct {
+			name string
+			run  func(context.Context) error
+		}{"kompilacja testów z tagiem " + tag, func(ctx context.Context) error {
+			return c.Go.CompileTests(ctx, filepath.Join(tmp, tag), false, false, tag)
+		}})
+	}
+	for _, step := range steps {
+		cli.Step("%s", step.name)
+		if err := step.run(ctx); err != nil {
+			return fmt.Errorf("%s: %w", step.name, err)
+		}
+	}
+	return nil
+}
+
 func (c Checker) Test(ctx context.Context) error {
 	cc, available := c.Go.CCompiler(ctx)
 	switch {

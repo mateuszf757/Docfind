@@ -541,6 +541,10 @@ odświeżenie digestu od zmiany wersji.
 
 ## 23. mise jako jedno wejście, logika narzędzi w Go — zmiana decyzji
 
+> Uzupełnione decyzją 70: kompilacja Go w CI korzysta z pamięci podręcznej,
+> którą zapisuje tylko zadanie `go-cache` na `main`. Zadania z tokenem do
+> rejestru, atestacji albo issues dalej budują od zera.
+
 **Zmieniłem zdanie w połowie tej decyzji i zapisuję dlaczego.** Pierwsza wersja
 miała dwie części: mise jako jedno wejście do narzędzi i zadań oraz zasadę
 „logika zostaje w skryptach `ci/*.sh`, a zadania tylko je wołają". Pierwsza
@@ -2819,6 +2823,73 @@ ponad progami przez 20 biegów, gdy pobieranie da dwa czerwone biegi
 w 30 dniach albo przy runnerze bez internetu. Wcześniej — jeśli odtworzenie
 ~1 GB obrazu okaże się szybsze niż pobranie narzędzi przez mise (pomiar
 w podsumowaniu).
+
+## 70. Pamięć podręczna kompilacji Go w CI: jeden pisarz na `main`, odczyt bez prawa zapisu
+
+> Krok 2 planu z `docs/ANALIZA-CI-NARZEDZIA-I-WARSTWY.md` (§5.2). Wdraża
+> decyzję 69 tam, gdzie boli: zimną kompilację Go.
+
+**Wybieram pamięć podręczną kompilacji z jednym zaufanym pisarzem, a nie cache
+wszystkiego.** Pierwsze `dft` w każdym zadaniu to 37–54 s zimnej kompilacji,
+a w zadaniu `test` kod Go zajmuje ~190 s. Lokalnie przy ciepłej kompilacji
+zależności, z 70 unieważnionymi pakietami własnymi:
+- build `dft` trwa 2,6 s zamiast 30 s;
+- `go vet` — 2,0 s zamiast 45 s;
+- kompilacja testów — 7 s zamiast 16,5 s.
+
+Przy `-trimpath` wpisy przechodzą między ścieżkami toolchainu (sprawdzone:
+binarka bajt w bajt ta sama).
+
+Zasady (`dft check workflows`, §6.8):
+- **Pisarz.** Zapisuje tylko zadanie `go-cache`: po scaleniu na `main`
+  i nocą, z tokenem tylko do odczytu, zaczynając od pustej pamięci — wpis
+  powstaje z kodu z `main`, nie z wcześniejszego odtworzenia. Klucze z sum
+  `tools/go.mod` i `tools/go.sum` (wersja Go i zależności):
+  - `go-dft` — sam build `dft`;
+  - `go-test` — do tego vet, staticcheck i kompilacja testów (`-race`
+    z pokryciem i tag `docker`), bez uruchamiania (`dft ci go-cache`).
+- **Czytelnicy.** `actions/cache/restore` tylko w zadaniach bez prawa
+  zapisu i bez `environment`. `build-publish`, `chart`, `release`, `promote`,
+  atestacje, `vulns-issue` i `main-health` budują od zera. Zatruty wpis to
+  wykonanie kodu w każdym zadaniu, które go odtworzy, a tam z tokenem do
+  rejestru, atestacji albo issues.
+- **Zakazy.** `actions/cache` (odczyt i zapis w jednym kroku) i wbudowana
+  pamięć akcji setup-* są zakazane; klucz bez `hashFiles(…)` jest błędem.
+- **Moduły bez pamięci.** `go.sum` i baza sum sprawdzają moduł tylko przy
+  pobraniu. Sprawdziłem na kopii: przy spójnie podrobionych katalogu, `.zip`
+  i `.ziphash` `go mod verify` odpowiada „all modules verified”, a `go build`
+  buduje z podróbki. Pobranie trwa ~10 s, więc każde zadanie pobiera je samo.
+- **Binarki narzędzi z mise też bez pamięci.** 12 instaluje się w 5 s —
+  szybciej niż odtworzenie.
+
+Reguła siedzi w `dft`, bo nie dają jej narzędzia z łańcucha. zizmor (1.30.1
+i 1.31.1) zgłasza `actions/cache` i setup-* z pamięcią, ale
+`actions/cache/restore` przepuszcza nawet w `build-publish` — sprawdziłem
+oba warianty. `cache-mode` z GitHuba (od 2026-09-10) egzekwowałby to tokenem
+cache, lecz actionlint 1.7.12 odrzuca ten klucz jako nieznany.
+
+**Co tracę:**
+- kompilacja w CI zależy od poprzednich biegów — bramka `tools` dalej buduje
+  od zera i porównuje bajty, więc powtarzalność jest sprawdzana jak dziś;
+- pierwszy bieg po zmianie `go.sum` albo Go idzie z wpisem poprzedniej
+  wersji (`restore-keys`), dopóki pisarz nie przejdzie na `main`;
+- miejsce w limicie 10 GB repozytorium: dwa wpisy na wersję `go.sum`,
+  ~0,2 i ~0,7 GB po kompresji [szacunek], stare znikają po 7 dniach bez
+  odczytu;
+- na pushu na `main` każde zadanie ma dziś domyślnie prawo zapisu do cache.
+  Kod uruchomiony tam mógłby założyć klucz pisarza przed nim — ale ten sam
+  kod mógłby opublikować obraz, więc pamięć nie poszerza powierzchni na
+  `main`;
+- reguła statyczna w `dft` zamiast egzekucji przez platformę.
+
+**Kiedy zmieniam zdanie:**
+- actionlint z `cache-mode` (albo zgoda na wąskie `-ignore`) — `cache-mode:
+  none` domyślnie, `read` u czytelników, `write` u pisarza; reguła zostaje
+  jako druga warstwa;
+- incydent zatrucia cache, którego `cache-mode` nie zamyka — obraz CI
+  z kompilacją Go (decyzja 69) zamiast pamięci;
+- pomiar po wdrożeniu (podatek startowy w budżetach) bez zysku ≥ 20 s na
+  zadanie — pisarz i reguła do usunięcia.
 
 ## Czego bym dziś nie powtórzył
 

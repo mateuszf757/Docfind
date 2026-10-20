@@ -16,7 +16,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/stages/mainhealth"
 )
 
-const ciUsage = "dft ci require | main-health [--dry-run] | budget [--enforce]"
+const ciUsage = "dft ci require | main-health [--dry-run] | budget [--enforce] | go-cache"
 
 // runCI — polecenia o samym CI. `dft ci require`: wynik zadania
 // zbierającego warstwę (fast-feedback, integration) z wyników jego needs,
@@ -27,6 +27,22 @@ const ciUsage = "dft ci require | main-health [--dry-run] | budget [--enforce]"
 // `dft ci main-health`: czerwony main dłużej niż doba i noc, która nie
 // przyszła, w jednym issue (stages/mainhealth, decyzja 54).
 func runCI(ctx context.Context, w *workspace, args []string) error {
+	// `dft ci go-cache`: kompilacja bramek kodu Go bez uruchamiania testów —
+	// pisarz pamięci podręcznej kompilacji w CI (stages/gocode.Warm,
+	// decyzja 70). Tag docker — warianty negatywne obrazu.
+	if len(args) > 0 && args[0] == "go-cache" {
+		if len(args) != 1 {
+			return cli.Usage("użycie: %s", ciUsage)
+		}
+		if err := requireTools("go"); err != nil {
+			return err
+		}
+		c, err := goChecker(w, goVulnMode{})
+		if err != nil {
+			return err
+		}
+		return c.Warm(ctx, "docker")
+	}
 	if len(args) > 0 && args[0] == "budget" {
 		if len(args) > 2 || (len(args) == 2 && args[1] != "--enforce") {
 			return cli.Usage("użycie: %s", ciUsage)

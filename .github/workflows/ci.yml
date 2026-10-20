@@ -46,6 +46,14 @@ name: ci
 # builda nie wyglądała jak wynik bramki. Po nazwach `dft ci budget` liczy
 # podatek startowy zadania (decyzja 69).
 #
+# Pamięć podręczną kompilacji Go (decyzja 70) zapisuje tylko zadanie go-cache,
+# po scaleniu na main i nocą. Odtwarzają ją zadania bez prawa zapisu, krokiem
+# „pamięć podręczna Go (odczyt)” przed krokiem „dft”; zadania z tokenem do
+# rejestru, atestacji albo issues budują od zera. Pilnuje tego dft check
+# workflows. Narzędzia z mise idą bez pamięci — 12 w 5 s, szybciej niż
+# odtworzenie. Moduły Go pobiera każde zadanie samo: go.sum sprawdza je przy
+# pobraniu, a z pamięci podręcznej nic by ich nie sprawdziło.
+#
 # fetch-depth: 0 jest konieczne — git describe bez pełnej historii i tagów
 # zwróci samo sha i wersja wdrożenia (DOCFIND_VERSION) przestanie rosnąć.
 
@@ -135,6 +143,15 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: ./bin/mise install
 
+      - name: pamięć podręczna Go (odczyt)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/.cache/staticcheck
+          key: go-test-${{ runner.os }}-${{ hashFiles('tools/go.mod', 'tools/go.sum') }}
+          restore-keys: go-test-${{ runner.os }}-
+
       - name: dft
         run: ./bin/mise exec -- ci/dft --help > /dev/null
 
@@ -222,6 +239,13 @@ jobs:
       - name: Go (mise)
         run: ./bin/mise install go
 
+      - name: pamięć podręczna Go (odczyt)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: go-dft-${{ runner.os }}-${{ hashFiles('tools/go.mod', 'tools/go.sum') }}
+          restore-keys: go-dft-${{ runner.os }}-
+
       - name: dft
         run: ./bin/mise exec -- ci/dft --help > /dev/null
 
@@ -256,6 +280,13 @@ jobs:
       - name: Go (mise)
         run: ./bin/mise install go
 
+      - name: pamięć podręczna Go (odczyt)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: go-dft-${{ runner.os }}-${{ hashFiles('tools/go.mod', 'tools/go.sum') }}
+          restore-keys: go-dft-${{ runner.os }}-
+
       - name: dft
         run: ./bin/mise exec -- ci/dft --help > /dev/null
 
@@ -286,6 +317,15 @@ jobs:
 
       - name: Go (mise)
         run: ./bin/mise install go
+
+      - name: pamięć podręczna Go (odczyt)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/.cache/staticcheck
+          key: go-test-${{ runner.os }}-${{ hashFiles('tools/go.mod', 'tools/go.sum') }}
+          restore-keys: go-test-${{ runner.os }}-
 
       - name: dft
         run: ./bin/mise exec -- ci/dft --help > /dev/null
@@ -520,6 +560,13 @@ jobs:
       - name: Go i OSV-Scanner (mise)
         run: ./bin/mise install go osv-scanner
 
+      - name: pamięć podręczna Go (odczyt)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: go-dft-${{ runner.os }}-${{ hashFiles('tools/go.mod', 'tools/go.sum') }}
+          restore-keys: go-dft-${{ runner.os }}-
+
       - name: dft
         run: ./bin/mise exec -- ci/dft --help > /dev/null
 
@@ -729,6 +776,13 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: ./bin/mise install
 
+      - name: pamięć podręczna Go (odczyt)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: go-dft-${{ runner.os }}-${{ hashFiles('tools/go.mod', 'tools/go.sum') }}
+          restore-keys: go-dft-${{ runner.os }}-
+
       - name: dft
         run: ./bin/mise exec -- ci/dft --help > /dev/null
 
@@ -910,6 +964,73 @@ jobs:
           push-to-registry: true
           create-storage-record: false
 
+  # Pisarz pamięci podręcznej kompilacji Go (decyzja 70): po scaleniu na main
+  # i nocą, z kodem z main, z tokenem tylko do odczytu, bez sekretów. Dwa wpisy
+  # z kluczem z tools/go.mod i tools/go.sum (wersja Go i zależności): go-dft —
+  # build dft, dla zadań, które tylko go uruchamiają; go-test — do tego vet,
+  # staticcheck i kompilacja testów (z -race i pokryciem oraz z tagiem docker)
+  # dla test i negatives. Testy są kompilowane, nie uruchamiane, a zadanie
+  # zaczyna od pustej pamięci — wpis powstaje z kodu z main, nie z odtworzenia.
+  # Wpisy są niezmienne: gdy oba istnieją, zadanie kończy się na sprawdzeniu.
+  go-cache:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      MISE_AUTO_INSTALL: "false"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: pamięć podręczna Go (czy jest dft)
+        id: dft
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: go-dft-${{ runner.os }}-${{ hashFiles('tools/go.mod', 'tools/go.sum') }}
+          lookup-only: true
+
+      - name: pamięć podręczna Go (czy są testy)
+        id: test
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/.cache/staticcheck
+          key: go-test-${{ runner.os }}-${{ hashFiles('tools/go.mod', 'tools/go.sum') }}
+          lookup-only: true
+
+      - name: Go (mise)
+        if: steps.dft.outputs.cache-hit != 'true' || steps.test.outputs.cache-hit != 'true'
+        run: ./bin/mise install go
+
+      - name: dft
+        if: steps.dft.outputs.cache-hit != 'true' || steps.test.outputs.cache-hit != 'true'
+        run: ./bin/mise exec -- ci/dft --help > /dev/null
+
+      - name: pamięć podręczna Go (zapis dft)
+        if: steps.dft.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: go-dft-${{ runner.os }}-${{ hashFiles('tools/go.mod', 'tools/go.sum') }}
+
+      - name: kompilacja bramek Go
+        if: steps.test.outputs.cache-hit != 'true'
+        run: ./bin/mise run ci:go-cache
+
+      - name: pamięć podręczna Go (zapis testów)
+        if: steps.test.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/.cache/staticcheck
+          key: go-test-${{ runner.os }}-${{ hashFiles('tools/go.mod', 'tools/go.sum') }}
+
   # Wymagane statusy reguły main (decyzja 52): zadania zbierające warstwy.
   # always() — biegną także wtedy, gdy zadanie warstwy zawiodło, zostało
   # anulowane albo pominięte, i są wtedy czerwone: zadanie wymagane pominięte
@@ -930,6 +1051,13 @@ jobs:
 
       - name: Go (mise)
         run: ./bin/mise install go
+
+      - name: pamięć podręczna Go (odczyt)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: go-dft-${{ runner.os }}-${{ hashFiles('tools/go.mod', 'tools/go.sum') }}
+          restore-keys: go-dft-${{ runner.os }}-
 
       - name: dft
         run: ./bin/mise exec -- ci/dft --help > /dev/null
@@ -953,6 +1081,13 @@ jobs:
 
       - name: Go (mise)
         run: ./bin/mise install go
+
+      - name: pamięć podręczna Go (odczyt)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: go-dft-${{ runner.os }}-${{ hashFiles('tools/go.mod', 'tools/go.sum') }}
+          restore-keys: go-dft-${{ runner.os }}-
 
       - name: dft
         run: ./bin/mise exec -- ci/dft --help > /dev/null
@@ -980,6 +1115,13 @@ jobs:
 
       - name: Go i gh (mise)
         run: ./bin/mise install go gh
+
+      - name: pamięć podręczna Go (odczyt)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: go-dft-${{ runner.os }}-${{ hashFiles('tools/go.mod', 'tools/go.sum') }}
+          restore-keys: go-dft-${{ runner.os }}-
 
       - name: dft
         run: ./bin/mise exec -- ci/dft --help > /dev/null
@@ -1044,6 +1186,13 @@ jobs:
 
       - name: Go i gh (mise)
         run: ./bin/mise install go gh
+
+      - name: pamięć podręczna Go (odczyt)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: go-dft-${{ runner.os }}-${{ hashFiles('tools/go.mod', 'tools/go.sum') }}
+          restore-keys: go-dft-${{ runner.os }}-
 
       - name: dft
         run: ./bin/mise exec -- ci/dft --help > /dev/null

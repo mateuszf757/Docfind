@@ -140,3 +140,18 @@ func TestTestRaceAndBuild(t *testing.T) {
 		t.Errorf("wariant negatywny przepuszczony: %v", err)
 	}
 }
+
+func TestCompileTests(t *testing.T) {
+	f := &proc.Fake{Responses: map[string]proc.FakeResponse{
+		"go test -race -coverpkg=./... -c -o /tmp/w/race/ ./...": {},
+		"go test -tags docker -c -o /tmp/w/docker/ ./...":        {},
+	}}
+	g := Go{ModuleDir: "/m", Runner: f}
+	ctx := context.Background()
+	if err := g.CompileTests(ctx, "/tmp/w/race", true, true, ""); err != nil || !strings.Contains(strings.Join(f.Calls[0].Env, " "), "CGO_ENABLED=1") {
+		t.Errorf("testy z -race: %v, %v", f.Calls[0].Env, err)
+	}
+	if err := g.CompileTests(ctx, "/tmp/w/docker/", false, false, "docker"); err != nil || len(f.Calls[1].Env) != 0 {
+		t.Errorf("testy z tagiem: %v, %v", f.Calls[1].Env, err)
+	}
+}

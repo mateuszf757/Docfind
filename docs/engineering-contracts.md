@@ -420,6 +420,19 @@ W4 (stan). Wariant negatywny: zmiana pliku reguły bez wpisu w DECYZJE → czerw
 wymagany status albo zgoda zmienione w UI → noc czerwona (testy `stages/reposync`).
 Decyzja: 22, 38, 54.
 
+**6.8 Pamięć podręczna CI.** Pamięć podręczną kompilacji Go zapisuje tylko zadanie `go-cache`,
+po scaleniu na `main` i nocą, od pustej pamięci; odtwarzają ją tylko zadania bez prawa zapisu
+i bez `environment`. Modułów Go i binarek narzędzi nie ma w pamięci — moduły sprawdza `go.sum`
+przy pobraniu, narzędzia — sumy z `mise.lock` przy instalacji.
+Egzekwuje: `dft check workflows` (`core/workflow`): zakaz `actions/cache` i wbudowanej pamięci
+akcji setup-*; `actions/cache/restore` w zadaniu z prawem zapisu albo `environment` — błąd,
+także w akcji złożonej; `actions/cache/save` w zadaniu osiągalnym z pull_request — błąd; klucz
+bez `hashFiles(…)` — błąd [ŻYCZENIE: `cache-mode: none` w workflowie, `read` u czytelników,
+`write` u pisarza — gdy actionlint pozna ten klucz]. Dowód: log `test`. Warstwa: W1.
+Wariant negatywny: `actions/cache/restore` w `build-publish` → czerwony `test` (zizmor go nie
+zgłasza); `actions/cache` w `test` → czerwony `test`; zapis w zadaniu bez warunku na PR-ach →
+czerwony `test` (testy `core/workflow`). Decyzja: 23, 49, 70.
+
 ## 7. Dowody i retencja
 
 **7.1 Pakiet dowodów wydania.** Przy digeście każdego wydania atestacja pakietu dowodów

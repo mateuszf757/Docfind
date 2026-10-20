@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -101,6 +102,8 @@ type toolchain struct {
 	cached, fresh string
 	// profile — profil pokrycia zapisywany przez Test.
 	profile string
+	// compiled — wywołania CompileTests: race, pokrycie, tag.
+	compiled []string
 }
 
 func (f *toolchain) Vet(context.Context) error         { return nil }
@@ -113,6 +116,10 @@ func (f *toolchain) Test(_ context.Context, race bool, coverprofile string) erro
 	return nil
 }
 func (f *toolchain) CCompiler(context.Context) (string, bool) { return "gcc", f.cc }
+func (f *toolchain) CompileTests(_ context.Context, out string, race, cover bool, tag string) error {
+	f.compiled = append(f.compiled, fmt.Sprintf("%s race=%v cover=%v tag=%s", filepath.Base(out), race, cover, tag))
+	return nil
+}
 
 const vulnDB = "2026-10-08T22:31:09Z"
 
@@ -307,5 +314,26 @@ func TestCoverage(t *testing.T) {
 	c.Go = &toolchain{cc: true, profile: "mode: atomic\n" + m + "/internal/kit/b/b.go:1.1,2.2 10 1\n"}
 	if err := c.Test(context.Background()); err != nil {
 		t.Errorf("pokrycie powyżej minimum: %v", err)
+	}
+}
+
+func TestWarm(t *testing.T) {
+	silence(t)
+	tc := &toolchain{cc: true}
+	c := Checker{ModuleDir: "../../..", Go: tc, RequireRace: true, Coverage: func(map[string]coverage.Stat, coverage.Stat) error { return nil }}
+	if err := c.Warm(context.Background(), "docker"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"test race=true cover=true tag=", "docker race=false cover=false tag=docker"}
+	if !slices.Equal(tc.compiled, want) {
+		t.Errorf("kompilacje: %q, oczekiwano %q", tc.compiled, want)
+	}
+	if len(tc.tested) != 0 {
+		t.Errorf("Warm uruchomił testy: %v", tc.tested)
+	}
+	// W CI bez kompilatora C pisarz nie może zapisać pamięci bez -race —
+	// bramki szukałyby wpisów, których nie ma.
+	if err := (Checker{Go: &toolchain{}, RequireRace: true}).Warm(context.Background()); err == nil {
+		t.Error("brak kompilatora C w CI przepuszczony")
 	}
 }
