@@ -100,6 +100,18 @@ func (c CLI) Jobs(ctx context.Context, runID int64) ([]ci.Job, error) {
 	return jobs.Jobs, nil
 }
 
+// JobSteps zwraca zadania biegu z krokami — do podatku startowego
+// w budżetach (decyzja 69).
+func (c CLI) JobSteps(ctx context.Context, runID int64) ([]ci.JobSteps, error) {
+	var jobs struct {
+		Jobs []ci.JobSteps `json:"jobs"`
+	}
+	if err := c.api(ctx, &jobs, fmt.Sprintf("repos/{owner}/{repo}/actions/runs/%d/jobs?per_page=100", runID)); err != nil {
+		return nil, err
+	}
+	return jobs.Jobs, nil
+}
+
 // FindIssue zwraca numer otwartego issue o dokładnie tym tytule; 0 — nie ma.
 func (c CLI) FindIssue(ctx context.Context, title string) (int, error) {
 	out, err := c.gh(ctx, "issue", "list", "--state", "open", "--search", title+" in:title", "--json", "number,title")

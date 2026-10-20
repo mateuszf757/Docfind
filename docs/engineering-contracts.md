@@ -156,10 +156,13 @@ wersji charta w trakcie → kod 1, bez tagu; kod bramek z niezatwierdzonymi zmia
 
 Egzekwuje: `dft check workflows` — zadanie workflowu ci bez warstwy w `core/ci` to błąd;
 `dft ci budget` w nocy (zadanie `budget`) — p50 i p95 z 20 zielonych biegów pierwszego podejścia
-[ŻYCZENIE: `--enforce` w nocy po osiągnięciu budżetu W1]. Dowód: podsumowanie nocy (p50 i p95
-warstw, kolejki i zadań na zdarzenie), raport `budget.json`. Warstwa: wszystkie.
+[ŻYCZENIE: `--enforce` w nocy po osiągnięciu budżetu W1]; tam też podatek startowy zadań (kroki
+przygotowania: checkout, narzędzia z mise, build dft w kroku `dft`) z progami z §10 — ponad nimi
+ostrzeżenie, sygnał do obrazu CI z narzędziami. Dowód: podsumowanie nocy (p50 i p95 warstw,
+kolejki, zadań i podatku startowego na zdarzenie), raport `budget.json`. Warstwa: wszystkie.
 Wariant negatywny: zadanie bez warstwy → czerwony `test`; W1 przekroczony w 5 z 20 biegów →
-ostrzeżenie, z `--enforce` kod 1 (testy `core/workflow`, `stages/budget`). Decyzja: 36, 57.
+ostrzeżenie, z `--enforce` kod 1; podatek zadania W1 ponad próg → ostrzeżenie (testy
+`core/workflow`, `stages/budget`). Decyzja: 36, 57, 69.
 
 **3.2 Wymagane statusy.** Reguła `main` (`.github/rulesets/main.json`) wymaga dokładnie
 `fast-feedback` i `integration` z aplikacji GitHub Actions. Oba to zadania zbierające
@@ -573,6 +576,7 @@ docelowe bez strażnika (budżety warstw, Z, pokrycie) stoją w klauzulach, w zn
 | §6.2 | punkt odniesienia skanu obrazu na PR-ze | obraz commita bazowego albo najbliższego z 10 przodków | stages/vulns |
 | §3.1 | budżet warstw W1 / W2 / W3 / W4 / W5 (p95) | 6m0s / 20m0s / 30m0s / 40m0s / 10m0s | stages/budget |
 | §0.5 | przekroczenia budżetu w ostatnich biegach | z 20: ostrzeżenie od 3, czerwona noc od 5 | stages/budget |
+| §3.1 | podatek startowy: p50 zadania W1 / p50 sumy zadań W1 w biegu | ≤ 30s / ≤ 3m0s; ponad — ostrzeżenie, sygnał do obrazu CI | stages/budget |
 | §3.3 | przerwa między biegami nocnymi w serii | ≤ 48h0m0s | stages/trial, stages/mainhealth |
 | §3.6 | czerwony main bez issue | ≤ 24h0m0s | stages/mainhealth |
 | §6.2 | ważność wyjątku podatności | ≤ 90 dni | core/vuln |

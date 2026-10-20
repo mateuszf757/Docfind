@@ -5,7 +5,9 @@ description: >-
   cluster albo publikacja do GHCR. Wspólne kroki zadań build (PR, noc, token
   tylko do odczytu) i build-publish (push na main, packages: write): te same
   kroki, różne uprawnienia tokenu, bo uprawnienia dostaje zadanie, a nie krok
-  (decyzja 49). Wymaga checkoutu z pełną historią przed użyciem.
+  (decyzja 49). Wymaga przed użyciem checkoutu z pełną historią i kroków
+  „Go (mise)” i „dft” w zadaniu — dft budowany ze źródeł w zadaniu, które go
+  uruchamia, a podatek startowy widać w budżetach (decyzja 69).
 
 inputs:
   publish:
@@ -28,13 +30,6 @@ outputs:
 runs:
   using: composite
   steps:
-    # Tylko Go, z sumą z mise.lock: dft budowany ze źródeł w tym zadaniu,
-    # a nie binarka z zadania test — zadanie z packages: write uruchamiałoby
-    # program zbudowany gdzie indziej. Go pobierany z dl.google.com, bez tokenu.
-    - name: Go (mise)
-      shell: bash
-      run: ./bin/mise install go
-
     # Obraz BuildKit z ci/pins.env. Bez przypięcia sterownik docker-container
     # bierze przesuwalny tag, a od wersji BuildKit (i wbudowanego w nią
     # frontendu Dockerfile) zależy, czy obraz z CI jest bajt w bajt taki jak

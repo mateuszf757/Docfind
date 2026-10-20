@@ -5,6 +5,7 @@ package ci
 import (
 	"maps"
 	"slices"
+	"strings"
 )
 
 // Run — bieg workflowu.
@@ -25,6 +26,36 @@ type Job struct {
 	Conclusion  string `json:"conclusion"`
 	StartedAt   string `json:"started_at,omitempty"`
 	CompletedAt string `json:"completed_at,omitempty"`
+}
+
+// Step — krok zadania z API zadań biegu.
+type Step struct {
+	Name        string `json:"name"`
+	Conclusion  string `json:"conclusion"`
+	StartedAt   string `json:"started_at,omitempty"`
+	CompletedAt string `json:"completed_at,omitempty"`
+}
+
+// JobSteps — zadanie z krokami. Osobny typ, bo Job trafia do pakietu
+// dowodów wydania (core/artifact), a tam kroki byłyby szumem w predykacie
+// atestacji.
+type JobSteps struct {
+	Job
+	Steps []Step `json:"steps"`
+}
+
+// SetupStep — krok podatku startowego: przygotowanie zadania przed
+// pierwszą bramką — przydział maszyny, checkout, narzędzia z mise, build
+// dft (decyzja 69). Rozpoznawany po nazwie, z konwencji workflowu ci:
+// narzędzia w krokach „… (mise)”, build dft w kroku „dft”.
+func SetupStep(name string) bool {
+	switch {
+	case name == "Set up job", name == "Initialize containers", name == "dft":
+		return true
+	case strings.HasPrefix(name, "Run actions/checkout@"), strings.HasSuffix(name, "(mise)"):
+		return true
+	}
+	return false
 }
 
 // Layer — warstwa CI (§3.1 kontraktu).

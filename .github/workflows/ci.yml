@@ -41,6 +41,11 @@ name: ci
 # bramkę wykonuje. Zadania nie mają pola name: nazwa zadania to nazwa
 # statusu.
 #
+# Kroki przygotowania mają stałe nazwy: narzędzia z mise.lock w krokach
+# „… (mise)”, build dft w kroku „dft” — przed pierwszą bramką, żeby awaria
+# builda nie wyglądała jak wynik bramki. Po nazwach `dft ci budget` liczy
+# podatek startowy zadania (decyzja 69).
+#
 # fetch-depth: 0 jest konieczne — git describe bez pełnej historii i tagów
 # zwróci samo sha i wersja wdrożenia (DOCFIND_VERSION) przestanie rosnąć.
 
@@ -130,6 +135,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: ./bin/mise install
 
+      - name: dft
+        run: ./bin/mise exec -- ci/dft --help > /dev/null
+
       # Wersja uv z Dockerfile — jedynego miejsca, w którym uv jest przypięty
       # i które aktualizuje Dependabot. Bez tego setup-uv bierze najnowszego.
       # Czyta ją dft, a nie źródłowany skrypt Basha (decyzja 23).
@@ -211,11 +219,19 @@ jobs:
           # i może go odczytać każdy późniejszy krok. Skrypty nie pushują.
           persist-credentials: false
 
+      - name: Go (mise)
+        run: ./bin/mise install go
+
+      - name: dft
+        run: ./bin/mise exec -- ci/dft --help > /dev/null
+
       # Akcja z obszaru roboczego, nie składnia $/…, którą zaleca zizmor:
       # actionlint 1.7.12 jej nie zna i odrzuca workflow. Ryzyko, przed którym
       # chroni $/… — akcja podmieniona w obszarze roboczym przez wcześniejszy
-      # krok — tu nie zachodzi: jedyny wcześniejszy krok to checkout tego
-      # samego commita. Do zmiany razem z aktualizacją actionlinta.
+      # krok — tu nie zachodzi: wcześniejsze kroki to checkout tego samego
+      # commita, Go z sumą z mise.lock i build dft z tego commita — żaden nie
+      # uruchamia kodu spoza repozytorium i mise.lock. Do zmiany razem
+      # z aktualizacją actionlinta.
       - name: build i sprawdzenia obrazu, archiwum
         id: image
         uses: ./.github/actions/build-image # zizmor: ignore[self-repository]
@@ -239,6 +255,9 @@ jobs:
 
       - name: Go (mise)
         run: ./bin/mise install go
+
+      - name: dft
+        run: ./bin/mise exec -- ci/dft --help > /dev/null
 
       - name: powtarzalność narzędzi Go
         run: ./bin/mise run check:tools
@@ -267,6 +286,9 @@ jobs:
 
       - name: Go (mise)
         run: ./bin/mise install go
+
+      - name: dft
+        run: ./bin/mise exec -- ci/dft --help > /dev/null
 
       - name: przypięte wersje
         id: pins
@@ -305,6 +327,15 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      # Go z sumą z mise.lock i dft zbudowany tutaj, ze źródeł tego commita —
+      # nie binarka z innego zadania: zadanie z packages: write uruchamia tylko
+      # program zbudowany u siebie. Go pobierany z dl.google.com, bez tokenu.
+      - name: Go (mise)
+        run: ./bin/mise install go
+
+      - name: dft
+        run: ./bin/mise exec -- ci/dft --help > /dev/null
 
       - name: build, sprawdzenia i publikacja obrazu
         id: image
@@ -388,6 +419,9 @@ jobs:
 
       - name: Go i gh (mise)
         run: ./bin/mise install go gh
+
+      - name: dft
+        run: ./bin/mise exec -- ci/dft --help > /dev/null
 
       - name: logowanie do GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -486,6 +520,9 @@ jobs:
       - name: Go i OSV-Scanner (mise)
         run: ./bin/mise install go osv-scanner
 
+      - name: dft
+        run: ./bin/mise exec -- ci/dft --help > /dev/null
+
       - name: archiwum obrazu z zadania build
         if: github.event_name != 'push'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -568,6 +605,9 @@ jobs:
       - name: Go i gh (mise)
         run: ./bin/mise install go gh
 
+      - name: dft
+        run: ./bin/mise exec -- ci/dft --help > /dev/null
+
       # Wzorzec zamiast nazw: brak artefaktu skanu, który się nie wykonał,
       # nie przerywa kroku. Których raportów oczekiwać, wie dft.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -629,6 +669,9 @@ jobs:
       - name: Go i gh (mise)
         run: ./bin/mise install go gh
 
+      - name: dft
+        run: ./bin/mise exec -- ci/dft --help > /dev/null
+
       - name: weryfikacja i zapis promocji
         env:
           IMAGE: ${{ needs.release.outputs.image }}@${{ needs.release.outputs.digest }}
@@ -685,6 +728,9 @@ jobs:
           # GitHuba przez API, a bez tokenu limit to 60 żądań na godzinę.
           GITHUB_TOKEN: ${{ github.token }}
         run: ./bin/mise install
+
+      - name: dft
+        run: ./bin/mise exec -- ci/dft --help > /dev/null
 
       - name: archiwum obrazu z zadania build
         if: github.event_name != 'push'
@@ -817,6 +863,9 @@ jobs:
       - name: Go (mise)
         run: ./bin/mise install go
 
+      - name: dft
+        run: ./bin/mise exec -- ci/dft --help > /dev/null
+
       - name: logowanie do GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -882,6 +931,9 @@ jobs:
       - name: Go (mise)
         run: ./bin/mise install go
 
+      - name: dft
+        run: ./bin/mise exec -- ci/dft --help > /dev/null
+
       - name: wynik warstwy W1
         env:
           NEEDS: ${{ toJSON(needs) }}
@@ -901,6 +953,9 @@ jobs:
 
       - name: Go (mise)
         run: ./bin/mise install go
+
+      - name: dft
+        run: ./bin/mise exec -- ci/dft --help > /dev/null
 
       - name: wynik warstwy W2
         env:
@@ -925,6 +980,9 @@ jobs:
 
       - name: Go i gh (mise)
         run: ./bin/mise install go gh
+
+      - name: dft
+        run: ./bin/mise exec -- ci/dft --help > /dev/null
 
       - name: ustawienia w GitHubie zgodne z plikami
         env:
@@ -956,6 +1014,9 @@ jobs:
       - name: Go i gh (mise)
         run: ./bin/mise install go gh
 
+      - name: dft
+        run: ./bin/mise exec -- ci/dft --help > /dev/null
+
       - name: zdrowie main do issue
         env:
           GH_TOKEN: ${{ github.token }}
@@ -983,6 +1044,9 @@ jobs:
 
       - name: Go i gh (mise)
         run: ./bin/mise install go gh
+
+      - name: dft
+        run: ./bin/mise exec -- ci/dft --help > /dev/null
 
       - name: budżety warstw
         env:
