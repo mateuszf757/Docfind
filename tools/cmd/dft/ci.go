@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -18,12 +20,13 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/core/ci"
 	"github.com/mateuszf757/Docfind/tools/internal/core/contract"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
+	"github.com/mateuszf757/Docfind/tools/internal/kit/proc"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/budget"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/mainhealth"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/plan"
 )
 
-const ciUsage = "dft ci require | main-health [--dry-run] | budget [--enforce] | go-cache | plan --base <commit> [--repo <katalog>] | plan-trial"
+const ciUsage = "dft ci require | main-health [--dry-run] | budget [--enforce] | go-cache | plan --base <commit> [--repo <katalog>] | plan-trial | container <zadanie mise> [argumenty]"
 
 // runCI — polecenia o samym CI. `dft ci require`: wynik zadania
 // zbierającego warstwę (fast-feedback, integration) z wyników jego needs,
@@ -52,6 +55,15 @@ func runCI(ctx context.Context, w *workspace, args []string) error {
 	}
 	if len(args) > 0 && args[0] == "plan" {
 		return ciPlan(ctx, w, args[1:])
+	}
+	if len(args) > 0 && args[0] == "container" {
+		if len(args) < 2 {
+			return cli.Usage("użycie: %s", ciUsage)
+		}
+		if err := requireTools("docker"); err != nil {
+			return err
+		}
+		return ciContainer(ctx, w, args[1], args[2:])
 	}
 	if len(args) > 0 && args[0] == "plan-trial" {
 		if len(args) != 1 {
@@ -259,4 +271,93 @@ func ciPlanTrial(ctx context.Context, w *workspace) (err error) {
 		return err
 	}
 	return w.writeReport("plan-trial", res)
+}
+
+// ciImageFiles — pliki, z których powstaje obraz ci-light: jego tag to ich
+// suma, więc obraz buduje się od nowa tylko po ich zmianie.
+var ciImageFiles = []string{"ci/images/Dockerfile", "ci/images/Dockerfile.dockerignore", "bin/mise"}
+
+// ciImageTag — tag obrazu ci-light z sumy jego plików.
+func ciImageTag(root string) (string, error) {
+	h := sha256.New()
+	for _, rel := range ciImageFiles {
+		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(h, "%s %d\n", rel, len(raw))
+		h.Write(raw)
+	}
+	return "docfind-ci-light:" + hex.EncodeToString(h.Sum(nil))[:12], nil
+}
+
+// containerArgs — `docker run` dla zadania mise w obrazie ci-light:
+// repozytorium pod tą samą ścieżką (narzędzia z .mise repozytorium działają
+// bez zmian), pamięć podręczna Go w katalogu hosta, żeby kolejne biegi były
+// ciepłe. Docker rootless mapuje roota kontenera na użytkownika hosta;
+// klasyczny — dostaje jego uid i gid, żeby pliki w repozytorium nie należały
+// do roota.
+func containerArgs(root, cache, image string, rootless bool, uid, gid int, task string, taskArgs []string) []string {
+	args := []string{"run", "--rm", "-v", root + ":" + root, "-w", root, "-v", cache + ":/cache",
+		"-e", "GOCACHE=/cache/go-build", "-e", "GOMODCACHE=/cache/go-mod"}
+	if !rootless {
+		args = append(args, "--user", fmt.Sprintf("%d:%d", uid, gid), "-e", "HOME=/tmp")
+	}
+	args = append(args, image, "./bin/mise", "run", task)
+	if len(taskArgs) > 0 {
+		args = append(append(args, "--"), taskArgs...)
+	}
+	return args
+}
+
+// ciContainer — `dft ci container <zadanie> [argumenty]`: zadanie mise
+// w obrazie ci-light (decyzja 78), np. `test -- --part go` z detektorem
+// wyścigów, którego host bez kompilatora C nie uruchomi. Obraz buduje się
+// przy pierwszym użyciu i po zmianie jego plików. W kontenerze nie ma
+// Dockera — zadania z obrazami i klastrem biegną na hoście.
+func ciContainer(ctx context.Context, w *workspace, task string, taskArgs []string) error {
+	image, err := ciImageTag(w.root)
+	if err != nil {
+		return err
+	}
+	d := w.docker()
+	exists, err := d.ImageExists(ctx, image)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		cli.Step("build obrazu %s (ci/images/Dockerfile, etap light)", image)
+		if err := d.BuildTarget(ctx, filepath.Join(w.root, "ci", "images", "Dockerfile"), "light", image, w.root, os.Stdout, os.Stderr); err != nil {
+			return err
+		}
+	}
+	rootless, err := d.Rootless(ctx)
+	if err != nil {
+		return err
+	}
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return err
+	}
+	cache := filepath.Join(base, "docfind-ci")
+	for _, dir := range []string{"go-build", "go-mod"} {
+		if err := os.MkdirAll(filepath.Join(cache, dir), 0o755); err != nil {
+			return err
+		}
+	}
+	cli.Step("zadanie %s w %s", task, image)
+	return containerResult(task, d.RunAttached(ctx, containerArgs(w.root, cache, image, rootless, os.Getuid(), os.Getgid(), task, taskArgs), os.Stdout, os.Stderr))
+}
+
+// containerResult — kod zadania z kontenera jako wynik dft: 1 to warunki
+// niespełnione (już wypisane w kontenerze), inny kod — awaria.
+func containerResult(task string, err error) error {
+	switch code := proc.ExitCode(err); {
+	case err == nil:
+		return nil
+	case code == cli.ExitUnmet:
+		return &cli.UnmetError{Msg: fmt.Sprintf("zadanie %s w kontenerze: warunki niespełnione", task), Reported: true}
+	default:
+		return fmt.Errorf("zadanie %s w kontenerze: %w", task, err)
+	}
 }

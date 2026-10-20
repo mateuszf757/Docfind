@@ -257,6 +257,7 @@ i bez sudo.
 ./bin/mise run ci                 # cały pipeline po kolei, jak w CI (bez publikacji)
 ./bin/mise run build              # build obrazu z HEAD — niesie commit, nie wersję
 ./bin/mise run test:image         # testy jednostkowe w obrazie na musl
+./bin/mise run ci:container -- test --part go   # testy Go z -race w obrazie ci-light (gcc bez sudo)
 ./bin/mise run check:runtime      # warunki zakończenia Etapu 1 (raport JSON w .cache/reports)
 ./bin/mise run test:negatives     # warianty, które bramki Etapu 1 muszą odrzucić
 ./bin/mise run check:reproducible # build z cache i od zera → identyczny obraz

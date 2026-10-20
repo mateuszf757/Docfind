@@ -249,8 +249,13 @@ toolchainu, nawet gdy zażąda go `tools/go.mod`.
 
 **Detektor wyścigów (`go test -race`)** wymaga kompilatora C (cgo). Bez gcc
 testy biegną bez niego, z ostrzeżeniem; w CI (`CI=true`) brak kompilatora
-kończy bramkę kodem 2. Instalacja gcc wymaga sudo, więc lokalnie nie jest
-wymagana — wyścig wyjdzie najpóźniej w zadaniu `test` w CI.
+kończy bramkę kodem 2. Instalacja gcc wymaga sudo, więc na hoście nie jest
+wymagana. Z detektorem lokalnie, bez sudo:
+`./bin/mise run ci:container -- test --part go` — testy Go w obrazie
+`ci-light` (Ubuntu 24.04 jak runner, z gcc), z repozytorium zamontowanym pod
+tą samą ścieżką i pamięcią podręczną Go w `~/.cache/docfind-ci` (decyzja 78).
+Pierwszy bieg buduje obraz (~7 min, migawka archiwum Ubuntu bywa wolna)
+i kompiluje testy od zera (~3 min); kolejne — sekundy.
 
 **Kubeconfig:** klaster zapisuje dane dostępowe do `.cache/kubeconfig`
 w repozytorium, nie do `~/.kube/config`. `dft` bierze ścieżkę i kontekst

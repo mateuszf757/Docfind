@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -228,5 +229,55 @@ func TestRepositoryClusterDirs(t *testing.T) {
 		if dirs[dir] {
 			t.Errorf("%s w grafie pakietów klastrowych", dir)
 		}
+	}
+}
+
+func TestContainerArgs(t *testing.T) {
+	got := strings.Join(containerArgs("/r", "/c", "img:1", true, 1000, 1000, "test", []string{"--part", "go"}), " ")
+	want := "run --rm -v /r:/r -w /r -v /c:/cache -e GOCACHE=/cache/go-build -e GOMODCACHE=/cache/go-mod img:1 ./bin/mise run test -- --part go"
+	if got != want {
+		t.Errorf("rootless:\n%s\noczekiwano:\n%s", got, want)
+	}
+	if got := strings.Join(containerArgs("/r", "/c", "img:1", false, 1000, 1001, "lint", nil), " "); !strings.Contains(got, "--user 1000:1001 -e HOME=/tmp img:1 ./bin/mise run lint") || strings.Contains(got, " -- ") {
+		t.Errorf("klasyczny Docker: %s", got)
+	}
+}
+
+// Tag obrazu ci-light zmienia się z jego plikami i tylko z nimi.
+func TestCIImageTag(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range ciImageFiles {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(rel), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a, err := ciImageTag(root)
+	if err != nil || !strings.HasPrefix(a, "docfind-ci-light:") || len(a) != len("docfind-ci-light:")+12 {
+		t.Fatalf("tag %q, %v", a, err)
+	}
+	if b, _ := ciImageTag(root); b != a {
+		t.Errorf("ten sam stan, inny tag: %s, %s", a, b)
+	}
+	if err := os.WriteFile(filepath.Join(root, "ci", "images", "Dockerfile"), []byte("FROM x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := ciImageTag(root); c == a {
+		t.Error("zmiana Dockerfile bez zmiany tagu")
+	}
+}
+
+// Kod zadania z kontenera: 1 — niespełnione, inny — awaria, 0 — sukces.
+func TestContainerResult(t *testing.T) {
+	for code, want := range map[int]int{1: cli.ExitUnmet, 2: cli.ExitFailure, 125: cli.ExitFailure} {
+		if got := cli.ExitCode(containerResult("test", &proc.ExitError{Code: code})); got != want {
+			t.Errorf("kod kontenera %d: dft %d, oczekiwano %d", code, got, want)
+		}
+	}
+	if err := containerResult("test", nil); err != nil {
+		t.Errorf("sukces: %v", err)
 	}
 }

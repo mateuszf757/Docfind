@@ -1,0 +1,4 @@
+# Kontekst obrazów CI to korzeń repozytorium, ale obraz potrzebuje tylko
+# launchera mise.
+*
+!bin/mise

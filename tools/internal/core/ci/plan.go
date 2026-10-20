@@ -44,7 +44,7 @@ var ClusterRootFiles = []string{"cluster.go", "gitops.go", "secrets.go", "wiring
 var clusterCommandFiles = append(slices.Clone(ClusterRootFiles), "main.go", "quality.go")
 
 var (
-	fastPrefixes   = []string{"docs/", ".github/rulesets/", ".github/environments/", "tests/corpus/"}
+	fastPrefixes   = []string{"docs/", ".github/rulesets/", ".github/environments/", "tests/corpus/", "ci/images/"}
 	fastFiles      = []string{".github/dependabot.yml", "ci/contract-exceptions.yaml", "ci/vuln-exceptions.yaml", "ci/gitleaks.toml", "ci/gitleaks-ignore", ".gitignore", "LICENSE"}
 	mediumPrefixes = []string{"services/api/", "deploy/config/"}
 	heavyPrefixes  = []string{"deploy/charts/", "deploy/platform/", "deploy/environments/", "deploy/k3d/", ".github/workflows/", ".github/actions/", "bin/", "tools/cmd/drain-probe/"}

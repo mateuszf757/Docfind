@@ -275,6 +275,10 @@ run = "ci/dft ci plan"
 description = "Plan w trybie cienia: profil z PR-ów kontra wynik cluster — gotowość do pomijania klastra wg profilu (decyzja 77)"
 run = "ci/dft ci plan-trial"
 
+[tasks."ci:container"]
+description = "Zadanie mise w obrazie ci-light (Ubuntu jak runner, gcc) — np. ci:container -- test --part go: testy Go z -race bez kompilatora C na hoście (decyzja 78)"
+run = "ci/dft ci container"
+
 [tasks."ci:budget"]
 description = "Budżety warstw CI: p50/p95 z 20 zielonych biegów PR, push i nocy, kolejka, czasy zadań (decyzja 57); --enforce czerwieni przy 5 przekroczeniach z 20"
 run = "ci/dft ci budget"
