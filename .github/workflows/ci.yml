@@ -1026,9 +1026,12 @@ jobs:
     outputs:
       chart: ${{ steps.chart.outputs.chart }}
       digest: ${{ steps.chart.outputs.chart-digest }}
+      platform-chart: ${{ steps.platform.outputs.platform-chart }}
+      platform-digest: ${{ steps.platform.outputs.platform-chart-digest }}
     env:
       # Jak w build: zadanie z packages: write uruchamia tylko dft zbudowany
-      # tutaj, z samym Go.
+      # tutaj, z samym Go — także charty z rejestru OCI pobiera dft, bez
+      # binarki Helma czytającej poświadczenia z konfiguracji Dockera.
       MISE_AUTO_INSTALL: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1058,6 +1061,19 @@ jobs:
           TESTED: ${{ needs.cluster.outputs.chart-digest }}
         run: ./bin/mise run chart:publish -- --image "$IMAGE" --tested "$TESTED"
 
+      # Chart platformy z tego commita i lustro przypiętych chartów
+      # z zewnątrz (decyzja 80) — artefakty, z których Argo CD postawi
+      # platformę po digeście. Po chartcie aplikacji: awaria serwera charta
+      # z zewnątrz nie zatrzymuje dostawy aplikacji na staging. Lustro jest
+      # idempotentne — chart, który już tam jest, zostaje; tag z inną treścią
+      # to odmowa.
+      - name: publikacja charta platformy (OCI)
+        id: platform
+        run: ./bin/mise run chart:platform
+
+      - name: lustro przypiętych chartów platformy (OCI)
+        run: ./bin/mise run chart:mirror
+
   # Atestacja GitHuba charta — ta sama tożsamość workflowu i commita co
   # obraz. Osobne zadanie z tego samego powodu co attest: id-token: write
   # tylko tam, gdzie jest sama akcja atestacji. Klient (Etap 10) i weryfikacja
@@ -1084,6 +1100,16 @@ jobs:
         with:
           subject-name: ${{ needs.chart.outputs.chart }}
           subject-digest: ${{ needs.chart.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      # Chart platformy — ta sama tożsamość workflowu i commita. Lustro bez
+      # atestacji: to cudza treść, a jej tożsamość to suma z ci/pins.env,
+      # którą jest digest warstwy.
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ needs.chart.outputs.platform-chart }}
+          subject-digest: ${{ needs.chart.outputs.platform-digest }}
           push-to-registry: true
           create-storage-record: false
 

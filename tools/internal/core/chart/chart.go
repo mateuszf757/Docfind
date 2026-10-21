@@ -100,7 +100,48 @@ func Artifact(name string, files map[string][]byte, b Build, epoch time.Time, so
 	if err != nil {
 		return OCI{}, err
 	}
-	meta, err := set(files["Chart.yaml"], map[string]string{"version": b.Version, "appVersion": b.AppVersion})
+	return packaged(name, files, Meta{Version: b.Version, AppVersion: b.AppVersion}, archive, epoch, source)
+}
+
+// Meta — wersja charta bez obrazu w wartościach (chart platformy): wersja
+// z tożsamości commita i commit w appVersion, jak w charcie aplikacji.
+type Meta struct {
+	Version, AppVersion string
+}
+
+// Validate odrzuca metadane, których nie da się opublikować.
+func (m Meta) Validate() error {
+	switch {
+	case !semver.MatchString(m.Version):
+		return fmt.Errorf("wersja charta %q: oczekiwano semver bez metadanych budowania (X.Y.Z albo X.Y.Z-pre)", m.Version)
+	case m.AppVersion == "":
+		return errors.New("appVersion jest wymagane")
+	}
+	return nil
+}
+
+// Plain pakuje chart bez obrazu w wartościach — tylko wersja i appVersion
+// w Chart.yaml — i składa jego manifest OCI, powtarzalnie jak Artifact.
+func Plain(name string, files map[string][]byte, m Meta, epoch time.Time, source string) (OCI, error) {
+	if err := m.Validate(); err != nil {
+		return OCI{}, err
+	}
+	out := maps.Clone(files)
+	var err error
+	if out["Chart.yaml"], err = set(files["Chart.yaml"], map[string]string{"version": m.Version, "appVersion": m.AppVersion}); err != nil {
+		return OCI{}, fmt.Errorf("plik Chart.yaml: %w", err)
+	}
+	archive, err := tgz(name, out, epoch)
+	if err != nil {
+		return OCI{}, err
+	}
+	return packaged(name, files, m, archive, epoch, source)
+}
+
+// packaged składa konfigurację i manifest OCI dla archiwum charta z plików
+// files z metadanymi m.
+func packaged(name string, files map[string][]byte, m Meta, archive []byte, epoch time.Time, source string) (OCI, error) {
+	meta, err := set(files["Chart.yaml"], map[string]string{"version": m.Version, "appVersion": m.AppVersion})
 	if err != nil {
 		return OCI{}, err
 	}
@@ -108,12 +149,28 @@ func Artifact(name string, files map[string][]byte, b Build, epoch time.Time, so
 	if err != nil {
 		return OCI{}, fmt.Errorf("metadane charta jako JSON: %w", err)
 	}
+	manifest, err := ociManifest(config, archive, map[string]string{
+		"org.opencontainers.image.title":    name,
+		"org.opencontainers.image.version":  m.Version,
+		"org.opencontainers.image.revision": m.AppVersion,
+		"org.opencontainers.image.created":  epoch.UTC().Format(time.RFC3339),
+		"org.opencontainers.image.source":   source,
+	})
+	if err != nil {
+		return OCI{}, err
+	}
+	return OCI{Name: name, Version: m.Version, Config: config, Archive: archive, Manifest: manifest}, nil
+}
+
+// ociManifest — manifest OCI charta Helma: konfiguracja i jedna warstwa
+// z archiwum, w formacie, który czytają Helm i Argo CD.
+func ociManifest(config, archive []byte, annotations map[string]string) ([]byte, error) {
 	type descriptor struct {
 		MediaType string `json:"mediaType"`
 		Digest    string `json:"digest"`
 		Size      int    `json:"size"`
 	}
-	manifest, err := json.Marshal(struct {
+	return json.Marshal(struct {
 		SchemaVersion int               `json:"schemaVersion"`
 		MediaType     string            `json:"mediaType"`
 		Config        descriptor        `json:"config"`
@@ -121,20 +178,87 @@ func Artifact(name string, files map[string][]byte, b Build, epoch time.Time, so
 		Annotations   map[string]string `json:"annotations"`
 	}{
 		SchemaVersion: 2, MediaType: ManifestMediaType,
-		Config: descriptor{ConfigMediaType, sha(config), len(config)},
-		Layers: []descriptor{{LayerMediaType, sha(archive), len(archive)}},
-		Annotations: map[string]string{
-			"org.opencontainers.image.title":    name,
-			"org.opencontainers.image.version":  b.Version,
-			"org.opencontainers.image.revision": b.AppVersion,
-			"org.opencontainers.image.created":  epoch.UTC().Format(time.RFC3339),
-			"org.opencontainers.image.source":   source,
-		},
+		Config:      descriptor{ConfigMediaType, sha(config), len(config)},
+		Layers:      []descriptor{{LayerMediaType, sha(archive), len(archive)}},
+		Annotations: annotations,
+	})
+}
+
+// UpstreamAnnotation — adnotacja lustra: skąd pochodzi archiwum (adres
+// z ci/pins.env).
+const UpstreamAnnotation = "io.docfind.mirror.upstream"
+
+// Mirror składa manifest OCI wokół archiwum charta z zewnątrz, bez zmiany
+// jednego bajtu: warstwa to to samo archiwum, którego sumę zapisuje
+// ci/pins.env, więc digest warstwy jest tą sumą, a digest manifestu wynika
+// z niej deterministycznie — bez czasu publikacji, bez zapytania do
+// rejestru (decyzja 80). upstream — adres, z którego pochodzi archiwum;
+// source — repozytorium, z którym GHCR wiąże pakiet.
+//
+// Archiwum musi mieć jeden katalog najwyższego poziomu z Chart.yaml — tak
+// rozpakowuje chart Argo CD (util/oci, „expected 1 directory").
+func Mirror(archive []byte, upstream, source string) (OCI, error) {
+	chartYAML, err := topLevelChart(archive)
+	if err != nil {
+		return OCI{}, err
+	}
+	var meta struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	}
+	if err := sigsyaml.Unmarshal(chartYAML, &meta); err != nil || meta.Name == "" || meta.Version == "" {
+		return OCI{}, fmt.Errorf("metadane charta bez nazwy albo wersji: %v", err)
+	}
+	config, err := sigsyaml.YAMLToJSON(chartYAML)
+	if err != nil {
+		return OCI{}, fmt.Errorf("metadane charta jako JSON: %w", err)
+	}
+	manifest, err := ociManifest(config, archive, map[string]string{
+		"org.opencontainers.image.title":   meta.Name,
+		"org.opencontainers.image.version": meta.Version,
+		"org.opencontainers.image.source":  source,
+		UpstreamAnnotation:                 upstream,
 	})
 	if err != nil {
 		return OCI{}, err
 	}
-	return OCI{Name: name, Version: b.Version, Config: config, Archive: archive, Manifest: manifest}, nil
+	return OCI{Name: meta.Name, Version: meta.Version, Config: config, Archive: archive, Manifest: manifest}, nil
+}
+
+// topLevelChart zwraca Chart.yaml charta z archiwum, w którym wszystko leży
+// w jednym katalogu najwyższego poziomu.
+func topLevelChart(archive []byte) ([]byte, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(archive))
+	if err != nil {
+		return nil, fmt.Errorf("archiwum charta: %w", err)
+	}
+	tr := tar.NewReader(gz)
+	tops := map[string]bool{}
+	var chartYAML []byte
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("archiwum charta: %w", err)
+		}
+		// Nagłówek globalny PAX to nie plik — tar go nie rozpakowuje.
+		if h.Typeflag == tar.TypeXGlobalHeader {
+			continue
+		}
+		top, rest, _ := strings.Cut(strings.TrimPrefix(h.Name, "./"), "/")
+		tops[top] = true
+		if rest == "Chart.yaml" {
+			if chartYAML, err = io.ReadAll(tr); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if len(tops) != 1 || chartYAML == nil {
+		return nil, fmt.Errorf("archiwum charta: oczekiwano jednego katalogu z Chart.yaml, jest %d wpisów najwyższego poziomu", len(tops))
+	}
+	return chartYAML, nil
 }
 
 // Digest — digest manifestu, czyli tożsamość artefaktu w rejestrze.
@@ -163,6 +287,12 @@ func Package(name string, files map[string][]byte, b Build, epoch time.Time) ([]
 		return nil, fmt.Errorf("plik values.yaml: %w", err)
 	}
 
+	return tgz(name, out, epoch)
+}
+
+// tgz zapisuje pliki files jako archiwum charta name: wpisy posortowane,
+// czas każdego to epoch, nagłówek gzip bez nazwy pliku i czasu.
+func tgz(name string, files map[string][]byte, epoch time.Time) ([]byte, error) {
 	var buf bytes.Buffer
 	gz, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
 	if err != nil {
@@ -170,8 +300,8 @@ func Package(name string, files map[string][]byte, b Build, epoch time.Time) ([]
 	}
 	// Nagłówek gzip bez nazwy pliku i bez czasu — zerowe wartości.
 	tw := tar.NewWriter(gz)
-	for _, p := range slices.Sorted(maps.Keys(out)) {
-		data := out[p]
+	for _, p := range slices.Sorted(maps.Keys(files)) {
+		data := files[p]
 		hdr := &tar.Header{
 			Name: path.Join(name, p), Mode: 0o644, Size: int64(len(data)),
 			ModTime: epoch.UTC(), Typeflag: tar.TypeReg, Format: tar.FormatPAX,

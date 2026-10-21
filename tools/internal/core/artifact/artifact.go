@@ -74,6 +74,10 @@ type Blob struct {
 // (np. obrazu bazowego do porównania) od awarii rejestru.
 var ErrNotFound = errors.New("obrazu nie ma w rejestrze")
 
+// ErrDenied — rejestr odmówił dostępu (401, 403). Bez poświadczeń znaczy to
+// pakiet niepubliczny — tak go zobaczy Argo CD.
+var ErrDenied = errors.New("rejestr odmówił dostępu")
+
 // ErrUnknownCommit — w repozytorium nie ma tego commita (płytki klon,
 // gałąź spoza pobranych). Adapter gita owija nim odpowiedź rev-parse,
 // a etapy rozróżniają nim brak kodu do porównania od awarii gita.

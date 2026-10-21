@@ -133,6 +133,19 @@ func ChartName(registry, owner string) string {
 	return registryPrefix(registry, owner) + "/charts/docfind"
 }
 
+// PlatformChartName zwraca repozytorium charta platformy (deploy/charts/platform)
+// w tym samym rejestrze: <rejestr>/charts/docfind-platform (decyzja 80).
+func PlatformChartName(registry, owner string) string {
+	return registryPrefix(registry, owner) + "/charts/docfind-platform"
+}
+
+// MirrorName zwraca repozytorium lustra przypiętego charta z zewnątrz:
+// <rejestr>/charts/platform/<przypięcie> — nazwa z ci/pins.env, a nie
+// z Chart.yaml (chart Envoy Gateway nazywa się gateway-helm).
+func MirrorName(registry, owner, pin string) string {
+	return registryPrefix(registry, owner) + "/charts/platform/" + pin
+}
+
 func registryPrefix(registry, owner string) string {
 	if registry == "" {
 		if owner == "" {

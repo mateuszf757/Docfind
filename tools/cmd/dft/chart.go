@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/mateuszf757/Docfind/tools/internal/adapters/registry"
 	"github.com/mateuszf757/Docfind/tools/internal/core/artifact"
+	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/chartpub"
 )
@@ -30,20 +33,43 @@ func (w *workspace) chartPublisher() chartpub.Publisher {
 	}
 }
 
-// runChart — `dft chart publish --image <obraz@sha256:…>`: chart aplikacji
-// z tym obrazem w rejestrze OCI (decyzja 45). W CI na main, po publikacji
-// obrazu; wyjścia kroku — repozytorium, digest i wersja charta dla
-// atestacji.
+// registryOwner — rejestr i właściciel z otoczenia: DF_IMAGE_REGISTRY przenosi
+// charty razem z obrazami na rejestr lokalny.
+func registryOwner() (string, string) {
+	return os.Getenv("DF_IMAGE_REGISTRY"), os.Getenv("GITHUB_REPOSITORY_OWNER")
+}
+
+const chartUsage = "dft chart <publish --image <obraz@sha256:…> [--tested <digest>] | platform | mirror>"
+
+// runChart — charty w rejestrze OCI: aplikacji (publish, decyzja 45),
+// platformy i lustro przypiętych chartów z zewnątrz (platform, mirror,
+// decyzja 80).
 func runChart(ctx context.Context, w *workspace, args []string) error {
-	const usage = "dft chart publish --image <obraz@sha256:…> [--tested <digest charta z zadania cluster>]"
-	if len(args) == 0 || args[0] != "publish" {
-		return cli.Usage("użycie: %s", usage)
+	if len(args) == 0 {
+		return cli.Usage("użycie: %s", chartUsage)
 	}
+	switch args[0] {
+	case "publish":
+		return runChartPublish(ctx, w, args[1:])
+	case "platform":
+		return runChartPlatform(ctx, w, args[1:])
+	case "mirror":
+		return runChartMirror(ctx, w, args[1:])
+	}
+	return cli.Usage("użycie: %s", chartUsage)
+}
+
+// runChartPublish — `dft chart publish --image <obraz@sha256:…>`: chart
+// aplikacji z tym obrazem w rejestrze OCI (decyzja 45). W CI na main, po
+// bramkach klastra; wyjścia kroku — repozytorium, digest i wersja charta dla
+// atestacji.
+func runChartPublish(ctx context.Context, w *workspace, args []string) error {
+	const usage = "dft chart publish --image <obraz@sha256:…> [--tested <digest charta z zadania cluster>]"
 	fs := flag.NewFlagSet("chart publish", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	image := fs.String("image", "", "")
 	tested := fs.String("tested", "", "")
-	if err := fs.Parse(args[1:]); err != nil || fs.NArg() > 0 || *image == "" {
+	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || *image == "" {
 		return cli.Usage("użycie: %s", usage)
 	}
 	pub, err := w.chartPublisher().Publish(ctx, *image, *tested)
@@ -57,4 +83,67 @@ func runChart(ctx context.Context, w *workspace, args []string) error {
 		return err
 	}
 	return appendSummary(fmt.Sprintf("### Chart OCI\n\n| Wersja | Chart | Obraz |\n|---|---|---|\n| %s | `%s@%s` | `%s` |\n", pub.Version, pub.Repository, pub.Digest, pub.Image))
+}
+
+// runChartPlatform — `dft chart platform`: chart platformy z bieżącego
+// commita w rejestrze OCI (decyzja 80), obok charta aplikacji. Wyjścia
+// kroku — repozytorium i digest dla atestacji.
+func runChartPlatform(ctx context.Context, w *workspace, args []string) error {
+	if err := expectArgs(args, 0, 0, "dft chart platform"); err != nil {
+		return err
+	}
+	reg, owner := registryOwner()
+	pub, err := chartpub.PlatformPublisher{
+		ChartDir: filepath.Join(w.root, "deploy", "charts", "platform"), Repo: w.git(),
+		Registry: registry.Client{}, Public: registry.Client{Anonymous: true},
+		Repository: artifact.PlatformChartName(reg, owner), Source: sourceURL,
+	}.Publish(ctx)
+	if err != nil {
+		return err
+	}
+	if err := githubOutput(fmt.Sprintf("platform-chart=%s\nplatform-chart-digest=%s\n", pub.Repository, pub.Digest)); err != nil {
+		return err
+	}
+	if err := w.writeReport("chart-platform", pub); err != nil {
+		return err
+	}
+	return appendSummary(fmt.Sprintf("### Chart platformy\n\n| Wersja | Chart | Publiczny |\n|---|---|---|\n| %s | `%s@%s` | %s |\n", pub.Version, pub.Repository, pub.Digest, yesNo(pub.Public)))
+}
+
+// runChartMirror — `dft chart mirror`: przypięte charty platformy, którymi
+// zarządza Argo CD, w lustrze w rejestrze OCI (decyzja 80) — te same bajty co
+// po sprawdzeniu sumy z ci/pins.env, przypięte digestem.
+func runChartMirror(ctx context.Context, w *workspace, args []string) error {
+	if err := expectArgs(args, 0, 0, "dft chart mirror"); err != nil {
+		return err
+	}
+	p, err := pins.Load(w.root)
+	if err != nil {
+		return err
+	}
+	reg, owner := registryOwner()
+	stored, err := chartpub.Mirror{
+		Pins: p, Charts: w.charts(), Registry: registry.Client{}, Public: registry.Client{Anonymous: true},
+		Repository: func(pin string) string { return artifact.MirrorName(reg, owner, pin) },
+		Source:     sourceURL,
+	}.Run(ctx)
+	if reportErr := w.writeReport("chart-mirror", stored); reportErr != nil {
+		return errors.Join(err, reportErr)
+	}
+	if err != nil {
+		return err
+	}
+	var b strings.Builder
+	b.WriteString("### Lustro chartów platformy\n\n| Chart | Wersja | Digest | Wysłany | Publiczny |\n|---|---|---|---|---|\n")
+	for _, s := range stored {
+		fmt.Fprintf(&b, "| `%s` | %s | `%s` | %s | %s |\n", s.Repository, s.Version, s.Digest, yesNo(s.Pushed), yesNo(s.Public))
+	}
+	return appendSummary(b.String())
+}
+
+func yesNo(v bool) string {
+	if v {
+		return "tak"
+	}
+	return "nie"
 }

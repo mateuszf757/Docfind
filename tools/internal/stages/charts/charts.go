@@ -21,6 +21,7 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
 	"github.com/mateuszf757/Docfind/tools/internal/core/gitops"
 	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
+	"github.com/mateuszf757/Docfind/tools/internal/core/platform"
 	"github.com/mateuszf757/Docfind/tools/internal/core/policy"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/manifest"
@@ -72,7 +73,7 @@ type render struct {
 // każdy krok zakłada, że poprzednie przeszły.
 func (c Checker) Run(ctx context.Context, tmp string) error {
 	app := c.path("deploy/charts/docfind")
-	platform := c.path("deploy/charts/platform")
+	platformChart := c.path("deploy/charts/platform")
 
 	cli.Step("helm lint docfind")
 	if err := c.Helm.Lint(ctx, app, "api.image.tag=lint"); err != nil {
@@ -164,15 +165,8 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 		appRenders = append(appRenders, "docfind-oci-"+e.Name)
 	}
 
-	for _, pc := range []struct{ pin, namespace, values string }{
-		{pins.CoreDNS, "kube-system", "deploy/platform/coredns/values.yaml"},
-		{pins.CertManager, "cert-manager", "deploy/platform/cert-manager/values.yaml"},
-		{pins.EnvoyGateway, "envoy-gateway-system", "deploy/platform/envoy-gateway/values.yaml"},
-		{pins.OpenBao, "openbao", "deploy/platform/openbao/values.yaml"},
-		{pins.ExternalSecrets, "external-secrets", "deploy/platform/external-secrets/values.yaml"},
-		{pins.ArgoCD, environment.ArgoCDNamespace, "deploy/platform/argocd/values.yaml"},
-	} {
-		chart, err := c.Pins.Chart(pc.pin)
+	for _, pc := range platform.Components {
+		chart, err := c.Pins.Chart(pc.Pin)
 		if err != nil {
 			return err
 		}
@@ -180,19 +174,20 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 		if err != nil {
 			return err
 		}
-		// CRD Envoy Gateway (w tym Gateway API) — źródło schematów poniżej.
-		r := cluster.Release{Name: pc.pin, Chart: archive, Namespace: pc.namespace, ValuesFiles: []string{c.path(pc.values)}}
-		if err := add(pc.pin, true, pc.pin == pins.EnvoyGateway || pc.pin == pins.ExternalSecrets, r); err != nil {
+		// CRD z katalogu crds/ (Envoy Gateway z Gateway API, ESO) — źródło
+		// schematów poniżej.
+		r := cluster.Release{Name: pc.Pin, Chart: archive, Namespace: pc.Namespace, ValuesFiles: []string{c.path(pc.Values)}}
+		if err := add(pc.Pin, true, pc.CRDDir, r); err != nil {
 			return err
 		}
 	}
 
 	cli.Step("helm lint platform")
-	if err := c.Helm.Lint(ctx, platform); err != nil {
+	if err := c.Helm.Lint(ctx, platformChart); err != nil {
 		return err
 	}
 	if err := c.mustReject(ctx, "chart platformy przyjął nieznany klucz gateway.hostnme — values.schema.json niczego nie pilnuje",
-		cluster.Release{Name: "platform", Chart: platform, Set: []string{"gateway.hostnme=x"}}); err != nil {
+		cluster.Release{Name: "platform", Chart: platformChart, Set: []string{"gateway.hostnme=x"}}); err != nil {
 		return err
 	}
 	// Środowiska z Let's Encrypt (staging, prod) renderują szablony wydawców
@@ -200,7 +195,7 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 	// Adres konta ACME nie stoi w definicjach, więc w renderze jest
 	// przykładowy.
 	for _, e := range envs {
-		r := cluster.Release{Name: "platform", Chart: platform, Namespace: e.Gateway.Namespace, Set: e.PlatformValues("ci@example.com")}
+		r := cluster.Release{Name: "platform", Chart: platformChart, Namespace: e.Gateway.Namespace, Set: e.PlatformValues("ci@example.com")}
 		if err := add("platform-"+e.Name, false, false, r); err != nil {
 			return err
 		}
@@ -218,8 +213,11 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 	// przypięte charty (decyzja 28).
 	schemaDir := filepath.Join(tmp, "crd-schemas")
 	var crds []map[string]any
-	for _, name := range []string{pins.EnvoyGateway, pins.CertManager, pins.ExternalSecrets, pins.ArgoCD} {
-		docs, err := parseFile(filepath.Join(tmp, name+".yaml"))
+	for _, pc := range platform.Components {
+		if !pc.Schemas {
+			continue
+		}
+		docs, err := parseFile(filepath.Join(tmp, pc.Pin+".yaml"))
 		if err != nil {
 			return err
 		}

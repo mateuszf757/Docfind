@@ -43,11 +43,18 @@ const PredicateTypeAnnotation = "in-toto.io/predicate-type"
 // Client — rejestr obrazów przez go-containerregistry.
 type Client struct {
 	// Options — dodatkowe opcje dostępu (testy); kontekst i uwierzytelnienie
-	// z konfiguracji Dockera są zawsze.
+	// z konfiguracji Dockera są zawsze, chyba że Anonymous.
 	Options []remote.Option
+	// Anonymous — bez poświadczeń, tak jak Argo CD pobiera publiczny pakiet:
+	// odpowiedź mówi, czy pakiet jest publiczny, a nie, czy autor ma do
+	// niego dostęp.
+	Anonymous bool
 }
 
 func (c Client) opts(ctx context.Context) []remote.Option {
+	if c.Anonymous {
+		return append([]remote.Option{remote.WithContext(ctx)}, c.Options...)
+	}
 	return append(Options(ctx), c.Options...)
 }
 

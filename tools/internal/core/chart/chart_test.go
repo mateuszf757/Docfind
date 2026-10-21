@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	sigsyaml "sigs.k8s.io/yaml"
 )
 
 const repoChart = "../../../../deploy/charts/docfind"
@@ -185,5 +187,137 @@ func TestRead(t *testing.T) {
 	got, err := Read(tgz)
 	if err != nil || got != build {
 		t.Errorf("odczyt %+v, %v; oczekiwano %+v", got, err, build)
+	}
+}
+
+// TestPlain: chart platformy dostaje wersję i appVersion w Chart.yaml, a jego
+// values.yaml zostaje bajt w bajt; ten sam commit — ten sam digest.
+func TestPlain(t *testing.T) {
+	files, err := Files("../../../../deploy/charts/platform")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := Meta{Version: "0.4.1-dev.3", AppVersion: "fc8dfc11099d"}
+	epoch := time.Unix(1791800000, 0)
+	a, err := Plain("docfind-platform", files, m, epoch, "https://github.com/mateuszf757/Docfind")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Plain("docfind-platform", files, m, epoch, "https://github.com/mateuszf757/Docfind")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Digest() != b.Digest() {
+		t.Errorf("dwa pakowania, dwa digesty: %s, %s", a.Digest(), b.Digest())
+	}
+	got := unpack(t, a.Archive)
+	var meta struct{ Version, AppVersion string }
+	if err := sigsyaml.Unmarshal([]byte(got["docfind-platform/Chart.yaml"]), &meta); err != nil || meta.Version != "0.4.1-dev.3" || meta.AppVersion != "fc8dfc11099d" {
+		t.Errorf("Chart.yaml: %+v, %v\n%s", meta, err, got["docfind-platform/Chart.yaml"])
+	}
+	if got["docfind-platform/values.yaml"] != string(files["values.yaml"]) {
+		t.Error("values.yaml zmieniony przy pakowaniu charta bez obrazu")
+	}
+	var manifest struct {
+		Annotations map[string]string `json:"annotations"`
+	}
+	if err := json.Unmarshal(a.Manifest, &manifest); err != nil || manifest.Annotations["org.opencontainers.image.revision"] != "fc8dfc11099d" {
+		t.Errorf("adnotacje: %v, %v", manifest.Annotations, err)
+	}
+	if _, err := Plain("docfind-platform", files, Meta{Version: "0.4.1+abc", AppVersion: "x"}, epoch, ""); err == nil {
+		t.Error("wersja z metadanymi budowania przyjęta")
+	}
+}
+
+// upstream — archiwum jak z serwera charta: wpisy w katalogu name, opcjonalnie
+// z nagłówkiem globalnym PAX (git archive, część narzędzi go dopisuje).
+func upstream(t *testing.T, globalHeader bool, entries map[string]string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	if globalHeader {
+		if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeXGlobalHeader, Name: "pax_global_header", PAXRecords: map[string]string{"comment": "x"}, Format: tar.FormatPAX}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"cert-manager/Chart.yaml", "cert-manager/values.yaml", "cert-manager/templates/a.yaml", "inny/Chart.yaml"} {
+		data, ok := entries[name]
+		if !ok {
+			continue
+		}
+		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(data)), Typeflag: tar.TypeReg}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(data)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// TestMirror: lustro nie zmienia archiwum — warstwa to te same bajty, więc
+// digest warstwy to suma z ci/pins.env — a manifest jest deterministyczny,
+// bez czasu publikacji.
+func TestMirror(t *testing.T) {
+	archive := upstream(t, true, map[string]string{
+		"cert-manager/Chart.yaml":       "apiVersion: v2\nname: cert-manager\nversion: v1.21.2\nappVersion: v1.21.2\n",
+		"cert-manager/values.yaml":      "a: 1\n",
+		"cert-manager/templates/a.yaml": "kind: ConfigMap\n",
+	})
+	const from = "https://charts.jetstack.io/charts/cert-manager-v1.21.2.tgz"
+	a, err := Mirror(archive, from, "https://github.com/mateuszf757/Docfind")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Mirror(archive, from, "https://github.com/mateuszf757/Docfind")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(a.Archive, archive) || a.Digest() != b.Digest() || a.Name != "cert-manager" || a.Version != "v1.21.2" {
+		t.Fatalf("lustro: %s %s, digesty %s %s, archiwum zmienione: %v", a.Name, a.Version, a.Digest(), b.Digest(), !bytes.Equal(a.Archive, archive))
+	}
+	var manifest struct {
+		Config struct {
+			MediaType string `json:"mediaType"`
+		} `json:"config"`
+		Layers []struct {
+			MediaType, Digest string
+		} `json:"layers"`
+		Annotations map[string]string `json:"annotations"`
+	}
+	if err := json.Unmarshal(a.Manifest, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Config.MediaType != ConfigMediaType || len(manifest.Layers) != 1 || manifest.Layers[0].MediaType != LayerMediaType || manifest.Layers[0].Digest != sha(archive) {
+		t.Errorf("manifest: %+v", manifest)
+	}
+	if manifest.Annotations[UpstreamAnnotation] != from || manifest.Annotations["org.opencontainers.image.created"] != "" {
+		t.Errorf("adnotacje: %v", manifest.Annotations)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(a.Config, &config); err != nil || config["name"] != "cert-manager" {
+		t.Errorf("konfiguracja: %s, %v", a.Config, err)
+	}
+}
+
+func TestMirrorRefuses(t *testing.T) {
+	for name, entries := range map[string]map[string]string{
+		// Argo CD rozpakowuje chart z OCI tylko z jednym katalogiem.
+		"dwa katalogi":   {"cert-manager/Chart.yaml": "name: cert-manager\nversion: v1\n", "inny/Chart.yaml": "name: inny\nversion: v1\n"},
+		"bez Chart.yaml": {"cert-manager/values.yaml": "a: 1\n"},
+		"bez wersji":     {"cert-manager/Chart.yaml": "name: cert-manager\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Mirror(upstream(t, false, entries), "https://x", ""); err == nil {
+				t.Error("przyjęte")
+			}
+		})
 	}
 }

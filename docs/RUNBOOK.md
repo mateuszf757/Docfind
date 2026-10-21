@@ -259,6 +259,26 @@ aplikację instalował Helm, usuwa zapis wydania Helma
 zostają. `helm upgrade --install docfind` na stagingu postawiłby wydanie
 obok Argo; `dft cluster up --image` na środowisku z Argo odmawia.
 
+### Charty platformy w rejestrze
+
+Zadanie `chart` na `main` publikuje chart platformy
+(`charts/docfind-platform`) i lustro przypiętych chartów z zewnątrz
+(`charts/platform/<przypięcie>`, decyzja 80). Raporty:
+`.cache/reports/chart-platform.json` i `chart-mirror.json` w artefakcie
+biegu, tabela w podsumowaniu.
+
+- **Ostrzeżenie „pakiet nie jest publiczny".** Nowy pakiet w GHCR jest
+  prywatny; Argo CD pobiera bez poświadczeń. Raz na pakiet: GitHub →
+  Packages → pakiet → Package settings → Change visibility → Public.
+- **„tag lustra nie zmienia treści".** Pod tą wersją w lustrze jest inny
+  manifest niż złożony z archiwum z sumą z `ci/pins.env`. Nie usuwaj tagu,
+  żeby przeszło — sprawdź, skąd różnica (podmienione archiwum upstreamu
+  pod tą samą wersją albo zmiana adnotacji lustra w kodzie). Nowa treść to
+  nowe przypięcie, z nową wersją.
+- **Nowe przypięcie charta** w `ci/pins.env` trafia do lustra po scaleniu;
+  poprzednia wersja zostaje. Lokalnie, na rejestrze tymczasowym:
+  `DF_IMAGE_REGISTRY=127.0.0.1:5000/<właściciel> ./bin/mise run chart:mirror`.
+
 
 ## Wydanie — ćwiczenie promocji w repozytorium próbnym
 

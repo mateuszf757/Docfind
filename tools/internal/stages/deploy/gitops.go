@@ -94,19 +94,7 @@ func (d Deployer) argoCD(ctx context.Context, c Cluster) error {
 	if err := c.EnsureNamespace(ctx, environment.ArgoCDNamespace, labels); err != nil {
 		return err
 	}
-	chart, err := d.Pins.Chart(pins.ArgoCD)
-	if err != nil {
-		return err
-	}
-	archive, err := d.Charts.Fetch(ctx, chart)
-	if err != nil {
-		return err
-	}
-	cli.Step("Argo CD: chart %s (suma zweryfikowana)", chart.Version)
-	return d.Releases.Install(ctx, d.target(), cluster.Release{
-		Name: pins.ArgoCD, Chart: archive, Namespace: environment.ArgoCDNamespace,
-		ValuesFiles: []string{d.path("deploy/platform/argocd/values.yaml")}, Timeout: 5 * time.Minute,
-	})
+	return d.installComponent(ctx, pins.ArgoCD, false)
 }
 
 // deliver zakłada projekt i Application Argo CD (chart deploy/charts/delivery),

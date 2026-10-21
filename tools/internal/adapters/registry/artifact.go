@@ -4,11 +4,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
+	"net/http"
 
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 	"github.com/google/go-containerregistry/pkg/v1/static"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 
@@ -52,7 +55,13 @@ func (c Client) Manifest(ctx context.Context, ref string) ([]byte, string, error
 		return nil, "", fmt.Errorf("referencja %q: %w", ref, err)
 	}
 	desc, err := remote.Get(r, c.opts(ctx)...)
-	if err != nil {
+	var terr *transport.Error
+	switch {
+	case errors.As(err, &terr) && terr.StatusCode == http.StatusNotFound:
+		return nil, "", fmt.Errorf("manifest %s: %w", ref, artifact.ErrNotFound)
+	case errors.As(err, &terr) && (terr.StatusCode == http.StatusUnauthorized || terr.StatusCode == http.StatusForbidden):
+		return nil, "", fmt.Errorf("manifest %s: %w (%d)", ref, artifact.ErrDenied, terr.StatusCode)
+	case err != nil:
 		return nil, "", fmt.Errorf("manifest %s: %w", ref, err)
 	}
 	return desc.Manifest, string(desc.MediaType), nil

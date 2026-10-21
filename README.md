@@ -12,12 +12,16 @@ strażnikami i dowodami — w [docs/engineering-contracts.md](docs/engineering-c
 
 Etap 5 z 11, w toku — GitOps z Argo CD. Zrobione dwa kroki: CI publikuje
 chart aplikacji jako artefakt OCI w GHCR, a Argo CD na stagingu śledzi go
-z rejestru. Zostają app-of-apps z platformą pod Argo CD i sync waves
-(krok 3); warunek zakończenia to samonaprawa bez przestoju na stagingu
-(`cluster:selfheal`).
+z rejestru. Krok 3 — platforma pod Argo CD z pakietu w rejestrze — w toku:
+charty platformy są już w GHCR po digeście; zostaje pakiet dostawy
+z Applications platformy i sync waves. Warunek zakończenia to samonaprawa
+bez przestoju na stagingu (`cluster:selfheal`).
 
 - chart publikowany po bramkach klastra, i to ten sam pakiet, który
   przeszedł klaster — z digestem przetestowanego obrazu (decyzje 45, 61)
+- charty platformy w GHCR: lustro przypiętych chartów z zewnątrz (te same
+  bajty co po sumie z `ci/pins.env`, digest wyliczony z archiwum, tag bez
+  zmiany treści) i chart platformy z każdego commita (decyzja 80)
 - Argo CD w trybie Core, bez serwera API i UI; zakres wersji z rejestru,
   `selfHeal` i `prune`; cofnięcie to przypięcie wersji w definicji
   środowiska, nie `helm rollback` (decyzja 46)

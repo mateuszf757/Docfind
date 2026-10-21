@@ -45,7 +45,9 @@ func (w *workspace) helm() helm.Helm {
 }
 
 // charts — przypięte charty platformy w .cache/downloads repozytorium.
-func (w *workspace) charts() helm.Charts { return helm.Charts{Helm: w.helm(), Root: w.root} }
+func (w *workspace) charts() helm.Charts {
+	return helm.Charts{Helm: w.helm(), Root: w.root, Registry: registry.Client{}}
+}
 
 // gotool — toolchain Go na module tools/.
 func (w *workspace) gotool() gotool.Go {
