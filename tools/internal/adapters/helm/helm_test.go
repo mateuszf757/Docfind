@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,32 +51,59 @@ func TestInstallAndTemplate(t *testing.T) {
 	}
 }
 
-// TestFetchOCI: chart z rejestru OCI trafia do pamięci podręcznej po
-// `helm pull` i jest sprawdzany sumą — także przy kolejnym użyciu.
+// ociRegistry — rejestr z jednym manifestem charta Helma.
+type ociRegistry struct {
+	manifest, layer []byte
+	pulls           *int
+}
+
+func (r ociRegistry) Manifest(_ context.Context, ref string) ([]byte, string, error) {
+	if ref != "docker.io/envoyproxy/gateway-helm:v1.9.2" {
+		return nil, "", fmt.Errorf("nieznany %s", ref)
+	}
+	*r.pulls++
+	return r.manifest, "application/vnd.oci.image.manifest.v1+json", nil
+}
+
+func (r ociRegistry) Blob(_ context.Context, repository, digest string) ([]byte, error) {
+	if sum := sha256.Sum256(r.layer); repository != "docker.io/envoyproxy/gateway-helm" || digest != "sha256:"+hex.EncodeToString(sum[:]) {
+		return nil, fmt.Errorf("nieznany blob %s@%s", repository, digest)
+	}
+	return r.layer, nil
+}
+
+// TestFetchOCI: chart z rejestru OCI to warstwa charta z manifestu pod
+// wersją, w pamięci podręcznej po pierwszym pobraniu i sprawdzana sumą —
+// także przy kolejnym użyciu.
 func TestFetchOCI(t *testing.T) {
 	content := []byte("archiwum charta")
 	sum := sha256.Sum256(content)
+	digest := "sha256:" + hex.EncodeToString(sum[:])
+	manifest := []byte(`{"schemaVersion":2,"config":{"mediaType":"application/vnd.cncf.helm.config.v1+json"},"layers":[{"mediaType":"application/vnd.cncf.helm.chart.content.v1.tar+gzip","digest":"` + digest + `"}]}`)
 	chart := pins.Chart{Name: pins.EnvoyGateway, Version: "v1.9.2", Source: "oci://docker.io/envoyproxy/gateway-helm", SHA256: hex.EncodeToString(sum[:])}
 	pulls := 0
-	runner := proc.RunnerFunc(func(_ context.Context, c proc.Cmd) (proc.Result, error) {
-		pulls++
-		dest := c.Args[len(c.Args)-1]
-		return proc.Result{}, os.WriteFile(filepath.Join(dest, "gateway-helm-v1.9.2.tgz"), content, 0o644)
-	})
-	root := t.TempDir()
-	c := Charts{Helm: Helm{Runner: runner}, Root: root}
+	c := Charts{Root: t.TempDir(), Registry: ociRegistry{manifest, content, &pulls}}
 	for range 2 {
 		path, err := c.Fetch(context.Background(), chart)
 		if err != nil || filepath.Base(path) != "gateway-helm-v1.9.2.tgz" {
 			t.Fatalf("chart: %s, %v", path, err)
 		}
+		if data, _ := os.ReadFile(path); string(data) != string(content) {
+			t.Fatalf("archiwum: %q", data)
+		}
 	}
 	if pulls != 1 {
-		t.Errorf("helm pull %d razy — drugi raz z pamięci podręcznej", pulls)
+		t.Errorf("manifest pobrany %d razy — drugi raz z pamięci podręcznej", pulls)
 	}
 	chart.SHA256 = strings.Repeat("0", 64)
 	if _, err := c.Fetch(context.Background(), chart); cli.ExitCode(err) != cli.ExitUnmet {
 		t.Errorf("podmieniony chart przyjęty: %v", err)
+	}
+	// Manifest bez warstwy charta (np. obraz pod tą nazwą) — odmowa.
+	empty := Charts{Root: t.TempDir(), Registry: ociRegistry{[]byte(`{"layers":[]}`), content, &pulls}}
+	chart.SHA256 = hex.EncodeToString(sum[:])
+	if _, err := empty.Fetch(context.Background(), chart); cli.ExitCode(err) != cli.ExitUnmet {
+		t.Errorf("manifest bez warstwy charta: %v", err)
 	}
 }
 

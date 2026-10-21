@@ -79,7 +79,14 @@ func TestImageName(t *testing.T) {
 			t.Errorf("ImageName(%q, %q) = %q, oczekiwano %q", tt.registry, tt.owner, got, tt.want)
 		}
 		// Chart w tym samym rejestrze co obraz (decyzja 45).
-		if got, want := ChartName(tt.registry, tt.owner), strings.TrimSuffix(tt.want, "/docfind-api")+"/charts/docfind"; got != want {
+		prefix := strings.TrimSuffix(tt.want, "/docfind-api")
+		if got := PlatformChartName(tt.registry, tt.owner); got != prefix+"/charts/docfind-platform" {
+			t.Errorf("PlatformChartName(%q, %q) = %q", tt.registry, tt.owner, got)
+		}
+		if got := MirrorName(tt.registry, tt.owner, "envoy-gateway"); got != prefix+"/charts/platform/envoy-gateway" {
+			t.Errorf("MirrorName(%q, %q) = %q", tt.registry, tt.owner, got)
+		}
+		if got, want := ChartName(tt.registry, tt.owner), prefix+"/charts/docfind"; got != want {
 			t.Errorf("ChartName(%q, %q) = %q, oczekiwano %q", tt.registry, tt.owner, got, want)
 		}
 	}

@@ -14,8 +14,10 @@ import (
 	"path"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
+	coreChart "github.com/mateuszf757/Docfind/tools/internal/core/chart"
 	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
 	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
@@ -130,34 +132,87 @@ func (h Helm) Lint(ctx context.Context, chart string, set ...string) error {
 type Charts struct {
 	Helm Helm
 	Root string
+	// Registry — rejestr OCI (adapters/registry) dla chartów publikowanych
+	// tylko jako artefakt OCI.
+	Registry Registry
+}
+
+// Registry — odczyt manifestu i warstwy z rejestru OCI.
+type Registry interface {
+	Manifest(ctx context.Context, ref string) ([]byte, string, error)
+	Blob(ctx context.Context, repository, digest string) ([]byte, error)
 }
 
 // Fetch zwraca ścieżkę archiwum przypiętego charta: z pamięci podręcznej
-// albo pobranego (HTTPS albo `helm pull` z rejestru OCI), zawsze po
-// sprawdzeniu sumy z ci/pins.env. `helm pull` sam nie weryfikuje niczego
-// poza tym, co poda rejestr.
+// albo pobranego (HTTPS albo warstwa charta z manifestu w rejestrze OCI),
+// zawsze po sprawdzeniu sumy z ci/pins.env.
+//
+// Chart z OCI to warstwa manifestu pod wersją — te same bajty, które
+// zapisałby `helm pull`, i to ich sumą jest przypięcie. Bez `helm pull`:
+// zadanie CI z prawem zapisu do rejestru (lustro, decyzja 80) nie uruchamia
+// binarki Helma, która czyta poświadczenia z konfiguracji Dockera.
 func (c Charts) Fetch(ctx context.Context, chart pins.Chart) (string, error) {
 	if !chart.OCI() {
 		return fetch.URL(ctx, c.Root, chart.Source, chart.SHA256)
 	}
-	file := filepath.Join(c.Root, fetch.Dir, fmt.Sprintf("%s-%s.tgz", path.Base(chart.Source), chart.Version))
+	repository := strings.TrimPrefix(chart.Source, "oci://")
+	file := filepath.Join(c.Root, fetch.Dir, fmt.Sprintf("%s-%s.tgz", path.Base(repository), chart.Version))
 	if _, err := os.Stat(file); errors.Is(err, os.ErrNotExist) {
-		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
-			return "", err
-		}
-		// Katalog tymczasowy w tym samym systemie plików: rename jest wtedy
-		// atomowy, a dwa równoległe pobrania nie piszą do jednego pliku.
-		tmp, err := os.MkdirTemp(filepath.Dir(file), "pull-")
-		if err != nil {
-			return "", err
-		}
-		defer os.RemoveAll(tmp)
-		if _, err := c.Helm.Runner.Run(ctx, proc.Cmd{Name: "helm", Args: []string{"pull", chart.Source, "--version", chart.Version, "--destination", tmp}}); err != nil {
-			return "", fmt.Errorf("helm pull %s %s: %w", chart.Source, chart.Version, err)
-		}
-		if err := os.Rename(filepath.Join(tmp, filepath.Base(file)), file); err != nil {
+		if err := c.pull(ctx, repository, chart.Version, file); err != nil {
 			return "", err
 		}
 	}
 	return file, fetch.Verify(file, chart.SHA256)
+}
+
+// pull zapisuje do file warstwę charta Helma z manifestu repository:version.
+func (c Charts) pull(ctx context.Context, repository, version, file string) error {
+	if c.Registry == nil {
+		return fmt.Errorf("chart %s z rejestru OCI: brak dostępu do rejestru", repository)
+	}
+	ref := repository + ":" + version
+	raw, _, err := c.Registry.Manifest(ctx, ref)
+	if err != nil {
+		return err
+	}
+	var m struct {
+		Layers []struct {
+			MediaType string `json:"mediaType"`
+			Digest    string `json:"digest"`
+		} `json:"layers"`
+	}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return fmt.Errorf("manifest %s: %w", ref, err)
+	}
+	var layer string
+	for _, l := range m.Layers {
+		if l.MediaType == coreChart.LayerMediaType {
+			layer = l.Digest
+		}
+	}
+	if layer == "" {
+		return cli.Unmet("%s: manifest bez warstwy charta Helma (%s)", ref, coreChart.LayerMediaType)
+	}
+	data, err := c.Registry.Blob(ctx, repository, layer)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		return err
+	}
+	// Plik tymczasowy w tym samym katalogu: rename jest wtedy atomowy, a dwa
+	// równoległe pobrania nie piszą do jednego pliku.
+	tmp, err := os.CreateTemp(filepath.Dir(file), "pull-*.tgz")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), file)
 }

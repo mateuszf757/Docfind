@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"slices"
@@ -367,5 +368,30 @@ func TestPushManifest(t *testing.T) {
 	tags, err := c.Tags(ctx, repo)
 	if slices.Sort(tags); err != nil || !slices.Equal(tags, []string{"0.4.1-dev.3", "0.4.1-dev.4"}) {
 		t.Errorf("tagi: %v, %v", tags, err)
+	}
+}
+
+// TestManifestErrors: brak tagu i odmowa dostępu to dwa różne wyniki —
+// lustro wysyła chart, którego nie ma, a odmowę bez poświadczeń zgłasza jako
+// pakiet niepubliczny. Tryb anonimowy nie sięga po konfigurację Dockera.
+func TestManifestErrors(t *testing.T) {
+	ctx := context.Background()
+	repo := strings.TrimSuffix(testRegistry(t), "/docfind-api") + "/charts/platform/cert-manager"
+	if _, _, err := (Client{Anonymous: true}).Manifest(ctx, repo+":v1.21.2"); !errors.Is(err, artifact.ErrNotFound) {
+		t.Errorf("brak tagu: %v", err)
+	}
+	// Rejestr, który odpowiada na ping, a manifestu odmawia — jak GHCR dla
+	// pakietu prywatnego bez poświadczeń.
+	denied := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(denied.Close)
+	ref := strings.TrimPrefix(denied.URL, "http://") + "/charts/platform/cert-manager:v1.21.2"
+	if _, _, err := (Client{Anonymous: true}).Manifest(ctx, ref); !errors.Is(err, artifact.ErrDenied) {
+		t.Errorf("odmowa: %v", err)
 	}
 }

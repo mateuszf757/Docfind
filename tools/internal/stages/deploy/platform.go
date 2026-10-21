@@ -12,21 +12,11 @@ import (
 	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
 	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
 	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
-	"github.com/mateuszf757/Docfind/tools/internal/core/secretstore"
+	"github.com/mateuszf757/Docfind/tools/internal/core/platform"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/cli"
 	"github.com/mateuszf757/Docfind/tools/internal/kit/poll"
 	"github.com/mateuszf757/Docfind/tools/internal/stages/identity"
 )
-
-// platformChart — komponent platformy z przypiętego charta.
-type platformChart struct {
-	pin             string
-	label           string
-	namespace       string
-	createNamespace bool
-	values          string
-	timeout         time.Duration
-}
 
 // platform instaluje komponenty platformy w kolejności wynikającej z tego,
 // czego każdy potrzebuje przy starcie, a nie z wygody: CoreDNS przed
@@ -37,29 +27,17 @@ type platformChart struct {
 // platformy, który tworzy zasoby wszystkich, i na końcu OpenBao — jego
 // certyfikat wystawia wewnętrzne CA z charta platformy.
 func (d Deployer) platform(ctx context.Context, c Cluster) error {
-	for _, pc := range []platformChart{
-		{pins.CoreDNS, "CoreDNS", "kube-system", false, "deploy/platform/coredns/values.yaml", 3 * time.Minute},
-		{pins.EnvoyGateway, "Envoy Gateway", "envoy-gateway-system", true, "deploy/platform/envoy-gateway/values.yaml", 5 * time.Minute},
+	for _, pin := range []string{
+		pins.CoreDNS,
+		pins.EnvoyGateway,
 		// startupapicheck w charcie sprawia, że --wait kończy się dopiero
 		// wtedy, gdy webhook cert-managera naprawdę przyjmuje zapisy.
-		{pins.CertManager, "cert-manager", "cert-manager", true, "deploy/platform/cert-manager/values.yaml", 5 * time.Minute},
+		pins.CertManager,
 		// Przed chartem platformy, który tworzy SecretStore i ExternalSecret —
 		// bez CRD ESO Helm odrzuciłby cały chart. --wait czeka na webhook.
-		{pins.ExternalSecrets, "External Secrets Operator", "external-secrets", true, "deploy/platform/external-secrets/values.yaml", 5 * time.Minute},
+		pins.ExternalSecrets,
 	} {
-		chart, err := d.Pins.Chart(pc.pin)
-		if err != nil {
-			return err
-		}
-		archive, err := d.Charts.Fetch(ctx, chart)
-		if err != nil {
-			return err
-		}
-		cli.Step("%s: chart %s (suma zweryfikowana)", pc.label, chart.Version)
-		if err := d.Releases.Install(ctx, d.target(), cluster.Release{
-			Name: pc.pin, Chart: archive, Namespace: pc.namespace, CreateNamespace: pc.createNamespace,
-			ValuesFiles: []string{d.path(pc.values)}, Timeout: pc.timeout,
-		}); err != nil {
+		if err := d.installComponent(ctx, pin, false); err != nil {
 			return err
 		}
 	}
@@ -141,7 +119,22 @@ func (d Deployer) secretStore(ctx context.Context) error {
 	if err := ss.Prepare(ctx); err != nil {
 		return err
 	}
-	chart, err := d.Pins.Chart(pins.OpenBao)
+	if err := d.installComponent(ctx, pins.OpenBao, true); err != nil {
+		return err
+	}
+	_, err = ss.Bootstrap(ctx)
+	return err
+}
+
+// installComponent instaluje komponent platformy z przypiętego charta,
+// pobranego i sprawdzonego sumą z ci/pins.env. hooksOnly — Helm nie czeka
+// na gotowość zasobów (OpenBao: pody gotowe dopiero po inicjalizacji).
+func (d Deployer) installComponent(ctx context.Context, pin string, hooksOnly bool) error {
+	pc, err := platform.Get(pin)
+	if err != nil {
+		return err
+	}
+	chart, err := d.Pins.Chart(pin)
 	if err != nil {
 		return err
 	}
@@ -149,15 +142,11 @@ func (d Deployer) secretStore(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	cli.Step("OpenBao: chart %s (suma zweryfikowana)", chart.Version)
-	if err := d.Releases.Install(ctx, d.target(), cluster.Release{
-		Name: pins.OpenBao, Chart: archive, Namespace: secretstore.Namespace,
-		ValuesFiles: []string{d.path(secretstore.Dir + "/values.yaml")}, Timeout: 5 * time.Minute, HooksOnly: true,
-	}); err != nil {
-		return err
-	}
-	_, err = ss.Bootstrap(ctx)
-	return err
+	cli.Step("%s: chart %s (suma zweryfikowana)", pc.Label, chart.Version)
+	return d.Releases.Install(ctx, d.target(), cluster.Release{
+		Name: pc.Pin, Chart: archive, Namespace: pc.Namespace, CreateNamespace: pc.CreateNamespace,
+		ValuesFiles: []string{d.path(pc.Values)}, Timeout: pc.Timeout, HooksOnly: hooksOnly,
+	})
 }
 
 // waitReady czeka na warunek zasobu; obiekt, którego jeszcze nie ma, to

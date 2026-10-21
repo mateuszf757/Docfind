@@ -3255,6 +3255,73 @@ z tego stanu, a raport `upgrade-<env>.json` podaje polecenie powrotu do N.
 klientowi inną procedurę upgrade'u niż `helm upgrade` i `helm rollback` —
 bramka przejdzie na nią.
 
+## 80. Charty platformy w rejestrze po digeście: lustro i chart platformy
+
+> Pierwsza część kroku 3 Etapu 5: platforma pod Argo CD z pakietu
+> w rejestrze. Argo CD pobiera charty sam — bez sumy z `ci/pins.env`, którą
+> `dft` sprawdza przy każdym pobraniu. Ta decyzja daje mu źródło, w którym
+> ta suma dalej obowiązuje; pakiet dostawy z Applications to druga część.
+
+**Wybieram lustro w GHCR z manifestem wyliczonym z archiwum.**
+`dft chart mirror` publikuje w `charts/platform/<przypięcie>` każdy
+przypięty chart, którym zarządza Argo CD tam, gdzie przejmuje platformę:
+Envoy Gateway, cert-manager, External Secrets Operator, OpenBao.
+- Warstwa to te same bajty, które sprawdza suma z `ci/pins.env`, więc
+  digest warstwy jest tą sumą.
+- Manifest jest bez czasu publikacji, z adresem upstreamu w adnotacji.
+  Digest wynika więc z archiwum: pakiet dostawy wpisze go bez pytania
+  rejestru, a Argo pobierze chart po digeście. Źródło OCI w Argo CD 3.5
+  przyjmuje digest jako `targetRevision` i warstwę charta Helma
+  (`util/oci`), a archiwum z jednym katalogiem rozpakowuje do korzenia
+  źródła.
+- Tag lustra nie zmienia treści. Istniejący tag z innym manifestem to
+  odmowa, a nowa treść to nowe przypięcie.
+- Po wysłaniu manifest i warstwa są pobierane z powrotem i porównywane.
+  Na końcu odczyt bez poświadczeń: pakiet niepubliczny to ostrzeżenie, bo
+  Argo pobiera anonimowo.
+
+CoreDNS i Argo CD zostają poza lustrem — instaluje je `dft`. Bez CoreDNS
+Argo nie rozwiąże nazwy rejestru, a sam siebie nie zainstaluje.
+
+**Chart platformy jako artefakt** (`charts/docfind-platform`,
+`dft chart platform`): wersja i `appVersion` z commita jak w charcie
+aplikacji, wartości bez zmian — środowisko podaje je przy instalacji.
+Powtarzalny i sprawdzony po wysłaniu jak tamten.
+
+**Chart z OCI bez `helm pull`.** Chart publikowany tylko jako artefakt OCI
+(Envoy Gateway) `dft` pobiera jako warstwę charta z manifestu pod wersją —
+te same bajty i ta sama suma, co po `helm pull`. Zadanie `chart` z prawem
+zapisu do GHCR uruchamia więc tylko `dft`, a nie binarkę Helma, która
+czyta poświadczenia z konfiguracji Dockera.
+
+**Jedna lista komponentów** (`core/platform`). Wdrożenie, render w
+`dft test` i lustro brałyby ją z trzech miejsc; dwa już się rozjeżdżały
+kolejnością.
+
+Odpadły dwie drogi:
+- Argo pobierający charty z serwerów upstreamu po wersji: bez sumy, tag
+  wersji da się nadpisać, a Docker Hub liczy limit pobrań przy każdym
+  wyczyszczeniu pamięci Argo.
+- Rejestry OCI upstreamu po digeście: nie każdy projekt je ma, a
+  odtworzenie platformy po awarii zależałoby od pięciu rejestrów zamiast
+  jednego.
+
+**Co tracę:**
+- pięć nowych pakietów w GHCR (szósty dojdzie z pakietem dostawy) do
+  jednorazowego ustawienia jako publiczne;
+- miejsce w GHCR na wersję charta platformy przy każdym commicie `main`;
+- chart w lustrze bez atestacji: to cudza treść, a jej tożsamością jest
+  suma z `ci/pins.env`;
+- chart platformy w zadaniu `cluster` jest instalowany z katalogu, a nie
+  z archiwum jak chart aplikacji (decyzja 61). Pakiet różni się od
+  katalogu tylko wersją i `appVersion` w `Chart.yaml`, a pakowanie jest
+  powtarzalne.
+
+**Kiedy zmieniam zdanie:** gdy pakowanie charta platformy zacznie zmieniać
+jego wartości — wtedy instalacja z archiwum w `cluster`, jak chart
+aplikacji. Gdy GHCR wprowadzi retencję wersji — lustro w rejestrze, w którym
+tagi przypiętych chartów nie wygasają.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

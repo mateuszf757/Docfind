@@ -101,8 +101,8 @@ var commands = map[string]command{
 		run:   runTrial,
 	},
 	"chart": {
-		usage: "dft chart publish --image <obraz@sha256:…> [--tested <digest>]",
-		help:  "chart aplikacji z tym obrazem w rejestrze OCI: wersja z commita, powtarzalny artefakt, sprawdzony po wysłaniu (decyzja 45)",
+		usage: "dft chart <publish --image <obraz@sha256:…> [--tested <digest>] | platform | mirror>",
+		help:  "charty w rejestrze OCI: aplikacji z tym obrazem (decyzja 45), platformy i lustro przypiętych chartów z zewnątrz po digeście (decyzja 80) — powtarzalne, sprawdzone po wysłaniu",
 		run:   runChart,
 	},
 	"dns-token": {
