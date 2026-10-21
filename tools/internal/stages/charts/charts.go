@@ -15,9 +15,13 @@ import (
 	"strings"
 	"time"
 
+	"sigs.k8s.io/yaml"
+
+	"github.com/mateuszf757/Docfind/tools/internal/core/artifact"
 	"github.com/mateuszf757/Docfind/tools/internal/core/chart"
 	"github.com/mateuszf757/Docfind/tools/internal/core/cluster"
 	"github.com/mateuszf757/Docfind/tools/internal/core/crdschema"
+	"github.com/mateuszf757/Docfind/tools/internal/core/delivery"
 	"github.com/mateuszf757/Docfind/tools/internal/core/environment"
 	"github.com/mateuszf757/Docfind/tools/internal/core/gitops"
 	"github.com/mateuszf757/Docfind/tools/internal/core/pins"
@@ -204,7 +208,7 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 	// Projekt i Application Argo CD dla środowisk z GitOps (decyzja 46),
 	// z wartościami z definicji tą samą funkcją, którą wdrożenie przekazuje
 	// Helmowi.
-	if err := c.delivery(ctx, gitops, add); err != nil {
+	if err := c.delivery(ctx, gitops, tmp, add); err != nil {
 		return err
 	}
 
@@ -251,10 +255,18 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 		}
 	}
 
-	// Projekt Argo CD musi dopuszczać każdy zasób z charta, który wdraża —
-	// inaczej Argo odmówi synchronizacji dopiero na klastrze.
+	// Projekty Argo CD muszą dopuszczać każdy zasób z chartów, które wdrażają —
+	// inaczej Argo odmówi synchronizacji dopiero na klastrze; części charta
+	// platformy — dawać pełny render; wartości w pakiecie — ten sam render co
+	// --set.
 	for _, e := range gitops {
-		if err := c.projectCovers(e, tmp); err != nil {
+		if err := c.projectCovers(e, tmp, crds); err != nil {
+			return err
+		}
+		if err := c.partsCover(ctx, e, tmp); err != nil {
+			return err
+		}
+		if err := c.valuesMatch(ctx, e, tmp); err != nil {
 			return err
 		}
 	}
@@ -292,57 +304,220 @@ func (c Checker) Run(ctx context.Context, tmp string) error {
 
 func (c Checker) path(rel string) string { return filepath.Join(c.Root, rel) }
 
-// delivery sprawdza chart dostawy: lint i odrzucenie literówki z wartościami
-// pierwszego środowiska z GitOps, render każdego z nich.
-func (c Checker) delivery(ctx context.Context, envs []environment.Definition, add func(string, bool, bool, cluster.Release) error) error {
+// sampleBundle — pakiet dostawy z przykładowymi digestami, złożony tą samą
+// funkcją co przy publikacji (`dft chart delivery`).
+func (c Checker) sampleBundle(envs []environment.Definition) (delivery.Bundle, error) {
+	values, err := delivery.MirrorValues(c.Root)
+	if err != nil {
+		return delivery.Bundle{}, err
+	}
+	d := "sha256:" + strings.Repeat("a", 64)
+	mirror := map[string]string{}
+	for _, pc := range platform.Mirrored() {
+		mirror[pc.Pin] = d
+	}
+	return delivery.Compose(delivery.Artifacts{
+		Mirror: mirror, MirrorRepo: func(pin string) string { return artifact.MirrorName("", "", pin) }, MirrorValues: values,
+		PlatformRepo: artifact.PlatformChartName("", ""), PlatformDigest: d, AppRepo: artifact.ChartName("", ""), AppDigest: d,
+	}, envs)
+}
+
+// delivery renderuje pakiet dostawy i korzeń dla każdego środowiska z GitOps
+// (decyzja 81) i sprawdza, że ich schematy odrzucają literówki.
+func (c Checker) delivery(ctx context.Context, envs []environment.Definition, tmp string, add func(string, bool, bool, cluster.Release) error) error {
 	if len(envs) == 0 {
 		return nil
 	}
-	chart := c.path("deploy/charts/delivery")
-	cli.Step("helm lint delivery")
-	if err := c.Helm.Lint(ctx, chart, envs[0].DeliveryValues(sampleCABundle)...); err != nil {
+	b, err := c.sampleBundle(envs)
+	if err != nil {
 		return err
 	}
-	if err := c.mustReject(ctx, "chart dostawy przyjął nieznany klucz application.version — values.schema.json niczego nie pilnuje",
-		cluster.Release{Name: "delivery", Chart: chart, Set: append(envs[0].DeliveryValues(sampleCABundle), "application.version=1.0.0")}); err != nil {
+	bundle, root := c.path("deploy/charts/delivery"), c.path("deploy/charts/delivery-root")
+	cli.Step("helm lint delivery-root")
+	if err := c.Helm.Lint(ctx, root, envs[0].RootValues("ci@example.com")...); err != nil {
 		return err
 	}
-	for _, e := range envs {
-		r := cluster.Release{Name: "delivery", Chart: chart, Namespace: environment.ArgoCDNamespace, Set: e.DeliveryValues(sampleCABundle)}
-		if err := add("delivery-"+e.Name, false, false, r); err != nil {
+	if err := c.mustReject(ctx, "korzeń dostawy przyjął nieznany klucz bundle.version — values.schema.json niczego nie pilnuje",
+		cluster.Release{Name: "delivery-root", Chart: root, Set: append(envs[0].RootValues("ci@example.com"), "bundle.version=1.0.0")}); err != nil {
+		return err
+	}
+	for i, e := range envs {
+		values := b.Values()
+		values["environment"] = e.Name
+		values["runtime"] = map[string]any{"acmeEmail": "ci@example.com"}
+		file, err := writeValues(tmp, "delivery-"+e.Name, values)
+		if err != nil {
+			return err
+		}
+		if i == 0 {
+			if err := c.mustReject(ctx, "pakiet dostawy przyjął nieznany klucz enviroment — values.schema.json niczego nie pilnuje",
+				cluster.Release{Name: "delivery", Chart: bundle, ValuesFiles: []string{file}, Set: []string{"enviroment=" + e.Name}}); err != nil {
+				return err
+			}
+		}
+		if err := add("delivery-"+e.Name, false, false, cluster.Release{Name: "delivery", Chart: bundle, Namespace: environment.ArgoCDNamespace, ValuesFiles: []string{file}}); err != nil {
+			return err
+		}
+		if err := add("delivery-root-"+e.Name, false, false, cluster.Release{Name: "delivery-root", Chart: root, Namespace: environment.ArgoCDNamespace, Set: e.RootValues("ci@example.com")}); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// projectCovers sprawdza, że projekt z renderu dostawy środowiska e dopuszcza
-// każdy zasób z renderu charta z rejestru z wartościami tego środowiska.
-func (c Checker) projectCovers(e environment.Definition, tmp string) error {
-	delivery, err := parseFile(filepath.Join(tmp, "delivery-"+e.Name+".yaml"))
+// writeValues zapisuje wartości jako plik YAML dla Helma.
+func writeValues(tmp, name string, values map[string]any) (string, error) {
+	raw, err := yaml.Marshal(values)
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(tmp, name+".values.yaml")
+	return path, os.WriteFile(path, raw, 0o644)
+}
+
+// projectCovers sprawdza, że projekty z pakietu dostawy środowiska e
+// dopuszczają każdy zasób, który mają wdrożyć: projekt aplikacji — render
+// charta z rejestru, projekt platformy — rendery chartów lustra i charta
+// platformy (zasoby klastrowe i przestrzenie nazw). Argo odmówiłby
+// synchronizacji dopiero na klastrze.
+func (c Checker) projectCovers(e environment.Definition, tmp string, crds []map[string]any) error {
+	docs, err := parseFile(filepath.Join(tmp, "delivery-"+e.Name+".yaml"))
 	if err != nil {
 		return err
 	}
-	app, err := parseFile(filepath.Join(tmp, "docfind-oci-"+e.Name+".yaml"))
-	if err != nil {
-		return err
-	}
-	var project map[string]any
-	for _, d := range delivery {
+	projects := map[string]map[string]any{}
+	for _, d := range docs {
 		if manifest.String(d, "kind") == "AppProject" {
-			project = d
+			projects[manifest.String(manifest.Map(d, "metadata"), "name")] = d
 		}
 	}
-	if project == nil {
-		return cli.Unmet("render dostawy %s bez AppProject", e.Name)
+	app, platformProject := projects[delivery.AppProject], projects[delivery.PlatformProject]
+	if app == nil || platformProject == nil {
+		return cli.Unmet("pakiet dostawy %s bez projektów %s i %s", e.Name, delivery.AppProject, delivery.PlatformProject)
 	}
-	cli.Step("projekt Argo CD %s obejmuje chart aplikacji", e.Name)
-	if missing := gitops.Uncovered(project, app, e.App.Namespace); len(missing) > 0 {
+	cli.Step("pakiet dostawy %s: każdy projekt w fali przed swoimi Applications", e.Name)
+	if late := gitops.LateProjects(docs); len(late) > 0 {
+		for _, l := range late {
+			fmt.Fprintf(cli.Err, "FALA (%s): %s\n", e.Name, l)
+		}
+		return cli.Unmet("pakiet dostawy %s: projekt nie wyprzedza swoich Applications — popraw fale w deploy/charts/delivery/templates/projects.yaml", e.Name)
+	}
+	report := func(what string, missing []string, fix string) error {
+		if len(missing) == 0 {
+			return nil
+		}
 		for _, m := range missing {
 			fmt.Fprintf(cli.Err, "PROJEKT (%s): %s\n", e.Name, m)
 		}
-		return cli.Unmet("projekt Argo CD środowiska %s nie dopuszcza zasobów charta aplikacji — dopisz je w deploy/charts/delivery/values.yaml (project.namespaceResources)", e.Name)
+		return cli.Unmet("projekt Argo CD %s środowiska %s nie dopuszcza zasobów %s — dopisz je w deploy/charts/delivery/values.yaml (%s)", what, e.Name, what, fix)
 	}
+	appDocs, err := parseFile(filepath.Join(tmp, "docfind-oci-"+e.Name+".yaml"))
+	if err != nil {
+		return err
+	}
+	cli.Step("projekt Argo CD %s/%s obejmuje chart aplikacji", e.Name, delivery.AppProject)
+	if err := report("aplikacji", gitops.Uncovered(app, appDocs, e.App.Namespace), "projects.docfind.namespaceResources"); err != nil {
+		return err
+	}
+	var platformDocs []map[string]any
+	for _, name := range append(mirroredPins(), "platform-"+e.Name) {
+		d, err := parseFile(filepath.Join(tmp, name+".yaml"))
+		if err != nil {
+			return err
+		}
+		platformDocs = append(platformDocs, d...)
+	}
+	cli.Step("projekt Argo CD %s/%s obejmuje charty platformy", e.Name, delivery.PlatformProject)
+	return report("platformy", gitops.UncoveredPlatform(platformProject, platformDocs, crds), "projects.platform.clusterResources")
+}
+
+func mirroredPins() []string {
+	var out []string
+	for _, pc := range platform.Mirrored() {
+		out = append(out, pc.Pin)
+	}
+	return out
+}
+
+// partsCover sprawdza, że dwie części charta platformy (parts.pki
+// i parts.ingress, decyzja 81) dają razem pełny render środowiska e i nie
+// dzielą żadnego zasobu — Argo wdraża je jako dwie Applications.
+func (c Checker) partsCover(ctx context.Context, e environment.Definition, tmp string) error {
+	full, err := parseFile(filepath.Join(tmp, "platform-"+e.Name+".yaml"))
+	if err != nil {
+		return err
+	}
+	chart := c.path("deploy/charts/platform")
+	seen := map[string]string{}
+	for _, part := range []string{"pki", "ingress"} {
+		other := map[string]string{"pki": "ingress", "ingress": "pki"}[part]
+		path := filepath.Join(tmp, "platform-"+e.Name+"-"+part+".yaml")
+		r := cluster.Release{Name: "platform", Chart: chart, Namespace: e.Gateway.Namespace, Set: append(e.PlatformValues("ci@example.com"), "parts."+other+"=false")}
+		if err := c.renderTo(ctx, path, r, false); err != nil {
+			return err
+		}
+		docs, err := parseFile(path)
+		if err != nil {
+			return err
+		}
+		for _, d := range docs {
+			id := identity(d)
+			if prev, dup := seen[id]; dup {
+				return cli.Unmet("chart platformy: %s w częściach %s i %s", id, prev, part)
+			}
+			seen[id] = part
+		}
+	}
+	for _, d := range full {
+		if _, ok := seen[identity(d)]; !ok {
+			return cli.Unmet("chart platformy %s: %s poza obiema częściami (parts.pki, parts.ingress) — Argo CD by go nie wdrożył", e.Name, identity(d))
+		}
+		delete(seen, identity(d))
+	}
+	for id := range seen {
+		return cli.Unmet("chart platformy %s: %s w części, a nie w pełnym renderze", e.Name, id)
+	}
+	cli.Step("chart platformy %s: części pki i ingress dają pełny render", e.Name)
+	return nil
+}
+
+func identity(d map[string]any) string {
+	meta := manifest.Map(d, "metadata")
+	return manifest.String(d, "apiVersion") + "/" + manifest.String(d, "kind") + " " + manifest.String(meta, "namespace") + "/" + manifest.String(meta, "name")
+}
+
+// valuesMatch sprawdza, że wartości środowiska e w postaci mapy (pakiet
+// dostawy, valuesObject) dają ten sam render co te same wartości przez
+// --set (instalacja przez dft) — typy z SetValues są typami Helma.
+func (c Checker) valuesMatch(ctx context.Context, e environment.Definition, tmp string) error {
+	for _, v := range []struct {
+		name, chart, namespace string
+		set                    []string
+		extra                  []string
+	}{
+		{"docfind", c.path("deploy/charts/docfind"), e.App.Namespace, e.AppValues(""), []string{"api.image.tag=lint"}},
+		{"platform", c.path("deploy/charts/platform"), e.Gateway.Namespace, e.PlatformValues("ci@example.com"), nil},
+	} {
+		m, err := environment.SetValues(v.set)
+		if err != nil {
+			return err
+		}
+		file, err := writeValues(tmp, v.name+"-"+e.Name+"-map", m)
+		if err != nil {
+			return err
+		}
+		var viaSet, viaMap strings.Builder
+		if err := c.Helm.Template(ctx, cluster.Release{Name: v.name, Chart: v.chart, Namespace: v.namespace, Set: append(v.set, v.extra...)}, false, &viaSet); err != nil {
+			return err
+		}
+		if err := c.Helm.Template(ctx, cluster.Release{Name: v.name, Chart: v.chart, Namespace: v.namespace, ValuesFiles: []string{file}, Set: v.extra}, false, &viaMap); err != nil {
+			return err
+		}
+		if viaSet.String() != viaMap.String() {
+			return cli.Unmet("chart %s, środowisko %s: render z wartości pakietu dostawy różni się od renderu z --set — typy SetValues rozjechały się z Helmem", v.name, e.Name)
+		}
+	}
+	cli.Step("wartości %s w pakiecie dostawy dają ten sam render co --set", e.Name)
 	return nil
 }
 

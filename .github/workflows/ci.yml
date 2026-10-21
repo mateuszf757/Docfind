@@ -6,8 +6,8 @@ name: ci
 # main    → dodatkowo publikacja obrazu otagowanego commitem — jedyny build
 #           tego commita (decyzja 40); klaster dostaje obraz z GHCR po
 #           digeście — dowód, że opublikowany obraz to obraz sprawdzony;
-#           po bramkach klastra chart z tym obrazem, który śledzi Argo CD
-#           na stagingu (decyzja 45)
+#           po bramkach klastra chart z tym obrazem i pakiet dostawy, który
+#           śledzi Argo CD na stagingu (decyzje 45, 81)
 # tag v*  → wydanie bez builda (decyzja 40): tag z adnotacją zakłada
 #           `./bin/mise run release` po akceptacji digestu z main na stagingu;
 #           tu ten sam digest dostaje w rejestrze tag X.Y.Z i atestację
@@ -996,9 +996,10 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
-  # Chart aplikacji z obrazem tego commita po digeście, jako artefakt OCI
-  # w GHCR (decyzja 45). Argo CD na stagingu wdraża najwyższą wersję z zakresu
-  # kilka minut po publikacji, więc publikacja to promocja na staging — stąd
+  # Chart aplikacji z obrazem tego commita po digeście, chart platformy,
+  # lustro i pakiet dostawy jako artefakty OCI w GHCR (decyzje 45, 80, 81).
+  # Argo CD na stagingu wdraża najwyższą wersję pakietu z zakresu kilka minut
+  # po publikacji, więc publikacja to promocja na staging — stąd
   # osobne zadanie po bramkach klastra na obrazie z GHCR, a nie krok w build.
   # Commit, na którym bramka padła, nie trafia na staging; trafi następny
   # zielony. Powtarzalny jak obraz: ten sam commit, ten sam digest. dft
@@ -1028,6 +1029,8 @@ jobs:
       digest: ${{ steps.chart.outputs.chart-digest }}
       platform-chart: ${{ steps.platform.outputs.platform-chart }}
       platform-digest: ${{ steps.platform.outputs.platform-chart-digest }}
+      delivery-chart: ${{ steps.delivery.outputs.delivery-chart }}
+      delivery-digest: ${{ steps.delivery.outputs.delivery-chart-digest }}
     env:
       # Jak w build: zadanie z packages: write uruchamia tylko dft zbudowany
       # tutaj, z samym Go — także charty z rejestru OCI pobiera dft, bez
@@ -1074,6 +1077,17 @@ jobs:
       - name: lustro przypiętych chartów platformy (OCI)
         run: ./bin/mise run chart:mirror
 
+      # Pakiet dostawy (decyzja 81): Applications platformy i aplikacji po
+      # digestach z tego biegu — charta aplikacji, który przeszedł klaster,
+      # charta platformy i lustra. Na końcu, bo to jego śledzi Argo CD na
+      # stagingu: commit trafia tam tylko w całości, z artefaktami w rejestrze.
+      - name: publikacja pakietu dostawy (OCI)
+        id: delivery
+        env:
+          APP: ${{ steps.chart.outputs.chart }}@${{ steps.chart.outputs.chart-digest }}
+          PLATFORM: ${{ steps.platform.outputs.platform-chart }}@${{ steps.platform.outputs.platform-chart-digest }}
+        run: ./bin/mise run chart:delivery -- --app "$APP" --platform "$PLATFORM"
+
   # Atestacja GitHuba charta — ta sama tożsamość workflowu i commita co
   # obraz. Osobne zadanie z tego samego powodu co attest: id-token: write
   # tylko tam, gdzie jest sama akcja atestacji. Klient (Etap 10) i weryfikacja
@@ -1110,6 +1124,14 @@ jobs:
         with:
           subject-name: ${{ needs.chart.outputs.platform-chart }}
           subject-digest: ${{ needs.chart.outputs.platform-digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      # Pakiet dostawy — to, co Argo CD wdraża na staging.
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ needs.chart.outputs.delivery-chart }}
+          subject-digest: ${{ needs.chart.outputs.delivery-digest }}
           push-to-registry: true
           create-storage-record: false
 

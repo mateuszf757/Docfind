@@ -178,3 +178,72 @@ func TestDescending(t *testing.T) {
 		t.Errorf("Descending = %q, oczekiwano %q", got, want)
 	}
 }
+
+func TestUncoveredPlatform(t *testing.T) {
+	project := map[string]any{"spec": map[string]any{
+		"clusterResourceWhitelist": []any{map[string]any{"group": "rbac.authorization.k8s.io", "kind": "ClusterRole"}},
+		"destinations":             []any{map[string]any{"namespace": "cert-manager"}, map[string]any{"namespace": "kube-system"}},
+	}}
+	crds := []map[string]any{
+		{"kind": "CustomResourceDefinition", "spec": map[string]any{"group": "cert-manager.io", "scope": "Cluster", "names": map[string]any{"kind": "ClusterIssuer"}}},
+		{"kind": "CustomResourceDefinition", "spec": map[string]any{"group": "cert-manager.io", "scope": "Namespaced", "names": map[string]any{"kind": "Certificate"}}},
+	}
+	ok := []map[string]any{
+		{"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole", "metadata": map[string]any{"name": "a"}},
+		{"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "Role", "metadata": map[string]any{"name": "leader", "namespace": "kube-system"}},
+		// Bez jawnej przestrzeni — trafia do przestrzeni docelowej Application.
+		{"apiVersion": "cert-manager.io/v1", "kind": "Certificate", "metadata": map[string]any{"name": "c"}},
+	}
+	if got := UncoveredPlatform(project, ok, crds); len(got) != 0 {
+		t.Fatalf("render w granicach projektu zgłoszony: %v", got)
+	}
+	bad := append(ok,
+		map[string]any{"apiVersion": "cert-manager.io/v1", "kind": "ClusterIssuer", "metadata": map[string]any{"name": "ca"}},
+		map[string]any{"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition", "metadata": map[string]any{"name": "x"}},
+		map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "s", "namespace": "default"}},
+	)
+	got := strings.Join(UncoveredPlatform(project, bad, crds), "\n")
+	for _, want := range []string{"ClusterIssuer ca", "CustomResourceDefinition x", "Secret s w przestrzeni default"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("brak %q w:\n%s", want, got)
+		}
+	}
+}
+
+func TestLateProjects(t *testing.T) {
+	obj := func(kind, name, wave, project string) map[string]any {
+		m := map[string]any{"apiVersion": "argoproj.io/v1alpha1", "kind": kind, "metadata": map[string]any{"name": name}}
+		if wave != "" {
+			m["metadata"].(map[string]any)["annotations"] = map[string]any{SyncWave: wave}
+		}
+		if project != "" {
+			m["spec"] = map[string]any{"project": project}
+		}
+		return m
+	}
+	ok := []map[string]any{
+		obj("AppProject", "platform", "-1", ""),
+		obj("AppProject", "docfind", "5", ""),
+		obj("Application", "envoy-gateway", "", "platform"),
+		obj("Application", "platform", "5", "platform"),
+		obj("Application", "docfind", "6", "docfind"),
+	}
+	if got := LateProjects(ok); len(got) != 0 {
+		t.Fatalf("projekty przed Applications zgłoszone: %v", got)
+	}
+	bad := []map[string]any{
+		// Bez adnotacji — fala 0, jak Application w fali 0.
+		obj("AppProject", "platform", "", ""),
+		obj("AppProject", "docfind", "6", ""),
+		obj("Application", "envoy-gateway", "0", "platform"),
+		obj("Application", "docfind", "6", "docfind"),
+		obj("Application", "obca", "7", "default"),
+		obj("Application", "zła", "x", "platform"),
+	}
+	got := strings.Join(LateProjects(bad), "\n")
+	for _, want := range []string{"envoy-gateway w fali 0, a jej projekt platform w fali 0", "docfind w fali 6, a jej projekt docfind w fali 6", "obca: projekt default spoza pakietu", "zła: fala"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("brak %q w:\n%s", want, got)
+		}
+	}
+}

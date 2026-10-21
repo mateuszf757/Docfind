@@ -1,0 +1,72 @@
+{{- /*
+Projekty: granice tego, co Argo CD może wdrożyć w imieniu pakietu, niezależnie
+od treści chartów z rejestru. Kontroler Argo ma uprawnienia w całym klastrze;
+projekt zawęża je do źródeł z tego pakietu, przestrzeni nazw komponentów
+i listy rodzajów zasobów.
+
+Fala projektu: o jeden przed najwcześniejszym jego komponentem. Application
+z projektem z tej samej fali kontroler ocenia, zanim zobaczy projekt
+(InvalidSpecError do następnego uzgodnienia), a projekt zmieniony wcześniej
+niż jego Applications odrzuca ich stare źródła na czas fal pomiędzy.
+*/ -}}
+{{- $platformRepos := list }}
+{{- $platformNamespaces := list "kube-system" }}
+{{- $appRepos := list }}
+{{- $appNamespace := "" }}
+{{- $platformWave := "" }}
+{{- $appWave := "" }}
+{{- range .Values.components }}
+{{- if eq .project "platform" }}
+{{- if eq $platformWave "" }}{{ $platformWave = sub (int .wave) 1 | toString }}{{ end }}
+{{- $platformRepos = append $platformRepos .repoURL }}
+{{- $platformNamespaces = append $platformNamespaces .namespace }}
+{{- else if eq .project "docfind" }}
+{{- if eq $appWave "" }}{{ $appWave = sub (int .wave) 1 | toString }}{{ end }}
+{{- $appRepos = append $appRepos .repoURL }}
+{{- $appNamespace = .namespace }}
+{{- end }}
+{{- end }}
+# Platforma: operatory z zewnątrz (lustro przypiętych chartów) i chart
+# platformy. Rodzaje w przestrzeniach komponentów bez listy — operatory
+# tworzą Secrety, role i konta, których lista zmieniałaby się z każdą
+# wersją; granicą są przestrzenie nazw i lista zasobów klastrowych.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ $platformWave | quote }}
+spec:
+  description: DOCFIND — platforma z pakietu dostawy
+  sourceRepos:
+    {{- toYaml (uniq $platformRepos) | nindent 4 }}
+  destinations:
+    {{- range uniq $platformNamespaces }}
+    - server: https://kubernetes.default.svc
+      namespace: {{ . | quote }}
+    {{- end }}
+  clusterResourceWhitelist:
+    {{- toYaml .Values.projects.platform.clusterResources | nindent 4 }}
+  namespaceResourceWhitelist:
+    - {group: "*", kind: "*"}
+---
+# Aplikacja: chart z rejestru, tylko jej przestrzeń nazw, nic na poziomie
+# klastra — przestrzeń nazw, jej etykiety i CRD należą do platformy.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: docfind
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ $appWave | quote }}
+spec:
+  description: DOCFIND — chart z rejestru OCI, tylko przestrzeń {{ $appNamespace }}
+  sourceRepos:
+    {{- toYaml (uniq $appRepos) | nindent 4 }}
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: {{ required "components: brak komponentu z projektem docfind" $appNamespace | quote }}
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    {{- toYaml .Values.projects.docfind.namespaceResources | nindent 4 }}

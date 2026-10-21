@@ -10,21 +10,29 @@ strażnikami i dowodami — w [docs/engineering-contracts.md](docs/engineering-c
 
 ## Stan
 
-Etap 5 z 11, w toku — GitOps z Argo CD. Zrobione dwa kroki: CI publikuje
-chart aplikacji jako artefakt OCI w GHCR, a Argo CD na stagingu śledzi go
-z rejestru. Krok 3 — platforma pod Argo CD z pakietu w rejestrze — w toku:
-charty platformy są już w GHCR po digeście; zostaje pakiet dostawy
-z Applications platformy i sync waves. Warunek zakończenia to samonaprawa
-bez przestoju na stagingu (`cluster:selfheal`).
+Etap 5 z 11, w toku — GitOps z Argo CD. Zrobione trzy kroki: CI publikuje
+chart aplikacji jako artefakt OCI w GHCR, Argo CD na stagingu śledzi go
+z rejestru, a od kroku 3 wdraża też platformę — z jednego pakietu dostawy
+w rejestrze, falami (app-of-apps, sync waves). Warunek zakończenia to
+samonaprawa bez przestoju na stagingu (`cluster:selfheal`).
 
 - chart publikowany po bramkach klastra, i to ten sam pakiet, który
   przeszedł klaster — z digestem przetestowanego obrazu (decyzje 45, 61)
 - charty platformy w GHCR: lustro przypiętych chartów z zewnątrz (te same
   bajty co po sumie z `ci/pins.env`, digest wyliczony z archiwum, tag bez
   zmiany treści) i chart platformy z każdego commita (decyzja 80)
-- Argo CD w trybie Core, bez serwera API i UI; zakres wersji z rejestru,
-  `selfHeal` i `prune`; cofnięcie to przypięcie wersji w definicji
-  środowiska, nie `helm rollback` (decyzja 46)
+- pakiet dostawy: projekty i Applications platformy i aplikacji, każda po
+  digeście artefaktu z tego samego commita, z wartościami środowisk
+  z definicji; CI publikuje go po bramkach klastra, staging śledzi go
+  zakresem wersji — commit trafia na staging w całości albo wcale
+  (decyzja 81)
+- `dft cluster up` na stagingu stawia tylko CoreDNS, Argo CD i korzeń,
+  a w trakcie fal robi to, czego Argo nie zrobi: inicjalizuje OpenBao,
+  zapisuje token DNS i sekrety aplikacji; wydania Helma z poprzednich
+  wdrożeń przejmuje bez ruszania zasobów (decyzja 81)
+- Argo CD w trybie Core, bez serwera API i UI; `selfHeal` i `prune`;
+  cofnięcie to przypięcie wersji pakietu w definicji środowiska, nie
+  `helm rollback` (decyzje 46, 81)
 - kontrakt inżynierski w gicie: progi bramek jako stałe w kodzie, tabela
   w kontrakcie generowana z nich, pola chronione wymagają wpisu w DECYZJE
   w tym samym PR-ze, wyjątki z datą wygaśnięcia (decyzje 50, 64)
@@ -207,8 +215,9 @@ podaje wdrożenie zmienną `DOCFIND_VERSION`: ten sam digest jest na stagingu
 `0.3.1-dev.<commity od tagu>+<sha>`, a na produkcji `0.3.1`.
 
 ```bash
-# 1. staging dostaje chart z main sam — Argo CD (decyzja 46); stan wdrożenia:
-MISE_ENV=staging ./bin/mise exec -- kubectl -n argocd get application docfind
+# 1. staging dostaje pakiet dostawy z main sam — Argo CD (decyzje 46, 81);
+#    stan wdrożenia:
+MISE_ENV=staging ./bin/mise exec -- kubectl -n argocd get applications
 # 2. akceptacja tego, co stoi na stagingu, i tag z adnotacją na jego commicie —
 #    kodem bramek ze scalonego main, z czystego drzewa (decyzja 48)
 git switch main && git pull
@@ -223,7 +232,7 @@ akceptacji — tożsamość na podach, drain każdego węzła pod ruchem,
 odnowienie certyfikatu pod ruchem, tożsamość po drainach — i zapisuje ich
 wyniki w tagu razem z digestem i commitem kodu bramek (`Gates-Commit:`).
 Odmawia, gdy kod bramek ma niezatwierdzone zmiany albo nie jest
-w `origin/main`, i gdy w trakcie Argo CD wdroży inną wersję — wtedy wydanie
+w `origin/main`, i gdy w trakcie Argo CD wdroży inny pakiet — wtedy wydanie
 powtarza się po synchronizacji. Na tagu CI niczego nie buduje: dopisuje
 w rejestrze `ghcr.io/mateuszf757/docfind-api:0.3.1` do tego samego
 digestu, wystawia atestację wydania z zapisem akceptacji i atestację

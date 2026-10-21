@@ -234,6 +234,11 @@ type fakeCharts struct{ *recorder }
 func (f fakeCharts) Fetch(_ context.Context, c pins.Chart) (string, error) {
 	return "/cache/" + c.Name + ".tgz", f.call("fetch %s", c.Name)
 }
+
+// Manifest — wydanie z jednym Deploymentem bez jawnej przestrzeni nazw.
+func (f fakeCharts) Manifest(_ context.Context, _ cluster.Target, ns, name string) ([]byte, error) {
+	return []byte("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: " + name + "\n"), f.call("manifest %s/%s", ns, name)
+}
 func (f fakeCharts) Install(_ context.Context, _ cluster.Target, r cluster.Release) error {
 	for _, v := range r.SetString {
 		if version, ok := strings.CutPrefix(v, "api.version="); ok {
@@ -259,30 +264,37 @@ func (f fakeCharts) Install(_ context.Context, _ cluster.Target, r cluster.Relea
 type fakeCluster struct {
 	*recorder
 	image string
-	// apps — kolejne stany Application (ostatni zostaje); helmRecords —
-	// zapis wydania Helma aplikacji sprzed Argo CD.
-	apps        *[]cluster.Application
-	helmRecords []string
+	// apps — kolejne stany każdej Application (ostatni zostaje); helmRecords
+	// — zapis wydań Helma sprzed Argo CD, po „przestrzeń/wydanie".
+	apps        *map[string][]cluster.Application
+	helmRecords map[string][]string
 }
 
 func (f fakeCluster) Application(_ context.Context, ns, name string) (cluster.Application, error) {
-	if f.apps == nil || len(*f.apps) == 0 {
-		return cluster.Application{}, errors.New("brak Application")
+	if f.apps == nil || len((*f.apps)[name]) == 0 {
+		return cluster.Application{}, errors.New("brak Application " + name)
 	}
-	app := (*f.apps)[0]
-	if len(*f.apps) > 1 {
-		*f.apps = (*f.apps)[1:]
+	seq := (*f.apps)[name]
+	app := seq[0]
+	if len(seq) > 1 {
+		(*f.apps)[name] = seq[1:]
 	}
 	return app, f.call("application %s/%s %s", ns, name, app.Revision)
 }
 func (f fakeCluster) RefreshApplication(_ context.Context, ns, name string) error {
 	return f.call("refresh %s/%s", ns, name)
 }
-func (f fakeCluster) HelmReleaseRecords(context.Context, string, string) ([]string, error) {
-	return f.helmRecords, nil
+func (f fakeCluster) HelmReleaseRecords(_ context.Context, ns, name string) ([]string, error) {
+	return f.helmRecords[ns+"/"+name], nil
 }
 func (f fakeCluster) DeleteSecret(_ context.Context, ns, name string) error {
 	return f.call("delete secret %s/%s", ns, name)
+}
+func (f fakeCluster) EnsureConfigMap(_ context.Context, ns, name string, data map[string]string) error {
+	return f.call("configmap %s/%s %s", ns, name, data["ca.crt"])
+}
+func (f fakeCluster) RemoveFieldManager(_ context.Context, apiVersion, kind, ns, name, manager, keep string) (bool, error) {
+	return true, f.call("field manager %s/%s %s/%s -%s +%s", apiVersion, kind, ns, name, manager, keep)
 }
 func (f fakeCluster) PullEvents(context.Context) ([]string, error) {
 	return nil, f.call("pull events")

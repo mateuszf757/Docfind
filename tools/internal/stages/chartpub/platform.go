@@ -53,30 +53,54 @@ type Stored struct {
 	Public bool `json:"public"`
 }
 
+// build składa artefakt lustra przypiętego charta pc z archiwum sprawdzonego
+// sumą z ci/pins.env.
+func (m Mirror) build(ctx context.Context, pc platform.Component) (chart.OCI, pins.Chart, error) {
+	pinned, err := m.Pins.Chart(pc.Pin)
+	if err != nil {
+		return chart.OCI{}, pins.Chart{}, err
+	}
+	path, err := m.Charts.Fetch(ctx, pinned)
+	if err != nil {
+		return chart.OCI{}, pins.Chart{}, err
+	}
+	archive, err := os.ReadFile(path)
+	if err != nil {
+		return chart.OCI{}, pins.Chart{}, err
+	}
+	oci, err := chart.Mirror(archive, pinned.Source, m.Source)
+	if err != nil {
+		return chart.OCI{}, pins.Chart{}, fmt.Errorf("%s: %w", pc.Label, err)
+	}
+	if oci.Version != pinned.Version {
+		return chart.OCI{}, pins.Chart{}, cli.Unmet("%s: wersja w Chart.yaml %s, a w ci/pins.env %s", pc.Label, oci.Version, pinned.Version)
+	}
+	return oci, pinned, nil
+}
+
+// Digests zwraca digesty lustra po przypięciu, wyliczone z archiwów — bez
+// pytania rejestru: manifest lustra wynika z archiwum deterministycznie.
+func (m Mirror) Digests(ctx context.Context) (map[string]string, error) {
+	out := map[string]string{}
+	for _, pc := range platform.Mirrored() {
+		oci, _, err := m.build(ctx, pc)
+		if err != nil {
+			return nil, err
+		}
+		out[pc.Pin] = oci.Digest()
+	}
+	return out, nil
+}
+
 // Run wysyła do lustra każdy chart, którym zarządza Argo CD, a którego tam
 // nie ma. Tag lustra nie zmienia treści: ten sam tag z innym manifestem to
 // odmowa — nowa treść to nowe przypięcie w ci/pins.env, z nową wersją.
 func (m Mirror) Run(ctx context.Context) ([]Stored, error) {
 	var out []Stored
 	for _, pc := range platform.Mirrored() {
-		pinned, err := m.Pins.Chart(pc.Pin)
+		oci, pinned, err := m.build(ctx, pc)
 		if err != nil {
 			return out, err
-		}
-		path, err := m.Charts.Fetch(ctx, pinned)
-		if err != nil {
-			return out, err
-		}
-		archive, err := os.ReadFile(path)
-		if err != nil {
-			return out, err
-		}
-		oci, err := chart.Mirror(archive, pinned.Source, m.Source)
-		if err != nil {
-			return out, fmt.Errorf("%s: %w", pc.Label, err)
-		}
-		if oci.Version != pinned.Version {
-			return out, cli.Unmet("%s: wersja w Chart.yaml %s, a w ci/pins.env %s", pc.Label, oci.Version, pinned.Version)
 		}
 		s, err := put(ctx, m.Registry, m.Repository(pc.Pin), oci, true)
 		if err != nil {

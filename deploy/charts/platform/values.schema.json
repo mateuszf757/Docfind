@@ -5,6 +5,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "parts",
     "gateway",
     "certificate",
     "internalCA",
@@ -16,6 +17,39 @@
     "global": {
       "type": "object",
       "description": "Helm dokłada `global` do wartości każdego charta."
+    },
+    "parts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pki",
+        "ingress"
+      ],
+      "description": "Części charta (decyzja 81): Helm instaluje obie, Argo CD każdą jako osobną Application. Żadna — chart bez zasobów, czyli pomyłka w wartościach.",
+      "properties": {
+        "pki": {
+          "type": "boolean"
+        },
+        "ingress": {
+          "type": "boolean"
+        }
+      },
+      "anyOf": [
+        {
+          "properties": {
+            "pki": {
+              "const": true
+            }
+          }
+        },
+        {
+          "properties": {
+            "ingress": {
+              "const": true
+            }
+          }
+        }
+      ]
     },
     "gateway": {
       "type": "object",

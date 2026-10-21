@@ -1,3 +1,4 @@
+{{- if .Values.parts.ingress }}
 {{- include "platform.validateIssuer" . -}}
 # Gateway z dwoma listenerami. Certyfikat listenera HTTPS tworzy cert-manager
 # z adnotacji — Certificate o nazwie sekretu z certificateRefs, odnawiany sam.
@@ -40,3 +41,4 @@ spec:
           selector:
             matchLabels:
               {{ .Values.gateway.routeNamespaceLabel.key }}: {{ .Values.gateway.routeNamespaceLabel.value | quote }}
+{{- end }}

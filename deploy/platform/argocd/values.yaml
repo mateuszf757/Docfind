@@ -1,7 +1,8 @@
-# Argo CD (decyzja 46): wdraża aplikację z charta OCI w GHCR, w zakresie
-# wersji z definicji środowiska (delivery.argocd). Wartości do charta
-# argo-cd przypiętego w ci/pins.env; projekt i Application — chart
-# deploy/charts/delivery.
+# Argo CD (decyzje 46 i 81): wdraża platformę i aplikację z pakietu dostawy
+# w GHCR, w zakresie wersji z definicji środowiska (delivery.argocd).
+# Wartości do charta argo-cd przypiętego w ci/pins.env; główna Application —
+# chart deploy/charts/delivery-root, projekty i Applications komponentów —
+# pakiet z deploy/charts/delivery.
 #
 # Tryb Core: kontroler aplikacji, repo-server i Redis — bez serwera API, UI,
 # Dex, powiadomień i ApplicationSet. Dostęp to Kubernetes RBAC z kubeconfigu
@@ -29,6 +30,24 @@ configs:
     # Bez serwera API nikt się nie loguje — konto admin byłoby hasłem do
     # pilnowania bez użytku.
     admin.enabled: false
+    # Zdrowie Application z jej statusu (dokumentacja Argo CD, „Argo CD App"
+    # w health checks). Od Argo CD 1.8 Application nie ma własnej oceny
+    # zdrowia, a fale (sync waves) w głównej Application czekają na zdrowie
+    # Applications komponentów poprzedniej fali (decyzja 81) — bez tego
+    # cert-manager ruszałby przed CRD Gateway API, a platforma przed OpenBao.
+    resource.customizations.health.argoproj.io_Application: |
+      hs = {}
+      hs.status = "Progressing"
+      hs.message = ""
+      if obj.status ~= nil then
+        if obj.status.health ~= nil then
+          hs.status = obj.status.health.status
+          if obj.status.health.message ~= nil then
+            hs.message = obj.status.health.message
+          end
+        end
+      end
+      return hs
 
 # Decyzja 16: requesty i limit pamięci, bez limitu CPU. Zmierzone na stagingu
 # (kubectl top, jedna Application) — do przeglądu po pierwszym tygodniu.

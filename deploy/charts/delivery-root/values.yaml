@@ -1,0 +1,12 @@
+# Wartości podaje dft (RootValues w core/environment) — tutaj kształt i opisy.
+
+# Środowisko, którego wartości pakiet ma wdrożyć (environments w pakiecie).
+environment: ""
+bundle:
+  # Pakiet dostawy w rejestrze OCI (oci://…/charts/docfind-delivery) i zakres
+  # wersji: Argo wdraża najwyższą wersję, która go spełnia (decyzja 45).
+  repoURL: ""
+  versions: ""
+runtime:
+  # Adres konta ACME (DOCFIND_ACME_EMAIL) — dane osobowe, nie z gita.
+  acmeEmail: ""

@@ -183,6 +183,10 @@ run = "ci/dft chart platform"
 description = "Lustro przypiętych chartów platformy, którymi zarządza Argo CD, w rejestrze OCI — te same bajty co po sumie z ci/pins.env, po digeście (decyzja 80)"
 run = "ci/dft chart mirror"
 
+[tasks."chart:delivery"]
+description = "Pakiet dostawy dla Argo CD z bieżącego commita do rejestru OCI (w CI na main, decyzja 81): --app <chart@sha256:…> --platform <chart@sha256:…>"
+run = "ci/dft chart delivery"
+
 [tasks.release]
 description = "Wydanie bez builda (decyzja 40): -- vX.Y.Z [\"tytuł\"] — akceptacja na stagingu digestu, który tam stoi (tożsamość, drain, TLS), i tag z adnotacją na jego commicie; push tagu robi autor"
 run = "ci/dft release"

@@ -100,13 +100,28 @@ Decyzja: 23.
 | Zdarzenie | Środowisko | Artefakt | Kto zatwierdza |
 |---|---|---|---|
 | PR do `main` | `ci` (efemeryczny) | archiwum `docker save` z `build`, sprawdzane digestem konfiguracji | wymagane statusy (§3.2) |
-| push na `main` | `ci` (efemeryczny), potem `staging` | obraz z GHCR po digeście z `build-publish`; chart OCI po zielonym `cluster` | wymagane statusy na PR-ze; staging — Argo CD z zakresem wersji |
+| push na `main` | `ci` (efemeryczny), potem `staging` | obraz z GHCR po digeście z `build-publish`; po zielonym `cluster` chart OCI, chart platformy i pakiet dostawy z ich digestami | wymagane statusy na PR-ze; staging — Argo CD śledzi pakiet dostawy zakresem wersji |
 | tag `vX.Y.Z` (z adnotacją z `dft release`) | `prod` | ten sam digest z `main`, przyjęty na stagingu | autor w Environment `production` |
 
 Egzekwuje: definicje środowisk (`core/environment`), Environment `production` (tylko tagi
 `v*`, recenzent), `stages/admission`, `stages/promote`. Dowód: atestacje, GitHub Deployment.
 Warstwa: W3, W5. Wariant negatywny: obraz z `main` bez atestacji wydania → `dft promote` kod 1.
-Decyzja: 35, 38, 40, 45, 46.
+Decyzja: 35, 38, 40, 45, 46, 80, 81.
+
+**2.1a Pakiet dostawy.** Na stagingu platformę i aplikację wdraża Argo CD z jednego pakietu
+(`charts/docfind-delivery`): każdy komponent po digeście artefaktu z tego samego commita, falami
+w kolejności zależności, w projektach z granicami (źródła z pakietu, przestrzenie komponentów,
+lista zasobów klastrowych). `dft cluster up` instaluje tylko CoreDNS, Argo CD i korzeń
+i prowadzi kroki startowe, których Argo nie zrobi (OpenBao, token DNS, sekrety aplikacji, CA).
+Egzekwuje: `dft chart delivery` (charty aplikacji i platformy z innego commita → kod 1),
+`dft check charts` (render pakietu i korzenia, pokrycie projektów, projekt w fali przed swoimi
+Applications, części charta platformy), `stages/deploy` (każda Application na digeście
+z pakietu, przejęcie wydań Helma). Dowód: `chart-delivery.json`, atestacja pakietu, log
+`cluster:up` stagingu. Warstwa: W1, W3 (publikacja); fale i przejęcie — W5 (u autora,
+staging i klaster tymczasowy). Wariant negatywny: chart aplikacji z innego commita → kod 1
+(testy `stages/chartpub`); projekt bez rodzaju z charta → czerwony `test`; komponent na innym
+digeście niż w pakiecie → `cluster:up` czeka, po limicie kod 1 (testy `stages/deploy`).
+Decyzja: 81.
 
 **2.2 Prod tylko z wydania.** Na prod trafia wyłącznie digest z pochodzeniem z
 `refs/heads/main` i atestacją wydania z tagu `vX.Y.Z`, po zgodzie autora; każda promocja zostawia
@@ -134,13 +149,13 @@ Wariant negatywny: [ŻYCZENIE: `api.replicas: 1` tylko w `staging` → czerwony 
 Decyzja: 35.
 
 **2.5 Akceptacja wydania.** `dft release` uruchamia bramki akceptacji na stagingu na celu
-zapisanym na starcie — obraz Deploymentu i wersja charta z Application Argo CD — i porównuje go
-po każdej bramce. Kod bramek pochodzi z zatwierdzonego commita, który jest przodkiem
-`origin/main`; tag zapisuje go jako `Gates-Commit:`.
-Egzekwuje: `stages/release`. Dowód: adnotacja tagu (`Gates-Commit:`, wersja charta)
+zapisanym na starcie — obraz Deploymentu i digest pakietu dostawy z głównej Application Argo CD
+— i porównuje go po każdej bramce. Kod bramek pochodzi z zatwierdzonego commita, który jest
+przodkiem `origin/main`; tag zapisuje go jako `Gates-Commit:`.
+Egzekwuje: `stages/release`. Dowód: adnotacja tagu (`Gates-Commit:`, digest pakietu dostawy)
 [ŻYCZENIE: pakiet dowodów, §7.1]. Warstwa: W5 (u autora). Wariant negatywny: zmiana obrazu albo
-wersji charta w trakcie → kod 1, bez tagu; kod bramek z niezatwierdzonymi zmianami albo spoza
-`origin/main` → kod 1 (testy `stages/release`). Decyzja: 40, 48.
+pakietu dostawy w trakcie → kod 1, bez tagu; kod bramek z niezatwierdzonymi zmianami albo spoza
+`origin/main` → kod 1 (testy `stages/release`). Decyzja: 40, 48, 81.
 
 ## 3. Warstwy CI i budżety
 
@@ -325,7 +340,7 @@ samonaprawy — zmiana nie wraca w budżecie → NIESPEŁNIONE. Decyzja: 46.
 (najdłuższa przerwa między udanymi odpowiedziami) ≤ Z, 0 nieudanych żądań — progi w §10
 (w drainach zmierzono najdłuższą przerwę 0,17–0,25 s). Upgrade charta N-1 → N, rollback Helmem
 i synchronizacja Argo CD idą tą samą ścieżką rolling update, a po każdym przejściu każdy pod
-podaje tożsamość wersji docelowej (§5.8); rollback przez przypięcie wersji ≤ 15 min od decyzji
+podaje tożsamość wersji docelowej (§5.8); rollback przez przypięcie wersji pakietu dostawy ≤ 15 min od decyzji
 do `Synced`. Konfiguracja aplikacji stoi w ConfigMapie z sumą treści w nazwie,
 niezmiennej (`immutable: true`): stary pod w trakcie rolloutu i po rollbacku czyta swoją
 konfigurację, a nie nową.

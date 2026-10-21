@@ -1,3 +1,4 @@
+{{- if .Values.parts.pki }}
 # Własne CA w trzech krokach, bo cert-manager nie umie wystawić certyfikatu
 # głównego inaczej: samopodpisany wydawca (tylko do tego jednego certyfikatu),
 # certyfikat główny CA i wydawca CA, który z niego podpisuje.
@@ -43,3 +44,4 @@ metadata:
 spec:
   ca:
     secretName: docfind-root-ca
+{{- end }}

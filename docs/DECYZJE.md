@@ -3322,6 +3322,94 @@ jego wartości — wtedy instalacja z archiwum w `cluster`, jak chart
 aplikacji. Gdy GHCR wprowadzi retencję wersji — lustro w rejestrze, w którym
 tagi przypiętych chartów nie wygasają.
 
+## 81. Platforma pod Argo CD z pakietu dostawy: fale, kroki startowe w dft, przejęcie wydań Helma
+
+> Druga część kroku 3 Etapu 5. Autor wybrał pakiet z rejestru zamiast gita
+> `main` wprost (scalenie zmieniałoby staging przed bramkami klastra) i
+> zamiast Applications zakładanych przez `dft` (bez GitOps w modelu pull).
+> Decyzja 80 dała charty platformy w rejestrze po digeście.
+
+**Wybieram pakiet dostawy publikowany przez CI po bramkach**
+(`charts/docfind-delivery`, `dft chart delivery`): chart z projektami
+i Applications platformy i aplikacji. Każdy komponent stoi w nim po
+digeście artefaktu z tego samego commita: lustra, charta platformy i charta
+aplikacji, który przeszedł klaster (decyzja 61). Wartości środowisk z GitOps
+pakiet bierze z definicji tymi samymi funkcjami, którymi `dft` instaluje
+bez Argo. Staging śledzi zakresem wersji pakiet, a nie chart aplikacji:
+commit trafia tam w całości albo wcale. Wersja pakietu odmawia charta
+aplikacji albo platformy z innego commita.
+
+**Fale (sync waves) w kolejności zależności przy starcie**, jak przy
+instalacji przez `dft`: Envoy Gateway (CRD Gateway API), cert-manager, ESO,
+własne CA, OpenBao, reszta platformy, aplikacja. Główna Application czeka
+na zdrowie fali przed następną — Argo CD od 1.8 nie ocenia zdrowia
+Application, więc ocena z jej statusu jest w `argocd-cm`.
+- Chart platformy wdrażają dwie Applications z jednego artefaktu
+  (`parts.pki`, `parts.ingress`). Jeden chart w jednej fali zakleszczyłby
+  fale: certyfikat OpenBao wystawia CA z tego charta, a SecretStore tokenu
+  DNS z tego charta czeka na OpenBao. `dft test` sprawdza, że części dają
+  razem pełny render i nie dzielą zasobu.
+- Projekt stoi o jedną falę przed najwcześniejszym swoim komponentem
+  (`platform` w -1, `docfind` w 5). Na klastrze tymczasowym Application
+  z tej samej fali co nowy projekt dostała `InvalidSpecError` („project
+  does not exist") do następnego uzgodnienia, a projekt `docfind`
+  zawężony w fali 0 odrzucał stare źródło Application aż do fali 6.
+  `dft test` sprawdza kolejność w renderze.
+- Server-Side Apply tylko w chartach z CRD większymi niż limit adnotacji
+  `last-applied-configuration`; bez usuwania (`prune`) w chartach
+  z zewnątrz: CRD z instancjami i dane OpenBao nie znikają, bo zniknęły
+  z nowej wersji cudzego charta. Bez finalizera — usunięcie Application
+  zostawia zasoby.
+
+**Projekty Argo CD z granicami sprawdzanymi w `dft test`:**
+- `platform`: tylko repozytoria z pakietu, przestrzenie komponentów,
+  lista zasobów na poziomie klastra (CRD, role klastrowe, webhooki,
+  ClusterIssuer, GatewayClass, Namespace);
+- `docfind`: jedno źródło, jedna przestrzeń, bez zasobów klastrowych
+  i bez Secret i RBAC (decyzja 46);
+- `delivery` (korzeń): tylko pakiet i tylko obiekty Argo w `argocd`.
+Rodzaj zasobu klastrowego rozpoznaje `dft` po wbudowanej liście
+i po `scope` CRD z renderów.
+
+**`dft` zostaje przy tym, czego Argo zrobić nie może.** Instaluje CoreDNS
+i Argo CD (bez nich Argo nie ruszy), zakłada przestrzenie z kluczem
+odpieczętowania OpenBao i z etykietami aplikacji, a korzeń (chart
+`delivery-root`) dostaje adres ACME spoza gita. Potem prowadzi kroki
+w miejscu fal: inicjalizacja i konfiguracja OpenBao, gdy Argo założył jego
+zasoby, token Cloudflare, sekrety aplikacji i CA platformy jako ConfigMapa
+w przestrzeni aplikacji. CA w wartościach zależałoby od klastra, a pakiet
+jest jeden dla środowiska. Na końcu sprawdza każdą Application na jej
+digeście: zdrowie korzenia to zdrowie komponentów, a komponent zdrowy na
+poprzednim digeście też jest zdrowy.
+
+**Przejęcie wydań Helma.** Argo przejmuje zasoby wydań Helma bez zmiany,
+bo nazwy wydań w pakiecie są nazwami wydań Helma, a etykiety zostają te
+same. Potem `dft` zdejmuje z każdego zasobu wydania wpis menedżera `helm`
+w `managedFields`, jeśli zasobem zarządza już `argocd-controller`, i usuwa
+zapis wydania. Helm 4 stosował zasoby przez Server-Side Apply: bez
+zdjęcia wpisu pole usunięte z charta zostałoby własnością `helm`
+i nie znikłoby z klastra.
+
+**Co tracę:**
+- konfiguracja OpenBao z gita (polityki, role) i token DNS nie wchodzą
+  z pakietem — docierają dopiero przy `cluster up`. Argo nie zna API OpenBao;
+  Job w pakiecie z tożsamością administratora OpenBao to osobna decyzja;
+- pakiet ma władzę nad całym klastrem: zakłada projekty z granicami
+  platformy. Pilnuje tego to, że publikuje go tylko CI po bramkach,
+  a w projekcie korzenia jest tylko to jedno repozytorium;
+- `dft cluster up` na nowym klastrze trwa dłużej: fale czekają na zdrowie
+  (limit 20 min);
+- cała ścieżka GitOps — fale, kroki startowe, przejęcie — biegnie tylko na
+  stagingu i na klastrze tymczasowym przy zmianie, nie w CI;
+- projekt platformy dopuszcza każdy rodzaj zasobu w przestrzeniach
+  komponentów: operatory z zewnątrz tworzą Secrety i role, których lista
+  zmieniałaby się z każdą wersją.
+
+**Kiedy zmieniam zdanie:** gdy konfiguracja OpenBao zacznie się zmieniać
+częściej niż platforma — Job konfiguracji w pakiecie albo operator. Gdy
+środowisk z Argo będzie więcej niż dwa — ApplicationSet zamiast wartości
+środowisk w jednym pakiecie.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta

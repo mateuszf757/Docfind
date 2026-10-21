@@ -1,8 +1,9 @@
 apiVersion: v2
 name: docfind-delivery
-description: Dostawa aplikacji DOCFIND przez Argo CD — projekt i Application śledzące chart z rejestru OCI
+description: Pakiet dostawy DOCFIND dla Argo CD — projekty i Applications platformy i aplikacji po digestach z jednego commita
 type: application
 # Platforma, nie produkt (jak chart platformy): klient wdraża chart docfind
-# swoim narzędziem. Wartości z definicji środowiska (DeliveryValues w dft).
+# swoim narzędziem. Publikuje go CI po bramkach klastra (`dft chart delivery`,
+# decyzja 81) z wersją z commita i wypełnionymi wartościami.
 version: 0.1.0
 appVersion: "0.1.0"

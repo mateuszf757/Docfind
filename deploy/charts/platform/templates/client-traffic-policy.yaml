@@ -1,3 +1,4 @@
+{{- if .Values.parts.ingress }}
 # Identyfikator żądania nadawany na wejściu. Generate, nie PreserveOrGenerate:
 # nagłówek X-Request-Id od klienta z internetu nie jest wiarygodny — przyjęty
 # pozwoliłby zalać logi identyfikatorem cudzego żądania albo sklejać niezwiązane
@@ -17,3 +18,4 @@ spec:
       name: {{ .Values.gateway.name }}
   headers:
     requestID: Generate
+{{- end }}

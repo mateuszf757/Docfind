@@ -62,6 +62,9 @@ type ChartSource interface {
 // Releases — instalacja chartów na klastrze (adapters/helm).
 type Releases interface {
 	Install(ctx context.Context, t cluster.Target, r cluster.Release) error
+	// Manifest — zasoby wydania (`helm get manifest`), przy przejęciu przez
+	// Argo CD.
+	Manifest(ctx context.Context, t cluster.Target, namespace, release string) ([]byte, error)
 }
 
 // Cluster — klaster po połączeniu (adapters/kube).
@@ -78,6 +81,10 @@ type Cluster interface {
 	RefreshApplication(ctx context.Context, namespace, name string) error
 	HelmReleaseRecords(ctx context.Context, namespace, release string) ([]string, error)
 	DeleteSecret(ctx context.Context, namespace, name string) error
+	// Przejęcie przez Argo CD (decyzja 81): CA platformy w przestrzeni
+	// aplikacji i menedżer helm zdjęty z zasobów przejętych wydań.
+	EnsureConfigMap(ctx context.Context, namespace, name string, data map[string]string) error
+	RemoveFieldManager(ctx context.Context, apiVersion, kind, namespace, name, manager, keep string) (bool, error)
 	// PullEvents — obrazy ze zdarzeń Pulling we wszystkich przestrzeniach.
 	PullEvents(ctx context.Context) ([]string, error)
 }
@@ -226,7 +233,7 @@ func (d Deployer) Up(ctx context.Context, src Source) error {
 	}
 	switch {
 	case d.Env.GitOps() && src.Kind != "":
-		return cli.Unmet("środowisko %s wdraża Argo CD z charta %s w zakresie %s — obraz wybiera zakres, nie źródło obrazu (%s); cofnięcie to przypięcie wersji w definicji", d.Env.Name, d.Env.Delivery.ArgoCD.Chart, d.Env.Delivery.ArgoCD.Versions, src.Kind)
+		return cli.Unmet("środowisko %s wdraża Argo CD z pakietu %s w zakresie %s — obraz wybiera zakres, nie źródło obrazu (%s); cofnięcie to przypięcie wersji w definicji", d.Env.Name, d.Env.Delivery.ArgoCD.Bundle, d.Env.Delivery.ArgoCD.Versions, src.Kind)
 	case src.Kind == "" && !d.Env.GitOps():
 		src.Kind = environment.SourceLocal
 	}
@@ -248,14 +255,14 @@ func (d Deployer) Up(ctx context.Context, src Source) error {
 	}
 	defer os.RemoveAll(tmp)
 	// Artefakt rozstrzygnięty przed zmianą na klastrze: obraz albo — przy
-	// Argo CD — wersja charta, którą Argo wybierze, z obrazem wpuszczonym
-	// tą samą polityką.
+	// Argo CD — pakiet dostawy, który Argo wybierze, z obrazem aplikacji
+	// wpuszczonym tą samą polityką.
 	var (
 		img image
 		rel release
 	)
 	if d.Env.GitOps() {
-		rel, err = d.resolveChart(ctx)
+		rel, err = d.resolveBundle(ctx)
 	} else {
 		img, err = d.resolve(ctx, src, tmp)
 	}
@@ -288,6 +295,9 @@ func (d Deployer) Up(ctx context.Context, src Source) error {
 	if err := waitNodes(ctx, c); err != nil {
 		return err
 	}
+	if d.Env.GitOps() {
+		return d.gitops(ctx, c, rel)
+	}
 	if err := d.platform(ctx, c); err != nil {
 		return err
 	}
@@ -302,9 +312,6 @@ func (d Deployer) Up(ctx context.Context, src Source) error {
 	}
 	if err := d.namespace(ctx, c); err != nil {
 		return err
-	}
-	if d.Env.GitOps() {
-		return d.deliver(ctx, c, rel)
 	}
 	return d.app(ctx, c, img, src.PackageChart)
 }

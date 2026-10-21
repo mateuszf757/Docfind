@@ -139,6 +139,12 @@ func PlatformChartName(registry, owner string) string {
 	return registryPrefix(registry, owner) + "/charts/docfind-platform"
 }
 
+// DeliveryChartName zwraca repozytorium pakietu dostawy:
+// <rejestr>/charts/docfind-delivery (decyzja 81).
+func DeliveryChartName(registry, owner string) string {
+	return registryPrefix(registry, owner) + "/charts/docfind-delivery"
+}
+
 // MirrorName zwraca repozytorium lustra przypiętego charta z zewnątrz:
 // <rejestr>/charts/platform/<przypięcie> — nazwa z ci/pins.env, a nie
 // z Chart.yaml (chart Envoy Gateway nazywa się gateway-helm).

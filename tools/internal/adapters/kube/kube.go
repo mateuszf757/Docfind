@@ -11,6 +11,7 @@ package kube
 import (
 	"fmt"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -66,6 +67,8 @@ type Cluster struct {
 	// runner i target — kubectl i cmctl na tym samym klastrze co klienci.
 	runner proc.Runner
 	target cluster.Target
+	// mapper — rodzaje zasobów z discovery, przy pierwszym użyciu.
+	mapper meta.RESTMapper
 }
 
 // New składa adapter z gotowych klientów i programów (testy: fałszywy

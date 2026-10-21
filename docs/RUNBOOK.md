@@ -179,54 +179,68 @@ jest pusty. `kubectl -n docfind get externalsecret docfind-api-secrets`
 i sekcja External Secrets Operator wyżej. Metryki są wtedy zamknięte,
 a nie otwarte.
 
-## Argo CD — dostawa aplikacji na staging
+## Argo CD — dostawa platformy i aplikacji na staging
 
 Argo CD w trybie Core w przestrzeni `argocd` (kontroler, repo-server,
-Redis — bez serwera API i UI w klastrze). Application `docfind` śledzi
-`ghcr.io/mateuszf757/charts/docfind` w zakresie z
-`deploy/environments/staging.yaml` (`delivery.argocd.versions`),
-z `selfHeal` i `prune` (decyzja 46). Chart publikuje CI na `main` po
-bramkach klastra (decyzja 45). Polecenia poniżej z `MISE_ENV=staging`.
+Redis — bez serwera API i UI w klastrze). Główna Application
+`docfind-delivery` śledzi pakiet dostawy
+`ghcr.io/mateuszf757/charts/docfind-delivery` w zakresie z
+`deploy/environments/staging.yaml` (`delivery.argocd.versions`), a pakiet
+zakłada falami Applications komponentów: `envoy-gateway`, `cert-manager`,
+`external-secrets`, `platform-pki`, `openbao`, `platform`, `docfind`
+(decyzje 46 i 81). Pakiet publikuje CI na `main` po bramkach klastra.
+CoreDNS, Argo CD i sam korzeń (`delivery-root`) instaluje `dft`. Polecenia
+poniżej z `MISE_ENV=staging`.
 
 ### Stan
 
 ```bash
-MISE_ENV=staging ./bin/mise exec -- kubectl -n argocd get application docfind \
-  -o jsonpath='{.status.sync.status} {.status.sync.revision} {.status.health.status}{"\n"}'
+MISE_ENV=staging ./bin/mise exec -- kubectl -n argocd get applications \
+  -o custom-columns=NAZWA:.metadata.name,SYNC:.status.sync.status,REWIZJA:.status.sync.revision,ZDROWIE:.status.health.status
 MISE_ENV=staging ./bin/mise run cluster:identity
 MISE_ENV=staging ./bin/mise exec -- argocd admin dashboard -n argocd --port 8090   # UI na localhost:8090 (8080 to HTTP klastra dev)
 ```
 
-Zdrowy stan: `Synced <wersja> Healthy`, gdzie wersja to najwyższa w GHCR
-spełniająca zakres (wersja z podsumowania ostatniego biegu `ci` na `main`,
-zadanie `chart`), a `cluster:identity` przechodzi.
+Zdrowy stan: każda Application `Synced`, `Healthy`; rewizja to digest
+(źródła OCI po digeście) — `docfind-delivery` na digeście najwyższej wersji
+pakietu z zakresu (podsumowanie ostatniego biegu `ci` na `main`, zadanie
+`chart`, tabela „Pakiet dostawy"), komponenty na digestach z tej tabeli.
+`cluster:identity` przechodzi.
 
 ### Nowa wersja nie dociera
 
-**Objaw:** CI opublikował chart, a Application stoi na starszej wersji.
+**Objaw:** CI opublikował pakiet, a `docfind-delivery` stoi na starszym
+digeście albo komponent nie dochodzi do swojego.
 
 ```bash
-MISE_ENV=staging ./bin/mise exec -- kubectl -n argocd get application docfind -o jsonpath='{.status.conditions}'
+MISE_ENV=staging ./bin/mise exec -- kubectl -n argocd get application docfind-delivery -o jsonpath='{.status.conditions}'
+MISE_ENV=staging ./bin/mise exec -- kubectl -n argocd get application <komponent> -o jsonpath='{.status.conditions}{"\n"}{.status.operationState.message}'
 ```
 
-- `ComparisonError` z `401`/`403` przy tagach — pakiet `charts/docfind`
-  w GHCR nie jest publiczny albo GHCR nie odpowiada;
+- `ComparisonError` z `401`/`403` — pakiet w GHCR nie jest publiczny
+  (`charts/docfind-delivery`, `charts/docfind-platform`,
+  `charts/platform/*`, `charts/docfind`) albo GHCR nie odpowiada;
 - `version matching constraint not found` — zakres nie obejmuje żadnej
-  opublikowanej wersji (literówka w `versions`, zły chart);
-- `invalid semver version in tags` — w repozytorium charta jest tag, który
-  parsuje się jako SemVer z błędem (np. zero wiodące w części
-  przedwydaniowej); Argo przerywa wtedy rozwiązywanie — usuń ten tag w GHCR;
+  opublikowanej wersji pakietu;
+- `invalid semver version in tags` — w repozytorium pakietu jest tag, który
+  parsuje się jako SemVer z błędem; Argo przerywa wtedy rozwiązywanie —
+  usuń ten tag w GHCR;
+- komponent `Progressing` w fali — fala stoi, dopóki nie będzie zdrowy:
+  `openbao` czeka na inicjalizację (`cluster:up` ją robi), `platform` na
+  token DNS i certyfikat Let's Encrypt;
 - bez warunku — Argo trzyma listę tagów w pamięci do 3 minut; odśwież:
-  `kubectl -n argocd annotate application docfind argocd.argoproj.io/refresh=hard --overwrite`.
+  `kubectl -n argocd annotate application docfind-delivery argocd.argoproj.io/refresh=hard --overwrite`.
 
-`MISE_ENV=staging ./bin/mise run cluster:up` liczy wersję z rejestru tak jak
-Argo, wpuszcza jej obraz polityką stagingu, zleca odświeżenie i czeka do
-10 minut, wypisując, na co czeka.
+`MISE_ENV=staging ./bin/mise run cluster:up` liczy wersję pakietu z rejestru
+tak jak Argo, wpuszcza obraz aplikacji z niego polityką stagingu, prowadzi
+kroki startowe (OpenBao, token DNS, sekrety aplikacji, CA platformy), zleca
+odświeżenie i czeka do 20 minut, wypisując, na co czeka.
 
 ### Cofnięcie wdrożenia
 
 Nie `helm rollback` ani `kubectl edit`/`set image` — `selfHeal` przywróci
-stan z charta w kilka sekund. Przypnij ostatnią dobrą wersję w definicji:
+stan z pakietu w kilka sekund. Przypnij ostatnią dobrą wersję pakietu
+w definicji:
 
 ```yaml
 delivery:
@@ -234,30 +248,54 @@ delivery:
     versions: "0.4.1-dev.12"
 ```
 
-i `MISE_ENV=staging ./bin/mise run cluster:up` — do kroku 3 (app-of-apps)
-Application zakłada `dft` z drzewa roboczego, więc zmiana działa od razu,
-a PR z nią idzie zaraz potem. Powrót do śledzenia: `">=0.0.0-0"`.
+i `MISE_ENV=staging ./bin/mise run cluster:up` — zakres trafia do głównej
+Application przez korzeń, który instaluje `dft` z drzewa roboczego, więc
+zmiana działa od razu, a PR z nią idzie zaraz potem. Cofa się cały pakiet:
+platforma i aplikacja z tamtego commita. Powrót do śledzenia: `">=0.0.0-0"`.
 
 Czasu cofnięcia nikt jeszcze nie zmierzył. Przy pierwszym użyciu zapisz
-czas od zmiany definicji do `Synced <przypięta wersja> Healthy` i zielonego
-`cluster:identity` — dla porównania warunek Etapu 10 to `helm rollback`
-u klienta w < 15 min. Samo przejście `helm rollback` pod ruchem mierzy nocą
-`cluster:upgrade` w `ci`: `rollout_seconds` w `upgrade-ci.json`.
+czas od zmiany definicji do każdej Application `Synced` i `Healthy`
+i zielonego `cluster:identity` — dla porównania warunek Etapu 10 to
+`helm rollback` u klienta w < 15 min. Samo przejście `helm rollback` pod
+ruchem mierzy nocą `cluster:upgrade` w `ci`: `rollout_seconds`
+w `upgrade-ci.json`.
 
 ### Ręczna zmiana „nie trzyma się"
 
-Tak ma być: `selfHeal`. Zmiana idzie przez chart (PR) albo wartości
-środowiska w definicji. Bramka, która to sprawdza (replika więcej, usunięty
+Tak ma być: `selfHeal`, także dla platformy. Zmiana idzie przez chart albo
+wartości środowiska w definicji (PR, potem pakiet z `main`). Wyjątki:
+konfiguracja OpenBao (polityki, role) i token DNS — te stosuje
+`cluster:up`. Bramka, która sprawdza samonaprawę (replika więcej, usunięty
 PDB, bez przestoju): `MISE_ENV=staging ./bin/mise run cluster:selfheal`,
 raport `.cache/reports/selfheal-staging.json`.
 
-### `helm list -n docfind` jest pusty
+### `helm list -A` pokazuje tylko trzy wydania
 
-Stan oczekiwany. Pierwszy `cluster:up` z Argo CD na klastrze, gdzie
-aplikację instalował Helm, usuwa zapis wydania Helma
-(`sh.helm.release.v1.docfind.*`) po tym, jak Argo przejął zasoby — zasoby
-zostają. `helm upgrade --install docfind` na stagingu postawiłby wydanie
-obok Argo; `dft cluster up --image` na środowisku z Argo odmawia.
+Stan oczekiwany: `coredns`, `argocd` i `delivery-root` — te instaluje `dft`.
+Pierwszy `cluster:up` z pakietem na klastrze, gdzie platformę i aplikację
+instalował Helm, po wdrożeniu przez Argo zdejmuje z ich zasobów menedżera
+`helm` w `managedFields` i usuwa zapisy wydań
+(`sh.helm.release.v1.<wydanie>.*`) — zasoby zostają. `helm upgrade
+--install` komponentu platformy na stagingu postawiłby wydanie obok Argo;
+`dft cluster up --image` na środowisku z Argo odmawia.
+
+### Nowe kontenery nie startują: „unable to create session key"
+
+**Objaw:** pod w `CrashLoopBackOff` albo Job wiszący, a w `lastState`
+kontenera `unable to join session keyring: unable to create session key:
+disk quota exceeded`. Każdy kontener trzyma keyring sesji jądra, liczony
+na użytkownika, a przy Dockerze bez roota wszystkie klastry k3d to jeden
+użytkownik. Przy trzech klastrach domyślne 200 kluczy (20000 bajtów) to za
+mało.
+
+```bash
+grep -E "^ *$(id -u):" /proc/key-users   # klucze i bajty: użyte/limit
+sudo sysctl -w kernel.keys.maxkeys=2000 kernel.keys.maxbytes=200000
+printf 'kernel.keys.maxkeys = 2000\nkernel.keys.maxbytes = 200000\n' | sudo tee /etc/sysctl.d/99-keys.conf
+```
+
+To zmiana hosta — robi ją autor. Po niej pody wracają same (Job — po
+usunięciu i ponownym biegu polecenia, które go utworzyło).
 
 ### Charty platformy w rejestrze
 

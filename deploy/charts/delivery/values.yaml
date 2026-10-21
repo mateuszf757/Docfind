@@ -1,38 +1,57 @@
-# Wartości podaje dft z definicji środowiska (deploy/environments,
-# delivery.argocd i AppValues) — tutaj tylko kształt i opisy. Render
-# każdego środowiska z GitOps sprawdza `dft test` (decyzja 46).
-application:
-  # Nazwa Application, projektu i wydania Helma aplikacji (app.release).
-  name: ""
-  # Przestrzeń nazw aplikacji (app.namespace). Zakłada ją platforma z
-  # etykietami PSA i zgodą na trasy — nie aplikacja sama sobie.
-  namespace: ""
-  # Repozytorium charta w rejestrze OCI bez schematu i nazwa charta — Argo
-  # traktuje je wtedy jako Helm OCI, bez Secreta repozytorium. Wyjątek: adres
-  # z portem (host:port/…) nie przechodzi url.Parse i Argo uzna go za zwykłe
-  # repozytorium Helma — wtedy Secret repozytorium z enableOCI (tylko
-  # rejestry lokalne w testach).
-  repoURL: ""
-  chart: ""
-  # Zakres wersji (SemVer): Argo wdraża najwyższą wersję w rejestrze, która
-  # go spełnia.
-  versions: ""
-  # Wartości charta aplikacji dla środowiska (valuesObject) — te same, które
-  # dft podaje przy instalacji z drzewa.
-  values: {}
+# Pakiet dostawy (decyzja 81): projekty i Applications Argo CD dla platformy
+# i aplikacji, po digestach artefaktów z jednego commita. Publikuje go CI po
+# bramkach klastra; na środowisku śledzi go główna Application z charta
+# delivery-root. components i environments wypełnia dft przy pakowaniu —
+# w repozytorium są puste, render w `dft test` podaje przykładowe.
 
-project:
-  # Rodzaje zasobów, które aplikacja może tworzyć — tylko w swojej
-  # przestrzeni nazw. Nowy rodzaj w charcie aplikacji wymaga dopisania tutaj;
-  # `dft test` sprawdza, że lista pokrywa render charta. Bez Secret, Role
-  # i RoleBinding: Secret robi ESO, uprawnień aplikacja sobie nie nadaje.
-  namespaceResources:
-    - {group: "", kind: ConfigMap}
-    - {group: "", kind: Service}
-    - {group: "", kind: ServiceAccount}
-    - {group: apps, kind: Deployment}
-    - {group: policy, kind: PodDisruptionBudget}
-    - {group: gateway.networking.k8s.io, kind: HTTPRoute}
-    - {group: gateway.envoyproxy.io, kind: BackendTrafficPolicy}
-    - {group: external-secrets.io, kind: SecretStore}
-    - {group: external-secrets.io, kind: ExternalSecret}
+# Podaje główna Application: które środowisko z environments i to, czego
+# w pakiecie być nie może.
+environment: ""
+runtime:
+  # Adres konta ACME (DOCFIND_ACME_EMAIL) — dane osobowe, nie z gita.
+  acmeEmail: ""
+
+# Komponenty w kolejności fal (sync waves). Każdy to chart z rejestru OCI po
+# digeście: lustro przypiętego charta, chart platformy albo chart aplikacji
+# z tego samego commita. values — z deploy/platform/<komponent>/values.yaml;
+# environmentValues — klucz w environments.<środowisko> domieszany do nich
+# (platform albo docfind); acme — domieszać runtime.acmeEmail jako
+# acme.email.
+components: []
+
+# Wartości z definicji każdego środowiska z GitOps (deploy/environments):
+# platform — PlatformValues, docfind — AppValues, bez niczego z klastra.
+environments: {}
+
+projects:
+  platform:
+    # Zasoby na poziomie klastra, które platforma może tworzyć — operatory
+    # z zewnątrz potrzebują CRD, ról klastrowych i webhooków. Nowy rodzaj
+    # w chartach platformy wymaga dopisania tutaj; `dft test` sprawdza, że
+    # lista pokrywa rendery. Namespace — dla CreateNamespace=true.
+    clusterResources:
+      - {group: "", kind: Namespace}
+      - {group: apiextensions.k8s.io, kind: CustomResourceDefinition}
+      - {group: rbac.authorization.k8s.io, kind: ClusterRole}
+      - {group: rbac.authorization.k8s.io, kind: ClusterRoleBinding}
+      - {group: admissionregistration.k8s.io, kind: ValidatingWebhookConfiguration}
+      - {group: admissionregistration.k8s.io, kind: MutatingWebhookConfiguration}
+      - {group: admissionregistration.k8s.io, kind: ValidatingAdmissionPolicy}
+      - {group: admissionregistration.k8s.io, kind: ValidatingAdmissionPolicyBinding}
+      - {group: cert-manager.io, kind: ClusterIssuer}
+      - {group: gateway.networking.k8s.io, kind: GatewayClass}
+  docfind:
+    # Rodzaje zasobów, które aplikacja może tworzyć — tylko w swojej
+    # przestrzeni nazw. Nowy rodzaj w charcie aplikacji wymaga dopisania tutaj;
+    # `dft test` sprawdza, że lista pokrywa render charta. Bez Secret, Role
+    # i RoleBinding: Secret robi ESO, uprawnień aplikacja sobie nie nadaje.
+    namespaceResources:
+      - {group: "", kind: ConfigMap}
+      - {group: "", kind: Service}
+      - {group: "", kind: ServiceAccount}
+      - {group: apps, kind: Deployment}
+      - {group: policy, kind: PodDisruptionBudget}
+      - {group: gateway.networking.k8s.io, kind: HTTPRoute}
+      - {group: gateway.envoyproxy.io, kind: BackendTrafficPolicy}
+      - {group: external-secrets.io, kind: SecretStore}
+      - {group: external-secrets.io, kind: ExternalSecret}

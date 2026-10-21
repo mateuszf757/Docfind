@@ -122,7 +122,7 @@ func (a Acceptor) Accept(ctx context.Context, tag, title string) (artifact.Relea
 	}
 	cli.Step("na %s stoi %s", a.Staging.Name, image)
 	if start.chart != "" {
-		cli.Step("Argo CD: wersja charta %s — akceptacja odmówi, jeśli zmieni się w trakcie", start.chart)
+		cli.Step("Argo CD: pakiet dostawy %s — akceptacja odmówi, jeśli zmieni się w trakcie", start.chart)
 	}
 	admitted, err := a.Admission.Admit(ctx, image, policy(a.Staging.Name, a.Repository))
 	if err != nil {
@@ -205,7 +205,7 @@ func (a Acceptor) accept(ctx context.Context, start target) (string, error) {
 		parts = append(parts, fmt.Sprintf("odnowienie certyfikatu %s (rewizja %d → %d), %d żądań, 0 nieudanych", tls.Hostname, tls.RevisionBefore, tls.RevisionAfter, tls.Requests))
 	}
 	if start.chart != "" {
-		parts = append(parts, fmt.Sprintf("Argo CD na wersji charta %s przez całą akceptację", start.chart))
+		parts = append(parts, fmt.Sprintf("Argo CD na pakiecie dostawy %s przez całą akceptację", start.chart))
 	}
 	return strings.Join(parts, "; "), nil
 }
@@ -231,8 +231,9 @@ func (a Acceptor) checkCode(ctx context.Context) error {
 	return nil
 }
 
-// target — co stoi na stagingu: obraz Deploymentu i wersja charta, którą
-// wdrożył Argo CD (pusta, gdy staging nie ma Argo).
+// target — co stoi na stagingu: obraz Deploymentu i pakiet dostawy, który
+// wdrożył Argo CD — digest z głównej Application, bo pakiet niesie i
+// platformę, i aplikację (decyzja 81); pusty, gdy staging nie ma Argo.
 type target struct {
 	image, chart string
 }
@@ -244,7 +245,7 @@ func (a Acceptor) target(ctx context.Context) (target, error) {
 	}
 	t := target{image: image}
 	if a.Staging.GitOps() {
-		app, err := a.Cluster.Application(ctx, environment.ArgoCDNamespace, a.Staging.App.Release)
+		app, err := a.Cluster.Application(ctx, environment.ArgoCDNamespace, environment.RootApplication)
 		if err != nil {
 			return target{}, err
 		}
@@ -263,7 +264,7 @@ func (a Acceptor) unchanged(ctx context.Context, want target, after string) erro
 		return err
 	}
 	if got != want {
-		return cli.Unmet("cel akceptacji zmienił się po bramce %s: obraz %s → %s, wersja charta %q → %q — Argo CD wdrożył nowszą wersję; powtórz wydanie po synchronizacji", after, want.image, got.image, want.chart, got.chart)
+		return cli.Unmet("cel akceptacji zmienił się po bramce %s: obraz %s → %s, pakiet dostawy %q → %q — Argo CD wdrożył nowszą wersję; powtórz wydanie po synchronizacji", after, want.image, got.image, want.chart, got.chart)
 	}
 	return nil
 }

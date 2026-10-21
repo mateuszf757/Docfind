@@ -488,3 +488,55 @@ func TestWatchTerminations(t *testing.T) {
 		t.Errorf("zakończenia: %+v", terms)
 	}
 }
+
+// TestEnsureConfigMap: ConfigMapa założona, poprawiona przy innych danych,
+// bez zmiany przy tych samych.
+func TestEnsureConfigMap(t *testing.T) {
+	ctx := context.Background()
+	cs := fake.NewClientset()
+	c := New(cs, nil, nil, cluster.Target{})
+	for _, data := range []map[string]string{{"ca.crt": "A"}, {"ca.crt": "A"}, {"ca.crt": "B"}} {
+		if err := c.EnsureConfigMap(ctx, "docfind", "docfind-platform-ca", data); err != nil {
+			t.Fatal(err)
+		}
+		cm, err := cs.CoreV1().ConfigMaps("docfind").Get(ctx, "docfind-platform-ca", metav1.GetOptions{})
+		if err != nil || cm.Data["ca.crt"] != data["ca.crt"] || cm.Labels["app.kubernetes.io/managed-by"] != "dft" {
+			t.Errorf("ConfigMapa: %+v, %v", cm, err)
+		}
+	}
+}
+
+// TestRemoveFieldManager: wpis menedżera helm znika z managedFields zasobu,
+// którym zarządza też Argo CD; zasób bez Argo i zasób, którego nie ma, zostają
+// bez zmian.
+func TestRemoveFieldManager(t *testing.T) {
+	ctx := context.Background()
+	deployments := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
+	obj := func(name string, managers ...string) *unstructured.Unstructured {
+		u := &unstructured.Unstructured{Object: map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": name, "namespace": "cert-manager"}}}
+		var fields []metav1.ManagedFieldsEntry
+		for _, m := range managers {
+			fields = append(fields, metav1.ManagedFieldsEntry{Manager: m, Operation: metav1.ManagedFieldsOperationApply, APIVersion: "apps/v1"})
+		}
+		u.SetManagedFields(fields)
+		return u
+	}
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{deployments: "DeploymentList"},
+		obj("przejety", "helm", "argocd-controller"), obj("bez-argo", "helm"))
+	core := fake.NewClientset()
+	core.Resources = []*metav1.APIResourceList{{GroupVersion: "apps/v1", APIResources: []metav1.APIResource{{Name: "deployments", Kind: "Deployment", Namespaced: true}}}}
+	c := New(core, dyn, nil, cluster.Target{})
+	changed, err := c.RemoveFieldManager(ctx, "apps/v1", "Deployment", "cert-manager", "przejety", "helm", "argocd-controller")
+	if err != nil || !changed {
+		t.Fatalf("przejęty: %v, %v", changed, err)
+	}
+	got, _ := dyn.Resource(deployments).Namespace("cert-manager").Get(ctx, "przejety", metav1.GetOptions{})
+	if fields := got.GetManagedFields(); len(fields) != 1 || fields[0].Manager != "argocd-controller" {
+		t.Errorf("managedFields: %+v", fields)
+	}
+	for _, name := range []string{"bez-argo", "brak"} {
+		if changed, err := c.RemoveFieldManager(ctx, "apps/v1", "Deployment", "cert-manager", name, "helm", "argocd-controller"); err != nil || changed {
+			t.Errorf("%s: %v, %v", name, changed, err)
+		}
+	}
+}

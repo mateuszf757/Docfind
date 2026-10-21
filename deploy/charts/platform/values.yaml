@@ -1,3 +1,15 @@
+# Części charta. Helm instaluje obie naraz; Argo CD (decyzja 81) — jako dwie
+# Applications z tego samego artefaktu: własne CA przed OpenBao (jego
+# certyfikat wystawia to CA), reszta po nim (SecretStore i ExternalSecret
+# tokenu DNS potrzebują działającego OpenBao). Jeden chart w jednej fali
+# zakleszczyłby fale: OpenBao czekałby na CA, a chart — na OpenBao.
+parts:
+  # ClusterIssuer samopodpisany, certyfikat główny CA i ClusterIssuer CA.
+  pki: true
+  # GatewayClass, Gateway, polityki ruchu, przekierowanie HTTP, wydawcy
+  # Let's Encrypt i token DNS z OpenBao.
+  ingress: true
+
 # Wejście do klastra: jeden Gateway z listenerami HTTP i HTTPS.
 gateway:
   name: docfind
@@ -44,9 +56,6 @@ acme:
   # Tworzy go `./bin/mise run dns-token` — nigdy git (decyzja 5).
   tokenSecretName: cloudflare-api-token
 
-# Pody proxy Envoy. Tworzy je kontroler Envoy Gateway na podstawie zasobu
-# EnvoyProxy — to jest jedyne miejsce, w którym da się ustawić ich repliki,
-# zasoby i PDB.
 # Magazyn sekretów platformy (OpenBao, decyzja 42) dla External Secrets
 # Operator (decyzja 43). Te same nazwy co w deploy/platform/openbao.
 secretStore:
@@ -61,6 +70,9 @@ secretStore:
   dnsTokenPath: platform/cloudflare
   refreshInterval: 1h
 
+# Pody proxy Envoy. Tworzy je kontroler Envoy Gateway na podstawie zasobu
+# EnvoyProxy — to jest jedyne miejsce, w którym da się ustawić ich repliki,
+# zasoby i PDB.
 proxy:
   replicas: 2
   # Bez limitu CPU (decyzja 16): proxy na ścieżce każdego żądania to ostatnie
