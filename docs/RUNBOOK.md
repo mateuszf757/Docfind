@@ -236,6 +236,42 @@ tak jak Argo, wpuszcza obraz aplikacji z niego polityką stagingu, prowadzi
 kroki startowe (OpenBao, token DNS, sekrety aplikacji, CA platformy), zleca
 odświeżenie i czeka do 20 minut, wypisując, na co czeka.
 
+### Operacja `Error`: „counter cannot decrease in value"
+
+**Objaw:** Application `Synced` i `Healthy` na właściwym digeście, a ostatnia
+operacja `Error` z tym komunikatem; `cluster:up` pisze, że zleca ponowną
+synchronizację (decyzja 82).
+
+**Przyczyna:** zegar węzła cofnął się w trakcie synchronizacji. Kontroler
+liczy z tego ujemny czas trwania, licznik Prometheusa odmawia, a panika
+oznacza udaną synchronizację jako `Error`. Argo jej nie ponowi, bo
+Application jest zsynchronizowana. Zasoby są wdrożone.
+
+```bash
+dmesg | grep -c "Time jumped backwards"   # rośnie co kilka minut — zegar skacze
+timedatectl                               # NTP active, a obok sterownik Hyper-V (dmesg | grep hv_utils)
+```
+
+- `MISE_ENV=staging ./bin/mise run cluster:up` synchronizuje taką
+  Application jeszcze raz, najwyżej dwa razy. Błąd, który wraca, to już nie
+  skok zegara: odmowa od razu, z komunikatem operacji.
+- Poza `cluster up` (samonaprawa, nowy pakiet z CI) Application zostaje
+  z `Error` do następnej synchronizacji. Wystarczy ponowny `cluster:up`.
+- Naprawa hosta (autor, do potwierdzenia pomiarem). Pomiar z 2026-10-21:
+  - zegar WSL2 11 s przed czasem GitHuba i 2,5 s przed zegarem Hyper-V
+    (`/sys/class/rtc/rtc0/since_epoch`), czyli zegar Windows około 9 s
+    do przodu;
+  - w `dmesg` 1039 cofnięć od startu;
+  - czas ustawiają naraz `systemd-timesyncd` i Hyper-V — najbardziej
+    prawdopodobna przyczyna skoków.
+
+  Zostaw jedno źródło: zsynchronizuj zegar Windows (`w32tm /resync`
+  w PowerShellu administratora) i wyłącz NTP w WSL (`sudo systemctl
+  disable --now systemd-timesyncd`). Po godzinie licznik cofnięć w `dmesg`
+  nie powinien rosnąć, a różnica „zegar maszyny zgodny z API GitHuba"
+  w `cluster:up` powinna spaść poniżej 2 s. Jeśli rośnie dalej, przywróć
+  `systemd-timesyncd` (`sudo systemctl enable --now systemd-timesyncd`).
+
 ### Cofnięcie wdrożenia
 
 Nie `helm rollback` ani `kubectl edit`/`set image` — `selfHeal` przywróci

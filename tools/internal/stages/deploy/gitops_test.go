@@ -210,6 +210,43 @@ func TestUpGitOps(t *testing.T) {
 	}
 }
 
+// stalled — Application na digeście, zsynchronizowana, z operacją, którą
+// zakończyła panika kontrolera po udanej synchronizacji (skok zegara).
+func stalled(digest string) cluster.Application {
+	return cluster.Application{Sync: "Synced", Revision: digest, Health: "Healthy",
+		Operation: cluster.AppOperation{Phase: "Error", Revision: digest, Message: "counter cannot decrease in value"}}
+}
+
+// TestUpGitOpsResync: komponent i korzeń zostawione przez Argo z operacją
+// Error na właściwym digeście — dft zleca ponowną synchronizację raz, czeka
+// na nią i kończy dostawę; ponowione Application nie są synchronizowane
+// drugi raz, póki operacja jest zlecona.
+func TestUpGitOpsResync(t *testing.T) {
+	quiet(t)
+	rec := &recorder{version: "0.4.1-dev.3+" + commit[:7]}
+	reg := newRegistry(rec)
+	b, bundleDigest := reg.publish(t, "0.4.1-dev.3", digestOf('d'))
+	apps := wanted(b, bundleDigest)
+	pki := apps["platform-pki"][0].Revision
+	requested := stalled(pki)
+	requested.Operation.Requested = true
+	apps["platform-pki"] = []cluster.Application{stalled(pki), requested, requested, deployed(pki)}
+	apps[environment.RootApplication] = []cluster.Application{stalled(bundleDigest), deployed(bundleDigest)}
+	d := gitopsDeployer(t, rec, reg, apps, apiImage+":"+commit[:12]+"@"+digestOf('d'), nil)
+	if err := d.Up(context.Background(), Source{}); err != nil {
+		t.Fatalf("%v\n%s", err, strings.Join(rec.calls, "\n"))
+	}
+	joined := strings.Join(rec.calls, "\n")
+	for _, want := range []string{"sync argocd/platform-pki " + pki, "sync argocd/" + environment.RootApplication + " " + bundleDigest} {
+		if n := strings.Count(joined, want); n != 1 {
+			t.Errorf("%q %d razy, oczekiwano raz:\n%s", want, n, joined)
+		}
+	}
+	if !strings.Contains(joined, "identity") {
+		t.Errorf("dostawa nie skończona po ponownej synchronizacji:\n%s", joined)
+	}
+}
+
 // TestUpGitOpsNewerDuringWait: CI opublikował nowszy pakiet, gdy dft czekał
 // — Argo go wdraża, a dft rozstrzyga zakres jeszcze raz (z polityką), zamiast
 // czekać na pakiet, którego Argo już nie wybierze.
@@ -257,6 +294,24 @@ func TestUpGitOpsRefuses(t *testing.T) {
 		d := gitopsDeployer(t, rec, reg, nil, "", nil)
 		if err := d.Up(context.Background(), Source{}); err == nil || strings.Contains(strings.Join(rec.calls, "\n"), "k3d") {
 			t.Errorf("%v\n%s", err, strings.Join(rec.calls, "\n"))
+		}
+	})
+	t.Run("operacja wraca z błędem po ponownych synchronizacjach", func(t *testing.T) {
+		rec := &recorder{version: "0.4.1-dev.3+" + commit[:7]}
+		reg := newRegistry(rec)
+		b, digest := reg.publish(t, "0.4.1-dev.3", digestOf('d'))
+		apps := wanted(b, digest)
+		pki := apps["platform-pki"][0].Revision
+		failed := stalled(pki)
+		failed.Operation.Phase, failed.Operation.Message = "Failed", "one or more synchronization tasks completed unsuccessfully"
+		apps["platform-pki"] = []cluster.Application{failed}
+		d := gitopsDeployer(t, rec, reg, apps, apiImage+":"+commit[:12]+"@"+digestOf('d'), nil)
+		d.DeliveryTimeout = time.Minute
+		err := d.Up(context.Background(), Source{})
+		joined := strings.Join(rec.calls, "\n")
+		if cli.ExitCode(err) != cli.ExitUnmet || !strings.Contains(err.Error(), "także po 2 ponownych synchronizacjach") ||
+			strings.Count(joined, "sync argocd/platform-pki") != maxResyncs || strings.Contains(joined, "identity") {
+			t.Errorf("%v\n%s", err, joined)
 		}
 	})
 	t.Run("komponent na innym digeście", func(t *testing.T) {

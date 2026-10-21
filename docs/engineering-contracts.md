@@ -120,8 +120,9 @@ z pakietu, przejęcie wydań Helma). Dowód: `chart-delivery.json`, atestacja pa
 `cluster:up` stagingu. Warstwa: W1, W3 (publikacja); fale i przejęcie — W5 (u autora,
 staging i klaster tymczasowy). Wariant negatywny: chart aplikacji z innego commita → kod 1
 (testy `stages/chartpub`); projekt bez rodzaju z charta → czerwony `test`; komponent na innym
-digeście niż w pakiecie → `cluster:up` czeka, po limicie kod 1 (testy `stages/deploy`).
-Decyzja: 81.
+digeście niż w pakiecie → `cluster:up` czeka, po limicie kod 1; Application zsynchronizowana
+z operacją `Error`, której Argo nie ponowi → ponowna synchronizacja, po drugiej nieudanej kod 1
+(testy `stages/deploy`). Decyzja: 81, 82.
 
 **2.2 Prod tylko z wydania.** Na prod trafia wyłącznie digest z pochodzeniem z
 `refs/heads/main` i atestacją wydania z tagu `vX.Y.Z`, po zgodzie autora; każda promocja zostawia

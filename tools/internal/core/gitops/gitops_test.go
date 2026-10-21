@@ -247,3 +247,29 @@ func TestLateProjects(t *testing.T) {
 		}
 	}
 }
+
+func TestStalled(t *testing.T) {
+	want := "sha256:" + strings.Repeat("a", 64)
+	stalled := cluster.Application{Sync: "Synced", Revision: want, Health: "Healthy",
+		Operation: cluster.AppOperation{Phase: "Error", Revision: want, Message: "counter cannot decrease in value"}}
+	if !Stalled(stalled, want) {
+		t.Error("zsynchronizowana Application z operacją Error na tej wersji nie rozpoznana")
+	}
+	failed := stalled
+	failed.Operation.Phase, failed.Operation.Revision = "Failed", ""
+	if !Stalled(failed, want) {
+		t.Error("operacja Failed bez wyniku synchronizacji nie rozpoznana")
+	}
+	for name, app := range map[string]cluster.Application{
+		"operacja zlecona":     {Sync: "Synced", Revision: want, Operation: cluster.AppOperation{Phase: "Error", Revision: want, Requested: true}},
+		"operacja w toku":      {Sync: "Synced", Revision: want, Operation: cluster.AppOperation{Phase: "Running", Revision: want}},
+		"sukces":               {Sync: "Synced", Revision: want, Operation: cluster.AppOperation{Phase: "Succeeded", Revision: want}},
+		"inna wersja":          {Sync: "Synced", Revision: "sha256:" + strings.Repeat("b", 64), Operation: cluster.AppOperation{Phase: "Error"}},
+		"niezsynchronizowana":  {Sync: "OutOfSync", Revision: want, Operation: cluster.AppOperation{Phase: "Error", Revision: want}},
+		"błąd na innej wersji": {Sync: "Synced", Revision: want, Operation: cluster.AppOperation{Phase: "Error", Revision: "sha256:" + strings.Repeat("b", 64)}},
+	} {
+		if Stalled(app, want) {
+			t.Errorf("%s: uznana za porzuconą przez Argo", name)
+		}
+	}
+}

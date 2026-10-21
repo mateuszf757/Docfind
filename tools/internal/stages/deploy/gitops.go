@@ -36,6 +36,13 @@ type ChartRegistry interface {
 // certyfikat Let's Encrypt przez DNS-01) i aplikacja.
 const deliveryTimeout = 20 * time.Minute
 
+// maxResyncs — ile razy w jednym `cluster up` dft synchronizuje jeszcze raz
+// Application, którą Argo zostawił z nieudaną operacją (decyzja 82). Skok
+// zegara trafia w pojedynczą synchronizację; błąd, który wraca dwa razy
+// z rzędu, nie jest przejściowy — wtedy odmowa od razu, bez czekania do
+// limitu.
+const maxResyncs = 2
+
 // waits — odstęp sprawdzania i limit czekania na Argo CD (zero — domyślne).
 func (d Deployer) waits() (interval, timeout time.Duration) {
 	interval, timeout = d.Poll, d.DeliveryTimeout
@@ -258,9 +265,33 @@ func (d Deployer) waitApplication(ctx context.Context, c Cluster, name string, i
 // sprawdzany jest osobno. Gdy Argo wdraża inny pakiet — CI opublikował
 // nowszy w trakcie — dft rozstrzyga zakres jeszcze raz i wpuszcza nowy obraz
 // tą samą polityką, zamiast czekać na pakiet, którego Argo już nie wybierze.
+// Application zsynchronizowaną z nieudaną operacją, której Argo nie ponowi
+// (gitops.Stalled), dft synchronizuje jeszcze raz — najwyżej maxResyncs razy.
 func (d Deployer) awaitDelivery(ctx context.Context, c Cluster, rel release) (release, error) {
 	interval, timeout := d.waits()
 	var last string
+	resynced := map[string]int{}
+	// check — na co czeka Application name, która ma stać na want; pusty
+	// napis — wdrożona.
+	check := func(ctx context.Context, name string, app cluster.Application, want string) (string, error) {
+		if gitops.Stalled(app, want) {
+			if resynced[name] >= maxResyncs {
+				return "", cli.Unmet("Argo CD: %s — operacja %s na %s także po %d ponownych synchronizacjach: %s", name, app.Operation.Phase, want, maxResyncs, app.Operation.Message)
+			}
+			if err := c.SyncApplication(ctx, environment.ArgoCDNamespace, name, want); err != nil {
+				// Konflikt z zapisem Argo albo operacja zlecona w międzyczasie
+				// — następna runda zobaczy nowy stan.
+				return name + ": ponowna synchronizacja nie zlecona: " + err.Error(), nil
+			}
+			resynced[name]++
+			cli.Warn("Argo CD: %s — operacja %s na %s: %s; Application jest zsynchronizowana, więc Argo sam jej nie ponowi — zlecam ponowną synchronizację (%d z %d, decyzja 82)", name, app.Operation.Phase, want, app.Operation.Message, resynced[name], maxResyncs)
+			return name + ": ponowna synchronizacja zlecona", nil
+		}
+		if done, why := gitops.Deployed(app, want); !done {
+			return name + ": " + why, nil
+		}
+		return "", nil
+	}
 	err := poll.Until(ctx, timeout, interval, func(ctx context.Context) (bool, error) {
 		root, err := c.Application(ctx, environment.ArgoCDNamespace, environment.RootApplication)
 		if err != nil {
@@ -277,8 +308,12 @@ func (d Deployer) awaitDelivery(ctx context.Context, c Cluster, rel release) (re
 			}
 		}
 		waiting := []string{}
-		if done, why := gitops.Deployed(root, rel.digest); !done {
-			waiting = append(waiting, environment.RootApplication+": "+why)
+		why, err := check(ctx, environment.RootApplication, root, rel.digest)
+		if err != nil {
+			return false, err
+		}
+		if why != "" {
+			waiting = append(waiting, why)
 		}
 		for _, comp := range rel.bundle.Components {
 			app, err := c.Application(ctx, environment.ArgoCDNamespace, comp.Name)
@@ -286,8 +321,12 @@ func (d Deployer) awaitDelivery(ctx context.Context, c Cluster, rel release) (re
 				waiting = append(waiting, comp.Name+": "+err.Error())
 				continue
 			}
-			if done, why := gitops.Deployed(app, comp.Digest); !done {
-				waiting = append(waiting, comp.Name+": "+why)
+			why, err := check(ctx, comp.Name, app, comp.Digest)
+			if err != nil {
+				return false, err
+			}
+			if why != "" {
+				waiting = append(waiting, why)
 			}
 		}
 		state := strings.Join(waiting, "; ")

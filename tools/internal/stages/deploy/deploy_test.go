@@ -284,6 +284,9 @@ func (f fakeCluster) Application(_ context.Context, ns, name string) (cluster.Ap
 func (f fakeCluster) RefreshApplication(_ context.Context, ns, name string) error {
 	return f.call("refresh %s/%s", ns, name)
 }
+func (f fakeCluster) SyncApplication(_ context.Context, ns, name, revision string) error {
+	return f.call("sync %s/%s %s", ns, name, revision)
+}
 func (f fakeCluster) HelmReleaseRecords(_ context.Context, ns, name string) ([]string, error) {
 	return f.helmRecords[ns+"/"+name], nil
 }

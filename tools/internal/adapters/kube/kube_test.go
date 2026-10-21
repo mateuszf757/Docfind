@@ -441,6 +441,61 @@ func TestApplication(t *testing.T) {
 	}
 }
 
+// TestSyncApplication: operacja jak z synchronizacji automatycznej Argo CD
+// (prune, opcje i ponowienia z syncPolicy), widoczna jako zlecona; drugie
+// zlecenie przy operacji w toku — błąd, nie nadpisanie.
+func TestSyncApplication(t *testing.T) {
+	ctx := context.Background()
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{applicationGVR: "ApplicationList"})
+	app := func(name string, policy map[string]any) *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "argoproj.io/v1alpha1", "kind": "Application",
+			"metadata": map[string]any{"name": name, "namespace": "argocd"},
+			"spec":     map[string]any{"syncPolicy": policy},
+			"status":   map[string]any{"operationState": map[string]any{"phase": "Error", "message": "counter cannot decrease in value"}},
+		}}
+	}
+	for _, u := range []*unstructured.Unstructured{
+		app("platform-pki", map[string]any{
+			"automated":   map[string]any{"prune": true, "selfHeal": true},
+			"syncOptions": []any{"CreateNamespace=true"},
+			"retry":       map[string]any{"limit": int64(10)},
+		}),
+		app("openbao", map[string]any{"automated": map[string]any{"selfHeal": true}}),
+	} {
+		if _, err := dyn.Resource(applicationGVR).Namespace("argocd").Create(ctx, u, metav1.CreateOptions{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := New(fake.NewClientset(), dyn, nil, cluster.Target{})
+	digest := "sha256:" + strings.Repeat("a", 64)
+	for _, tc := range []struct {
+		name, options string
+		prune         bool
+		limit         int64
+	}{{"platform-pki", "CreateNamespace=true", true, 10}, {"openbao", "", false, 5}} {
+		if err := c.SyncApplication(ctx, "argocd", tc.name, digest); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		got, _ := dyn.Resource(applicationGVR).Namespace("argocd").Get(ctx, tc.name, metav1.GetOptions{})
+		rev, _, _ := unstructured.NestedString(got.Object, "operation", "sync", "revision")
+		prune, _, _ := unstructured.NestedBool(got.Object, "operation", "sync", "prune")
+		options, _, _ := unstructured.NestedStringSlice(got.Object, "operation", "sync", "syncOptions")
+		limit, _, _ := unstructured.NestedInt64(got.Object, "operation", "retry", "limit")
+		user, _, _ := unstructured.NestedString(got.Object, "operation", "initiatedBy", "username")
+		if rev != digest || prune != tc.prune || strings.Join(options, ",") != tc.options || limit != tc.limit || user != "dft" {
+			t.Errorf("%s: operacja %v", tc.name, got.Object["operation"])
+		}
+		a, err := c.Application(ctx, "argocd", tc.name)
+		if err != nil || !a.Operation.Requested {
+			t.Errorf("%s: operacja niewidoczna jako zlecona: %+v, %v", tc.name, a.Operation, err)
+		}
+		if err := c.SyncApplication(ctx, "argocd", tc.name, digest); err == nil || !strings.Contains(err.Error(), "w toku") {
+			t.Errorf("%s: drugie zlecenie przy operacji w toku: %v", tc.name, err)
+		}
+	}
+}
+
 func TestPullEvents(t *testing.T) {
 	event := func(name, msg string) *corev1.Event {
 		return &corev1.Event{ObjectMeta: metav1.ObjectMeta{Namespace: "kube-system", Name: name}, Reason: "Pulling", Message: msg}

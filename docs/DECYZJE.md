@@ -3410,6 +3410,49 @@ częściej niż platforma — Job konfiguracji w pakiecie albo operator. Gdy
 środowisk z Argo będzie więcej niż dwa — ApplicationSet zamiast wartości
 środowisk w jednym pakiecie.
 
+## 82. Ponowna synchronizacja operacji, której Argo CD nie dokończy
+
+> Pierwsza migracja stagingu do pakietu dostawy (decyzja 81) stanęła po
+> 20 minutach: `platform-pki` zsynchronizowana i zdrowa, ale z ostatnią
+> operacją `Error` „counter cannot decrease in value". Zegar węzła cofnął się
+> o 2,3 s w trakcie synchronizacji. Kontroler Argo CD 3.5.4 po udanej
+> synchronizacji dodaje jej czas trwania do licznika Prometheusa
+> (`IncAppSyncDuration`, `controller/metrics/metrics.go`), więc ujemny czas
+> kończy się paniką. Ścieżka paniki oznacza operację jako `Error`
+> z pominięciem polityki ponowień, a synchronizacja automatyczna nie rusza
+> Application, która jest `Synced`. W logu kontrolera stagingu było 29
+> takich skoków w ciągu 4 godzin.
+
+**Wybieram ponowną synchronizację przez `dft` w trakcie czekania na pakiet.**
+Application na właściwym digeście, `Synced`, z zakończoną operacją `Error`
+albo `Failed` i bez zleconej następnej (`gitops.Stalled`) dostaje od `dft`
+tę samą operację, którą zleciłaby synchronizacja automatyczna: prune, opcje
+i ponowienia z `syncPolicy`. Zapis idzie z wersją obiektu, więc nie
+nadpisze operacji Argo. Najwyżej dwa razy na Application w jednym
+`cluster up`. Jeśli błąd wraca, to nie skok zegara i `dft` odmawia od razu,
+zamiast czekać do limitu.
+
+**Odrzucam:**
+- przepuszczanie `Synced` i `Healthy` bez udanej operacji — nieudany hook
+  (np. Job generujący certyfikaty Envoy Gateway) przeszedłby jako
+  wdrożenie;
+- rozpoznawanie po treści komunikatu paniki — ten sam stan zostawia każdy
+  błąd po stronie kontrolera, nie tylko ten jeden;
+- obejście po stronie hosta jako jedyną naprawę — zegar maszyny autora to
+  WSL2 (decyzja 66), a skok może przyjść także na innym hoście.
+
+**Co tracę:** `dft` zleca operacje w Argo, czyli robi coś, co należy do
+kontrolera. Ograniczam to do stanu, w którym Argo z definicji nic nie
+zrobi, i do dwóch prób. Przyczyna po stronie hosta zostaje: zegar WSL2
+skacze, a Argo pokazuje `Error` przy synchronizacjach poza `cluster up`
+(samonaprawa, nowy pakiet), dopóki następna wersja go nie nadpisze.
+Opis i naprawa hosta są w RUNBOOK.
+
+**Kiedy zmieniam zdanie:** gdy Argo CD przestanie panikować przy ujemnym
+czasie trwania (sprawdzam przy każdym podniesieniu wersji, test:
+`TestUpGitOpsResync`) albo gdy panika zacznie przechodzić przez politykę
+ponowień — wtedy `gitops.Stalled` i `SyncApplication` znikają.
+
 ## Czego bym dziś nie powtórzył
 
 Najważniejsza część tego dokumentu i najrzadziej przygotowana — sekcja pusta
