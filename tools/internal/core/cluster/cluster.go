@@ -166,6 +166,9 @@ type AppOperation struct {
 	Phase    string
 	Revision string
 	Message  string
+	// Requested — pole operation ustawione: operacja zlecona albo w toku,
+	// Argo CD jeszcze jej nie zakończył (po zakończeniu je czyści).
+	Requested bool
 }
 
 // AppCondition — warunek Application.

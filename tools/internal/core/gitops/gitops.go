@@ -149,6 +149,22 @@ func Deployed(app cluster.Application, want string) (bool, string) {
 	return len(waiting) == 0, strings.Join(waiting, "; ")
 }
 
+// Stalled mówi, czy Application stoi na wersji want z nieudaną ostatnią
+// operacją, której Argo CD sam nie ponowi (decyzja 82): manifesty zgadzają
+// się z wersją (Synced), więc synchronizacja automatyczna nie rusza,
+// a operacja jest zakończona — Error albo Failed, bez zleconej następnej.
+// Tak kończy się panika kontrolera po udanej synchronizacji, gdy zegar
+// węzła cofnie się w jej trakcie: czas trwania wychodzi ujemny, a licznik
+// Prometheusa odmawia ujemnego przyrostu (IncAppSyncDuration
+// w controller/metrics/metrics.go, Argo CD 3.5.4); ścieżka paniki omija
+// politykę ponowień. Deployed takiej Application nie przepuści, więc bez
+// ponownej synchronizacji dostawa czekałaby do limitu.
+func Stalled(app cluster.Application, want string) bool {
+	op := app.Operation
+	return app.Revision == want && app.Sync == "Synced" && !op.Requested &&
+		(op.Phase == "Error" || op.Phase == "Failed") && (op.Revision == want || op.Revision == "")
+}
+
 func orUnknown(s string) string {
 	if s == "" {
 		return "nieznana"

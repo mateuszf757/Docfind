@@ -75,10 +75,12 @@ type Cluster interface {
 	SecretData(ctx context.Context, namespace, name string) (map[string][]byte, error)
 	Gateway(ctx context.Context, namespace, name string) (cluster.Gateway, error)
 	EnsureNamespace(ctx context.Context, name string, labels map[string]string) error
-	// Argo CD (decyzja 46): stan i odświeżenie Application, zapis wydania
-	// Helma aplikacji do usunięcia po przejęciu przez Argo.
+	// Argo CD (decyzja 46): stan i odświeżenie Application, ponowna
+	// synchronizacja porzuconej operacji (decyzja 82), zapis wydania Helma
+	// aplikacji do usunięcia po przejęciu przez Argo.
 	Application(ctx context.Context, namespace, name string) (cluster.Application, error)
 	RefreshApplication(ctx context.Context, namespace, name string) error
+	SyncApplication(ctx context.Context, namespace, name, revision string) error
 	HelmReleaseRecords(ctx context.Context, namespace, release string) ([]string, error)
 	DeleteSecret(ctx context.Context, namespace, name string) error
 	// Przejęcie przez Argo CD (decyzja 81): CA platformy w przestrzeni
