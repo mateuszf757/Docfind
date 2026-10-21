@@ -1,84 +1,182 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "Wartości charta docfind-delivery",
-  "description": "Bez schematu Helm po cichu ignoruje nieznany klucz — literówka w zakresie wersji albo repozytorium dawałaby Application, która niczego nie wdraża, a błąd byłby widać dopiero w statusie Argo.",
+  "title": "Wartości pakietu dostawy docfind-delivery",
+  "description": "Bez schematu Helm po cichu ignoruje nieznany klucz — literówka w digeście albo projekcie dawałaby Application, która niczego nie wdraża, a błąd byłby widać dopiero w statusie Argo.",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "application",
-    "project"
+    "environment",
+    "runtime",
+    "components",
+    "environments",
+    "projects"
   ],
   "properties": {
     "global": {
       "type": "object",
       "description": "Helm dokłada `global` do wartości każdego charta."
     },
-    "application": {
+    "environment": {
+      "type": "string",
+      "pattern": "^([a-z][a-z0-9-]*)?$"
+    },
+    "runtime": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "name",
-        "namespace",
-        "repoURL",
-        "chart",
-        "versions",
-        "values"
+        "acmeEmail"
       ],
       "properties": {
-        "name": {
-          "type": "string",
-          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
-        },
-        "namespace": {
-          "type": "string",
-          "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
-        },
-        "repoURL": {
-          "type": "string",
-          "pattern": "^[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$",
-          "description": "Bez schematu: Argo traktuje repozytorium jako Helm OCI (IsHelmOciRepo). Z oci:// wybrałby źródło OCI z manifestami (Argo 3.1+), a nie chart."
-        },
-        "chart": {
-          "type": "string",
-          "pattern": "^[a-z0-9][a-z0-9-]*$"
-        },
-        "versions": {
-          "type": "string",
-          "minLength": 1,
-          "description": "Zakres SemVer; składnię sprawdza dft (ta sama biblioteka co w Argo CD) przy czytaniu definicji środowiska."
-        },
-        "values": {
-          "type": "object",
-          "description": "Wartości charta aplikacji — sprawdza je jego własny schemat przy renderze w Argo i w `dft test`."
+        "acmeEmail": {
+          "type": "string"
         }
       }
     },
-    "project": {
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "project",
+          "wave",
+          "repoURL",
+          "digest",
+          "releaseName",
+          "namespace",
+          "createNamespace",
+          "serverSideApply",
+          "prune",
+          "values",
+          "environmentValues",
+          "acme"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+          },
+          "project": {
+            "enum": [
+              "platform",
+              "docfind"
+            ]
+          },
+          "wave": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "repoURL": {
+            "type": "string",
+            "pattern": "^oci://[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$",
+            "description": "Natywne źródło OCI Argo CD (3.1+): digest jako targetRevision."
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "releaseName": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+          },
+          "namespace": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+          },
+          "createNamespace": {
+            "type": "boolean"
+          },
+          "serverSideApply": {
+            "type": "boolean"
+          },
+          "prune": {
+            "type": "boolean"
+          },
+          "values": {
+            "type": "object"
+          },
+          "environmentValues": {
+            "enum": [
+              "",
+              "platform",
+              "docfind"
+            ]
+          },
+          "acme": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "environments": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "platform": {
+            "type": "object"
+          },
+          "docfind": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "projects": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "namespaceResources"
+        "platform",
+        "docfind"
       ],
       "properties": {
-        "namespaceResources": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "group",
-              "kind"
-            ],
-            "properties": {
-              "group": {
-                "type": "string"
-              },
-              "kind": {
-                "type": "string",
-                "pattern": "^[A-Z][A-Za-z]+$"
-              }
+        "platform": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "clusterResources"
+          ],
+          "properties": {
+            "clusterResources": {
+              "$ref": "#/definitions/kinds"
             }
+          }
+        },
+        "docfind": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "namespaceResources"
+          ],
+          "properties": {
+            "namespaceResources": {
+              "$ref": "#/definitions/kinds"
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "kinds": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "group",
+          "kind"
+        ],
+        "properties": {
+          "group": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Za-z]+$"
           }
         }
       }

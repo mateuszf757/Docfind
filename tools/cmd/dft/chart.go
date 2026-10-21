@@ -39,7 +39,7 @@ func registryOwner() (string, string) {
 	return os.Getenv("DF_IMAGE_REGISTRY"), os.Getenv("GITHUB_REPOSITORY_OWNER")
 }
 
-const chartUsage = "dft chart <publish --image <obraz@sha256:…> [--tested <digest>] | platform | mirror>"
+const chartUsage = "dft chart <publish --image <obraz@sha256:…> [--tested <digest>] | platform | mirror | delivery --app <chart@sha256:…> --platform <chart@sha256:…>>"
 
 // runChart — charty w rejestrze OCI: aplikacji (publish, decyzja 45),
 // platformy i lustro przypiętych chartów z zewnątrz (platform, mirror,
@@ -55,6 +55,8 @@ func runChart(ctx context.Context, w *workspace, args []string) error {
 		return runChartPlatform(ctx, w, args[1:])
 	case "mirror":
 		return runChartMirror(ctx, w, args[1:])
+	case "delivery":
+		return runChartDelivery(ctx, w, args[1:])
 	}
 	return cli.Usage("użycie: %s", chartUsage)
 }
@@ -117,16 +119,11 @@ func runChartMirror(ctx context.Context, w *workspace, args []string) error {
 	if err := expectArgs(args, 0, 0, "dft chart mirror"); err != nil {
 		return err
 	}
-	p, err := pins.Load(w.root)
+	m, err := w.mirror()
 	if err != nil {
 		return err
 	}
-	reg, owner := registryOwner()
-	stored, err := chartpub.Mirror{
-		Pins: p, Charts: w.charts(), Registry: registry.Client{}, Public: registry.Client{Anonymous: true},
-		Repository: func(pin string) string { return artifact.MirrorName(reg, owner, pin) },
-		Source:     sourceURL,
-	}.Run(ctx)
+	stored, err := m.Run(ctx)
 	if reportErr := w.writeReport("chart-mirror", stored); reportErr != nil {
 		return errors.Join(err, reportErr)
 	}
@@ -139,6 +136,60 @@ func runChartMirror(ctx context.Context, w *workspace, args []string) error {
 		fmt.Fprintf(&b, "| `%s` | %s | `%s` | %s | %s |\n", s.Repository, s.Version, s.Digest, yesNo(s.Pushed), yesNo(s.Public))
 	}
 	return appendSummary(b.String())
+}
+
+// mirror — lustro przypiętych chartów w rejestrze z otoczenia.
+func (w *workspace) mirror() (chartpub.Mirror, error) {
+	p, err := pins.Load(w.root)
+	if err != nil {
+		return chartpub.Mirror{}, err
+	}
+	reg, owner := registryOwner()
+	return chartpub.Mirror{
+		Pins: p, Charts: w.charts(), Registry: registry.Client{}, Public: registry.Client{Anonymous: true},
+		Repository: func(pin string) string { return artifact.MirrorName(reg, owner, pin) },
+		Source:     sourceURL,
+	}, nil
+}
+
+// runChartDelivery — `dft chart delivery --app <chart@sha256:…> --platform
+// <chart@sha256:…>`: pakiet dostawy z bieżącego commita (decyzja 81) —
+// Applications platformy i aplikacji po digestach charta aplikacji i charta
+// platformy opublikowanych w tym biegu oraz lustra. W CI po nich, w zadaniu
+// chart; wyjścia kroku — repozytorium i digest dla atestacji.
+func runChartDelivery(ctx context.Context, w *workspace, args []string) error {
+	const usage = "dft chart delivery --app <chart@sha256:…> --platform <chart@sha256:…>"
+	fs := flag.NewFlagSet("chart delivery", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	app := fs.String("app", "", "")
+	plat := fs.String("platform", "", "")
+	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || *app == "" || *plat == "" {
+		return cli.Usage("użycie: %s", usage)
+	}
+	m, err := w.mirror()
+	if err != nil {
+		return err
+	}
+	reg, owner := registryOwner()
+	pub, b, err := chartpub.DeliveryPublisher{
+		Root: w.root, Repo: w.git(), Registry: registry.Client{}, Public: registry.Client{Anonymous: true},
+		Mirror: m, Repository: artifact.DeliveryChartName(reg, owner), Source: sourceURL,
+	}.Publish(ctx, *app, *plat)
+	if err != nil {
+		return err
+	}
+	if err := githubOutput(fmt.Sprintf("delivery-chart=%s\ndelivery-chart-digest=%s\n", pub.Repository, pub.Digest)); err != nil {
+		return err
+	}
+	if err := w.writeReport("chart-delivery", map[string]any{"chart": pub, "bundle": b}); err != nil {
+		return err
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "### Pakiet dostawy\n\n`%s@%s` (%s), publiczny: %s\n\n| Fala | Komponent | Chart |\n|---|---|---|\n", pub.Repository, pub.Digest, pub.Version, yesNo(pub.Public))
+	for _, c := range b.Components {
+		fmt.Fprintf(&sb, "| %d | %s | `%s@%s` |\n", c.Wave, c.Name, c.RepoURL, c.Digest)
+	}
+	return appendSummary(sb.String())
 }
 
 func yesNo(v bool) string {

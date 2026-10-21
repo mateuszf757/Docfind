@@ -99,11 +99,6 @@ func (d Deployer) platform(ctx context.Context, c Cluster) error {
 		return err
 	}
 	cli.Step("Gateway zaprogramowany, certyfikat %s gotowy", tls)
-	// Argo CD na końcu: niczego z platformy nie potrzebuje do startu, a to,
-	// co wdroży (aplikacja), potrzebuje jej całej.
-	if d.Env.GitOps() {
-		return d.argoCD(ctx, c)
-	}
 	return nil
 }
 

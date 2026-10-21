@@ -1,3 +1,4 @@
+{{- if .Values.parts.ingress }}
 # Klasa Gateway obsługiwana przez Envoy Gateway, z parametrami podów proxy.
 apiVersion: gateway.networking.k8s.io/v1
 kind: GatewayClass
@@ -99,3 +100,4 @@ spec:
             - type: File
               file:
                 path: /dev/stdout
+{{- end }}

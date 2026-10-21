@@ -1,0 +1,8 @@
+apiVersion: v2
+name: docfind-delivery-root
+description: Korzeń dostawy DOCFIND — główna Application Argo CD śledząca pakiet dostawy z rejestru OCI
+type: application
+# Instaluje go dft (decyzja 81), jedyny obiekt dostawy spoza pakietu: wartości
+# z definicji środowiska (RootValues) i adres ACME spoza gita.
+version: 0.1.0
+appVersion: "0.1.0"

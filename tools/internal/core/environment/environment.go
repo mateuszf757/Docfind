@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"sigs.k8s.io/yaml"
@@ -118,25 +119,27 @@ type Delivery struct {
 
 // ArgoCD — dostawa przez Argo CD.
 type ArgoCD struct {
-	// Chart — repozytorium charta w rejestrze OCI, bez schematu:
-	// ghcr.io/<właściciel>/charts/docfind.
-	Chart string `json:"chart"`
-	// Versions — zakres wersji. Argo wdraża najwyższą wersję z rejestru,
-	// która go spełnia: >=0.0.0-0 — każdy commit z main, który przeszedł
-	// bramki CI (decyzja 45); >=0.0.0 — tylko wydania.
+	// Bundle — repozytorium pakietu dostawy w rejestrze OCI, bez schematu:
+	// ghcr.io/<właściciel>/charts/docfind-delivery (decyzja 81). Pakiet
+	// niesie Applications platformy i aplikacji po digestach.
+	Bundle string `json:"bundle"`
+	// Versions — zakres wersji pakietu. Argo wdraża najwyższą wersję
+	// z rejestru, która go spełnia: >=0.0.0-0 — każdy commit z main, który
+	// przeszedł bramki CI (decyzja 45); >=0.0.0 — tylko wydania.
 	Versions string `json:"versions"`
 }
 
-// ArgoCDNamespace — przestrzeń nazw Argo CD i jego obiektów (projekt,
-// Application).
-const ArgoCDNamespace = "argocd"
+// ArgoCDNamespace — przestrzeń nazw Argo CD i jego obiektów (projekty,
+// Applications). RootApplication — główna Application, która śledzi pakiet
+// dostawy (chart deploy/charts/delivery-root, decyzja 81).
+const (
+	ArgoCDNamespace = "argocd"
+	RootApplication = "docfind-delivery"
+)
 
-// Source — repozytorium (repoURL Application) i nazwa charta. Bez schematu
-// Argo traktuje repozytorium jako Helm OCI sam, bez Secreta repozytorium.
-func (a ArgoCD) Source() (repoURL, chart string) {
-	i := strings.LastIndex(a.Chart, "/")
-	return a.Chart[:i], a.Chart[i+1:]
-}
+// RepoURL — źródło OCI pakietu dla Argo CD: natywne źródło OCI rozwiązuje
+// zakres wersji do digestu (Argo CD 3.1+).
+func (a ArgoCD) RepoURL() string { return "oci://" + a.Bundle }
 
 // GitOps mówi, czy aplikację na środowisko wdraża Argo CD.
 func (e Definition) GitOps() bool { return e.Delivery.ArgoCD != nil }
@@ -374,7 +377,7 @@ func (e Definition) Validate() error {
 		// Argo CD stawia dft razem z platformą — na razie tylko na klastrach,
 		// które sam tworzy.
 		check(c.Provider == ProviderK3d, "delivery.argocd — Argo CD instaluje dft z platformą, tylko na klastrach k3d")
-		check(chartRepo.MatchString(a.Chart), "delivery.argocd.chart=%q — repozytorium OCI bez schematu, np. ghcr.io/<właściciel>/charts/docfind", a.Chart)
+		check(chartRepo.MatchString(a.Bundle), "delivery.argocd.bundle=%q — repozytorium OCI bez schematu, np. ghcr.io/<właściciel>/charts/docfind-delivery", a.Bundle)
 		if err := gitops.ValidateRange(a.Versions); err != nil {
 			problems = append(problems, "delivery.argocd.versions: "+err.Error())
 		}
@@ -476,10 +479,13 @@ func (e Definition) HTTPSRedirectPort() int {
 }
 
 // Sekrety aplikacji (decyzja 44): Secret montowany w /run/secrets
-// i sekret z tokenami dostępu do /metrics w nim.
+// i sekret z tokenami dostępu do /metrics w nim. PlatformCAConfigMap — CA
+// serwera OpenBao w przestrzeni aplikacji, gdy wartości charta nie mogą
+// zależeć od klastra (Argo CD, decyzja 81); zakłada ją dft.
 const (
-	AppSecret          = "docfind-api-secrets"
-	MetricsTokenSecret = "metrics-token"
+	AppSecret           = "docfind-api-secrets"
+	MetricsTokenSecret  = "metrics-token"
+	PlatformCAConfigMap = "docfind-platform-ca"
 )
 
 // AppValues — wartości charta aplikacji wynikające z definicji, jako
@@ -489,7 +495,10 @@ const (
 // Na klastrach k3d jest platforma z OpenBao i ESO, więc sekrety aplikacji
 // przychodzą z niej, a /metrics wymaga tokenu. caBundle — CA serwera OpenBao
 // (PEM w base64): wdrożenie bierze go z klastra, walidacja podaje
-// przykładowy. Klaster klienta dostarcza Secret sam (Etap 10).
+// przykładowy. W środowisku z Argo CD wartości trafiają do pakietu dostawy
+// i nie mogą zależeć od klastra — CA przychodzi z ConfigMapy, którą zakłada
+// dft, a caBundle jest pomijane. Klaster klienta dostarcza Secret sam
+// (Etap 10).
 func (e Definition) AppValues(caBundle string) []string {
 	values := []string{
 		"route.hostname=" + e.Gateway.Hostname,
@@ -500,30 +509,28 @@ func (e Definition) AppValues(caBundle string) []string {
 		values = append(values,
 			"api.secrets.secretName="+AppSecret,
 			"api.secrets.externalSecret.enabled=true",
-			"api.secrets.externalSecret.caBundle="+caBundle,
 			"api.config.metrics.token_secret="+MetricsTokenSecret,
 		)
+		if e.GitOps() {
+			values = append(values, "api.secrets.externalSecret.caConfigMap="+PlatformCAConfigMap)
+		} else {
+			values = append(values, "api.secrets.externalSecret.caBundle="+caBundle)
+		}
 	}
 	return values
 }
 
-// DeliveryValues — wartości charta dostawy (deploy/charts/delivery):
-// projekt i Application Argo CD z chartem aplikacji z rejestru w zakresie
-// wersji i z wartościami środowiska z AppValues — tymi samymi, które dft
-// podaje Helmowi przy instalacji z drzewa. Tylko dla środowisk z GitOps.
-func (e Definition) DeliveryValues(caBundle string) []string {
-	repo, chart := e.Delivery.ArgoCD.Source()
-	values := []string{
-		"application.name=" + e.App.Release,
-		"application.namespace=" + e.App.Namespace,
-		"application.repoURL=" + repo,
-		"application.chart=" + chart,
-		"application.versions=" + e.Delivery.ArgoCD.Versions,
+// RootValues — wartości charta korzenia (deploy/charts/delivery-root):
+// główna Application śledząca pakiet dostawy w zakresie wersji, z nazwą
+// środowiska (pakiet niesie wartości każdego środowiska z GitOps) i z tym,
+// czego w pakiecie być nie może: adresem konta ACME spoza gita.
+func (e Definition) RootValues(acmeEmail string) []string {
+	return []string{
+		"environment=" + e.Name,
+		"bundle.repoURL=" + e.Delivery.ArgoCD.RepoURL(),
+		"bundle.versions=" + e.Delivery.ArgoCD.Versions,
+		"runtime.acmeEmail=" + acmeEmail,
 	}
-	for _, v := range e.AppValues(caBundle) {
-		values = append(values, "application.values."+v)
-	}
-	return values
 }
 
 // PlatformValues — wartości charta platformy wynikające z definicji.
@@ -540,4 +547,47 @@ func (e Definition) PlatformValues(acmeEmail string) []string {
 		values = append(values, "acme.email="+acmeEmail, "acme.dnsZone="+e.Gateway.ACMEZone)
 	}
 	return values
+}
+
+// SetValues zamienia wartości klucz=wartość dla `helm --set` na mapę, z tymi
+// samymi typami, które nadałby im Helm (strvals): true i false — logiczne,
+// liczba całkowita bez zera wiodącego — liczba, reszta — tekst. Pakiet
+// dostawy niesie wartości środowisk jako mapy (valuesObject Application),
+// a `dft test` sprawdza, że render z mapy to render z --set.
+func SetValues(set []string) (map[string]any, error) {
+	out := map[string]any{}
+	for _, kv := range set {
+		key, raw, ok := strings.Cut(kv, "=")
+		if !ok || key == "" {
+			return nil, fmt.Errorf("wartość %q: oczekiwano klucz=wartość", kv)
+		}
+		parts := strings.Split(key, ".")
+		m := out
+		for _, p := range parts[:len(parts)-1] {
+			next, ok := m[p].(map[string]any)
+			if !ok {
+				if _, taken := m[p]; taken {
+					return nil, fmt.Errorf("wartość %q: %s jest już wartością prostą", kv, p)
+				}
+				next = map[string]any{}
+				m[p] = next
+			}
+			m = next
+		}
+		m[parts[len(parts)-1]] = typed(raw)
+	}
+	return out, nil
+}
+
+func typed(raw string) any {
+	switch raw {
+	case "true":
+		return true
+	case "false":
+		return false
+	}
+	if n, err := strconv.ParseInt(raw, 10, 64); err == nil && (raw == "0" || !strings.HasPrefix(strings.TrimPrefix(raw, "-"), "0")) {
+		return n
+	}
+	return raw
 }

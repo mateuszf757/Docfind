@@ -2,6 +2,9 @@ package deploy
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -34,6 +37,46 @@ func publishedFrom(t *testing.T, version, digest, c string) chart.OCI {
 	return oci
 }
 
+// chartRepo — repozytorium charta aplikacji w testach upgrade'u.
+const chartRepo = appRepo
+
+// published — chart w wersji version z obrazem commita N.
+func published(t *testing.T, version, digest string) chart.OCI {
+	t.Helper()
+	return publishedFrom(t, version, digest, commit)
+}
+
+// appCharts — repozytorium charta aplikacji z chartami po wersji.
+type appCharts struct {
+	*recorder
+	charts map[string]chart.OCI
+}
+
+func (f appCharts) Tags(_ context.Context, repo string) ([]string, error) {
+	var tags []string
+	for v := range f.charts {
+		tags = append(tags, v)
+	}
+	return tags, f.call("tags %s", repo)
+}
+
+func (f appCharts) Manifest(_ context.Context, ref string) ([]byte, string, error) {
+	oci, ok := f.charts[ref[strings.LastIndex(ref, ":")+1:]]
+	if !ok {
+		return nil, "", fmt.Errorf("brak %s", ref)
+	}
+	return oci.Manifest, chart.ManifestMediaType, f.call("manifest %s", ref)
+}
+
+func (f appCharts) Blob(_ context.Context, _, digest string) ([]byte, error) {
+	for _, oci := range f.charts {
+		if sum := sha256.Sum256(oci.Archive); "sha256:"+hex.EncodeToString(sum[:]) == digest {
+			return oci.Archive, nil
+		}
+	}
+	return nil, fmt.Errorf("brak bloba %s", digest)
+}
+
 // commitAdmission — polityka przyjmuje obraz z commita c.
 type commitAdmission struct {
 	*recorder
@@ -51,7 +94,7 @@ func upgradeDeployer(t *testing.T, env string, rec *recorder, charts map[string]
 	t.Helper()
 	d := deployer(t, env, rec, true, "")
 	d.AppChart = chartRepo
-	d.ChartRegistry = fakeChartRegistry{rec, charts}
+	d.ChartRegistry = appCharts{rec, charts}
 	d.Admission = commitAdmission{rec, imageCommit}
 	return d
 }

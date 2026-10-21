@@ -83,6 +83,9 @@ func TestImageName(t *testing.T) {
 		if got := PlatformChartName(tt.registry, tt.owner); got != prefix+"/charts/docfind-platform" {
 			t.Errorf("PlatformChartName(%q, %q) = %q", tt.registry, tt.owner, got)
 		}
+		if got := DeliveryChartName(tt.registry, tt.owner); got != prefix+"/charts/docfind-delivery" {
+			t.Errorf("DeliveryChartName(%q, %q) = %q", tt.registry, tt.owner, got)
+		}
 		if got := MirrorName(tt.registry, tt.owner, "envoy-gateway"); got != prefix+"/charts/platform/envoy-gateway" {
 			t.Errorf("MirrorName(%q, %q) = %q", tt.registry, tt.owner, got)
 		}

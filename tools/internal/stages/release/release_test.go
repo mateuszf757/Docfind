@@ -107,7 +107,8 @@ func (c *stagingCluster) DeploymentImage(_ context.Context, ns, name, container 
 }
 
 func (c *stagingCluster) Application(_ context.Context, ns, name string) (cluster.Application, error) {
-	if ns != environment.ArgoCDNamespace || name != "docfind" {
+	// Pakiet dostawy na stagingu — główna Application (decyzja 81).
+	if ns != environment.ArgoCDNamespace || name != environment.RootApplication {
 		return cluster.Application{}, errors.New("zła Application")
 	}
 	if c.moved() && c.newChart != "" {
@@ -179,7 +180,7 @@ func TestAccept(t *testing.T) {
 		t.Errorf("zapis w tagu: %+v, %v", back, err)
 	}
 	if !strings.Contains(r.Staging, "drain 3 węzłów") || !strings.Contains(r.Staging, "rewizja 3 → 4") ||
-		!strings.Contains(r.Staging, "wersji charta 0.3.2-dev.12") {
+		!strings.Contains(r.Staging, "pakiecie dostawy 0.3.2-dev.12") {
 		t.Errorf("podsumowanie akceptacji: %q", r.Staging)
 	}
 	if r.GatesCommit != gatesCommit || !strings.Contains(created, "Gates-Commit: "+gatesCommit) {
@@ -237,7 +238,7 @@ func TestAcceptRejectsMovingTarget(t *testing.T) {
 	for name, c := range map[string]*stagingCluster{
 		// Odczyty celu: 1 — start, 2 — po tożsamości, 3 — po drainie, 4 — po TLS.
 		"nowy obraz po drainie":                {newImage: other, changeAfter: 2},
-		"nowa wersja charta po TLS":            {newChart: "0.3.2-dev.13", changeAfter: 3},
+		"nowy pakiet dostawy po TLS":           {newChart: "0.3.2-dev.13", changeAfter: 3},
 		"nowy obraz zaraz po starcie":          {newImage: other, changeAfter: 1},
 		"nowy chart po tożsamości po drainach": {newChart: "0.3.2-dev.13", changeAfter: 4},
 	} {

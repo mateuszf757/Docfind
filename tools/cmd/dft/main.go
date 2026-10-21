@@ -101,8 +101,8 @@ var commands = map[string]command{
 		run:   runTrial,
 	},
 	"chart": {
-		usage: "dft chart <publish --image <obraz@sha256:…> [--tested <digest>] | platform | mirror>",
-		help:  "charty w rejestrze OCI: aplikacji z tym obrazem (decyzja 45), platformy i lustro przypiętych chartów z zewnątrz po digeście (decyzja 80) — powtarzalne, sprawdzone po wysłaniu",
+		usage: "dft chart <publish --image <obraz@sha256:…> [--tested <digest>] | platform | mirror | delivery --app <chart@sha256:…> --platform <chart@sha256:…>>",
+		help:  "charty w rejestrze OCI: aplikacji z tym obrazem (decyzja 45), platformy i lustro przypiętych chartów z zewnątrz po digeście (decyzja 80), pakiet dostawy dla Argo CD (decyzja 81) — powtarzalne, sprawdzone po wysłaniu",
 		run:   runChart,
 	},
 	"dns-token": {

@@ -126,3 +126,13 @@ func TestRevisionAndRollback(t *testing.T) {
 		t.Errorf("chart z rejestru w wersji: %v", err)
 	}
 }
+
+func TestManifest(t *testing.T) {
+	f := &proc.Fake{Responses: map[string]proc.FakeResponse{
+		"helm get manifest cert-manager --namespace cert-manager --kubeconfig /k --kube-context c": {Stdout: "kind: Deployment\n"},
+	}}
+	got, err := Helm{Runner: f}.Manifest(context.Background(), cluster.Target{Kubeconfig: "/k", Context: "c"}, "cert-manager", "cert-manager")
+	if err != nil || strings.TrimSpace(string(got)) != "kind: Deployment" {
+		t.Errorf("manifest: %q, %v", got, err)
+	}
+}

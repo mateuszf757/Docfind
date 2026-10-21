@@ -4,10 +4,11 @@
 # Obrazy tylko z rejestru: digesty z main po zielonym ci. Digest, który
 # przejdzie tu akceptację, zostaje wydaniem bez ponownego buildu
 # (`./bin/mise run release -- vX.Y.Z`, decyzja 40).
-# Aplikację wdraża Argo CD w klastrze (decyzja 46): chart z rejestru, który CI
-# publikuje po bramkach klastra. `MISE_ENV=staging ./bin/mise run cluster:up`
-# (bez obrazu) stawia platformę z Argo CD i Application, czeka, aż Argo wdroży
-# najwyższą wersję z zakresu, i sprawdza ją na podach.
+# Platformę i aplikację wdraża Argo CD w klastrze (decyzje 46 i 81) z pakietu
+# dostawy, który CI publikuje po bramkach klastra. `MISE_ENV=staging
+# ./bin/mise run cluster:up` (bez obrazu) stawia CoreDNS i Argo CD, zakłada
+# główną Application, prowadzi kroki startowe OpenBao, czeka, aż Argo wdroży
+# najwyższą wersję pakietu z zakresu, i sprawdza ją na podach.
 # Od Etapu 6 (pamięć, decyzja 2) okrojony stos albo wyłączany na czas pracy
 # nad dev (`k3d cluster stop docfind-staging`).
 name: staging
@@ -35,7 +36,7 @@ app:
 
 delivery:
   argocd:
-    chart: ghcr.io/mateuszf757/charts/docfind
+    bundle: ghcr.io/mateuszf757/charts/docfind-delivery
     # Każdy commit z main, który przeszedł bramki CI (decyzja 45). Cofnięcie:
     # przypięcie wersji tutaj (np. 0.4.1-dev.12), nie polecenie na klastrze.
     versions: ">=0.0.0-0"

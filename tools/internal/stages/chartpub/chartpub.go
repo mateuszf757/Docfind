@@ -184,9 +184,20 @@ func (p Publisher) Verify(ctx context.Context, ref string, want chart.Build) err
 // z repozytorium repository i zwraca, co wdraża: wersję, obraz i wersję
 // wdrożenia z jego wartości. Manifest inny niż chart Helma — odmowa.
 func Read(ctx context.Context, reg Reader, repository, ref string) (chart.Build, error) {
-	raw, mediaType, err := reg.Manifest(ctx, ref)
+	archive, _, err := Archive(ctx, reg, repository, ref)
 	if err != nil {
 		return chart.Build{}, err
+	}
+	return chart.Read(archive)
+}
+
+// Archive pobiera archiwum charta ref z repozytorium repository i zwraca je
+// razem z digestem manifestu — tym, do którego Argo CD rozwiązuje wersję.
+// Manifest inny niż chart Helma — odmowa.
+func Archive(ctx context.Context, reg Reader, repository, ref string) ([]byte, string, error) {
+	raw, mediaType, err := reg.Manifest(ctx, ref)
+	if err != nil {
+		return nil, "", err
 	}
 	var m struct {
 		Config struct {
@@ -198,14 +209,14 @@ func Read(ctx context.Context, reg Reader, repository, ref string) (chart.Build,
 		} `json:"layers"`
 	}
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return chart.Build{}, fmt.Errorf("manifest %s: %w", ref, err)
+		return nil, "", fmt.Errorf("manifest %s: %w", ref, err)
 	}
 	if mediaType != chart.ManifestMediaType || m.Config.MediaType != chart.ConfigMediaType || len(m.Layers) != 1 || m.Layers[0].MediaType != chart.LayerMediaType {
-		return chart.Build{}, cli.Unmet("%s nie jest chartem Helma (manifest %s, konfiguracja %s, warstw %d)", ref, mediaType, m.Config.MediaType, len(m.Layers))
+		return nil, "", cli.Unmet("%s nie jest chartem Helma (manifest %s, konfiguracja %s, warstw %d)", ref, mediaType, m.Config.MediaType, len(m.Layers))
 	}
 	archive, err := reg.Blob(ctx, repository, m.Layers[0].Digest)
 	if err != nil {
-		return chart.Build{}, err
+		return nil, "", err
 	}
-	return chart.Read(archive)
+	return archive, digestOf(raw), nil
 }

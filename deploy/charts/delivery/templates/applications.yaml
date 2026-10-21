@@ -1,0 +1,74 @@
+{{- $env := required "environment — środowisko z pakietu (podaje główna Application)" .Values.environment }}
+{{- $envValues := index .Values.environments $env }}
+{{- if not $envValues }}
+{{- fail (printf "environments.%s — pakiet nie ma wartości środowiska %s" $env $env) }}
+{{- end }}
+{{- range $c := .Values.components }}
+{{- $values := deepCopy ($c.values | default dict) }}
+{{- if $c.environmentValues }}
+{{- $values = mergeOverwrite $values (deepCopy (index $envValues $c.environmentValues | default dict)) }}
+{{- end }}
+{{- if $c.acme }}
+{{- $issuer := (index $values "gateway" | default dict).issuer | default "" }}
+{{- if and (hasPrefix "letsencrypt" $issuer) (not $.Values.runtime.acmeEmail) }}
+{{- fail (printf "%s: wydawca %s wymaga runtime.acmeEmail (DOCFIND_ACME_EMAIL)" $c.name $issuer) }}
+{{- end }}
+{{- if $.Values.runtime.acmeEmail }}
+{{- $values = mergeOverwrite $values (dict "acme" (dict "email" $.Values.runtime.acmeEmail)) }}
+{{- end }}
+{{- end }}
+---
+# {{ $c.name }}: chart z rejestru po digeście, w fali {{ $c.wave }}. Argo
+# przywraca stan z charta po każdej ręcznej zmianie (selfHeal).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: {{ $c.name }}
+  namespace: {{ $.Release.Namespace }}
+  annotations:
+    # Główna Application zakłada komponenty falami i czeka na zdrowie
+    # każdej fali (health Application w argocd-cm, deploy/platform/argocd).
+    argocd.argoproj.io/sync-wave: {{ $c.wave | quote }}
+  # Bez finalizera resources-finalizer: usunięcie Application zostawia
+  # zasoby na klastrze — usunięcie komponentu to osobna decyzja.
+spec:
+  project: {{ $c.project }}
+  source:
+    # Natywne źródło OCI: digest wybiera dokładnie artefakt z tego commita,
+    # a warstwa charta Helma trafia do korzenia źródła.
+    repoURL: {{ $c.repoURL | quote }}
+    # Źródło OCI wymaga ścieżki (Argo CD 3.5: „either spec.source.path or
+    # spec.source.chart are required"); warstwa charta leży w korzeniu.
+    path: .
+    targetRevision: {{ $c.digest | quote }}
+    helm:
+      releaseName: {{ $c.releaseName }}
+      valuesObject:
+        {{- toYaml $values | nindent 8 }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ $c.namespace | quote }}
+  syncPolicy:
+    automated:
+      prune: {{ $c.prune }}
+      selfHeal: true
+    {{- if or $c.createNamespace $c.serverSideApply }}
+    syncOptions:
+      {{- if $c.createNamespace }}
+      - CreateNamespace=true
+      {{- end }}
+      {{- if $c.serverSideApply }}
+      # CRD większe niż limit adnotacji last-applied-configuration.
+      - ServerSideApply=true
+      {{- end }}
+    {{- end }}
+    # Synchronizacja, która padła (np. webhook jeszcze nie przyjmuje zapisów),
+    # wraca sama z narastającą przerwą.
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+  revisionHistoryLimit: 10
+{{- end }}

@@ -77,8 +77,12 @@ api:
       role: docfind-api
       audience: openbao
       serviceAccount: docfind-secrets
-      # CA serwera OpenBao (PEM w base64); podaje wdrożenie z klastra.
+      # CA serwera OpenBao: PEM w base64 (caBundle) albo ConfigMapa
+      # z kluczem ca.crt w przestrzeni wydania (caConfigMap) — ta druga, gdy
+      # wartości nie mogą zależeć od klastra (Argo CD, decyzja 81). Podana
+      # ConfigMapa ma pierwszeństwo.
       caBundle: ""
+      caConfigMap: ""
       # Do minuty od zapisu w OpenBao do Secreta; dalej kubelet podmienia
       # pliki w wolumenie (decyzja 44 — zmierzone w bramce rotacji).
       refreshInterval: 1m

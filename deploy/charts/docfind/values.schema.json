@@ -159,6 +159,11 @@
                   "type": "string",
                   "description": "CA serwera OpenBao, PEM w base64."
                 },
+                "caConfigMap": {
+                  "type": "string",
+                  "pattern": "^([a-z0-9]([a-z0-9-]*[a-z0-9])?)?$",
+                  "description": "ConfigMapa z kluczem ca.crt w przestrzeni wydania — CA serwera OpenBao bez wartości z klastra w wartościach charta (decyzja 81)."
+                },
                 "refreshInterval": {
                   "type": "string",
                   "pattern": "^[0-9]+(s|m|h)$"

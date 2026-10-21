@@ -85,8 +85,10 @@ type helm struct {
 	noVersionPattern bool
 	// dropVersion — chart, który gubi api.version.
 	dropVersion bool
-	// projectWithout — rodzaj zasobu, którego projekt Argo CD nie dopuszcza.
+	// projectWithout — rodzaj zasobu, którego projekt Argo CD nie dopuszcza;
+	// partsOverlap — części charta platformy dzielą zasób.
 	projectWithout string
+	partsOverlap   bool
 	// writableRoot — chart aplikacji z zapisywalnym systemem plików.
 	writableRoot bool
 	// mutableConfig — ConfigMapa aplikacji bez immutable.
@@ -103,7 +105,7 @@ func (h *helm) Template(_ context.Context, r cluster.Release, includeCRDs bool, 
 	values := append(slices.Clone(r.Set), r.SetString...)
 	for _, v := range values {
 		badVersion := v == "api.version=v0.4.0" && !h.noVersionPattern
-		if !h.rejectNothing && (v == "api.replica=3" || v == "api.image.digest=sha256:abc" || badVersion || v == "gateway.hostnme=x" || v == "application.version=1.0.0") {
+		if !h.rejectNothing && (v == "api.replica=3" || v == "api.image.digest=sha256:abc" || badVersion || v == "gateway.hostnme=x" || v == "bundle.version=1.0.0" || strings.HasPrefix(v, "enviroment=")) {
 			return cli.Unmet("helm template %s: values don't meet the specifications of the schema", r.Name)
 		}
 	}
@@ -134,16 +136,32 @@ func (h *helm) Template(_ context.Context, r cluster.Release, includeCRDs bool, 
 		}
 		out = app(`"ghcr.io/x/docfind-api:`+tag+digest+`"`, version, !h.writableRoot, !h.noTmp) + "---\napiVersion: v1\nkind: ConfigMap\nmetadata: {name: c}\nimmutable: " + fmt.Sprint(!h.mutableConfig) + "\ndata:\n  app.yml: \"" + config + "\"\n"
 	case strings.HasSuffix(r.Chart, "platform"):
-		out = "apiVersion: v1\nkind: Namespace\nmetadata: {name: n}\n"
+		// Części charta (decyzja 81): własne CA i reszta.
+		pki := "apiVersion: v1\nkind: ConfigMap\nmetadata: {name: pki}\n"
+		ingress := "apiVersion: v1\nkind: Namespace\nmetadata: {name: n}\n"
+		switch {
+		case slices.Contains(values, "parts.ingress=false"):
+			out = pki
+		case slices.Contains(values, "parts.pki=false") && h.partsOverlap:
+			out = ingress + "---\n" + pki
+		case slices.Contains(values, "parts.pki=false"):
+			out = ingress
+		default:
+			out = pki + "---\n" + ingress
+		}
+	case strings.HasSuffix(r.Chart, "delivery-root"):
+		out = "apiVersion: argoproj.io/v1alpha1\nkind: AppProject\nmetadata: {name: delivery}\n"
 	case strings.HasSuffix(r.Chart, "delivery"):
-		// Projekt dopuszcza to, co renderuje atrapa charta aplikacji.
+		// Projekty dopuszczają to, co renderują atrapy chartów aplikacji
+		// i platformy (Namespace — na poziomie klastra).
 		var kinds []string
 		for _, gk := range []string{`{group: apps, kind: Deployment}`, `{group: "", kind: ConfigMap}`} {
 			if !strings.Contains(gk, "kind: "+h.projectWithout+"}") || h.projectWithout == "" {
 				kinds = append(kinds, gk)
 			}
 		}
-		out = "apiVersion: argoproj.io/v1alpha1\nkind: AppProject\nmetadata: {name: docfind}\nspec:\n  namespaceResourceWhitelist: [" + strings.Join(kinds, ", ") + "]\n"
+		out = "apiVersion: argoproj.io/v1alpha1\nkind: AppProject\nmetadata: {name: docfind}\nspec:\n  namespaceResourceWhitelist: [" + strings.Join(kinds, ", ") + "]\n" +
+			"---\napiVersion: argoproj.io/v1alpha1\nkind: AppProject\nmetadata: {name: platform}\nspec:\n  clusterResourceWhitelist: [{group: \"\", kind: Namespace}, {group: apiextensions.k8s.io, kind: CustomResourceDefinition}]\n"
 	default:
 		out = deployment("example.com/"+r.Name+"@sha256:"+strings.Repeat("a", 64), h.cpuLimit)
 		if includeCRDs || r.Name == pins.CertManager {
@@ -204,7 +222,7 @@ func TestRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"docfind-dev.yaml", "docfind-prod.yaml", "platform-staging.yaml", "coredns.yaml", "envoy-gateway.yaml", "cert-manager.yaml",
-		"argocd.yaml", "docfind-oci-staging.yaml", "delivery-staging.yaml"} {
+		"argocd.yaml", "docfind-oci-staging.yaml", "delivery-staging.yaml", "delivery-root-staging.yaml"} {
 		if !slices.Contains(v.validated, want) {
 			t.Errorf("bez walidacji %s: %v", want, v.validated)
 		}
@@ -231,7 +249,10 @@ func TestRunRejects(t *testing.T) {
 		{"chart inny niż dym obrazu", &helm{noTmp: true}, appConfig{}, "dym obrazu (check:runtime) uruchamia go z"},
 		// Nowy rodzaj zasobu w charcie aplikacji bez dopisania do projektu:
 		// Argo odmówiłby synchronizacji dopiero na stagingu.
-		{"projekt Argo CD bez rodzaju z charta", &helm{projectWithout: "ConfigMap"}, appConfig{}, "projekt Argo CD środowiska staging nie dopuszcza"},
+		{"projekt Argo CD bez rodzaju z charta", &helm{projectWithout: "ConfigMap"}, appConfig{}, "projekt Argo CD aplikacji środowiska staging nie dopuszcza"},
+		// Zasób w obu częściach charta platformy: dwie Applications Argo CD
+		// walczyłyby o niego.
+		{"części charta platformy dzielą zasób", &helm{partsOverlap: true}, appConfig{}, "w częściach pki i ingress"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

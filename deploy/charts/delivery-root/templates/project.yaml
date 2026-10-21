@@ -1,0 +1,20 @@
+# Projekt korzenia: tylko pakiet dostawy z rejestru i tylko obiekty Argo CD
+# w jego przestrzeni nazw. Projekty platformy i aplikacji przychodzą z pakietu
+# — kto zmienia pakiet, ten zmienia granice; pakiet publikuje tylko CI po
+# bramkach (decyzja 81).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: delivery
+  namespace: {{ .Release.Namespace }}
+spec:
+  description: DOCFIND — pakiet dostawy z rejestru OCI
+  sourceRepos:
+    - {{ required "bundle.repoURL" .Values.bundle.repoURL | quote }}
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: {{ .Release.Namespace | quote }}
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - {group: argoproj.io, kind: Application}
+    - {group: argoproj.io, kind: AppProject}

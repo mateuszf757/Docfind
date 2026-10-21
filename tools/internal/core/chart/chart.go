@@ -138,6 +138,106 @@ func Plain(name string, files map[string][]byte, m Meta, epoch time.Time, source
 	return packaged(name, files, m, archive, epoch, source)
 }
 
+// Values pakuje chart bez obrazu, w którym dft wpisuje do values.yaml całe
+// gałęzie najwyższego poziomu (pakiet dostawy, decyzja 81: komponenty
+// i wartości środowisk). Klucze muszą już stać w values.yaml — literówka to
+// błąd, nie nowy klucz; komentarze reszty pliku zostają.
+func Values(name string, files map[string][]byte, m Meta, values map[string]any, epoch time.Time, source string) (OCI, error) {
+	doc, err := replaceTop(files["values.yaml"], values)
+	if err != nil {
+		return OCI{}, fmt.Errorf("plik values.yaml: %w", err)
+	}
+	out := maps.Clone(files)
+	out["values.yaml"] = doc
+	return Plain(name, out, m, epoch, source)
+}
+
+// replaceTop zastępuje wartości istniejących kluczy najwyższego poziomu
+// dokumentu YAML, zachowując komentarze i kolejność kluczy. Mapy kodowane
+// są z kluczami posortowanymi, więc wynik zależy tylko od treści.
+func replaceTop(doc []byte, values map[string]any) ([]byte, error) {
+	if len(doc) == 0 {
+		return nil, errors.New("brak pliku")
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(doc, &root); err != nil {
+		return nil, err
+	}
+	if len(root.Content) != 1 || root.Content[0].Kind != yaml.MappingNode {
+		return nil, errors.New("oczekiwano mapy na najwyższym poziomie")
+	}
+	m := root.Content[0]
+	for _, key := range slices.Sorted(maps.Keys(values)) {
+		// Przez JSON: struktury z tagami json (jak w charcie) i mapy
+		// z posortowanymi kluczami.
+		raw, err := json.Marshal(values[key])
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", key, err)
+		}
+		var generic any
+		if err := json.Unmarshal(raw, &generic); err != nil {
+			return nil, err
+		}
+		found := false
+		for i := 0; i+1 < len(m.Content); i += 2 {
+			if m.Content[i].Value != key {
+				continue
+			}
+			var n yaml.Node
+			if err := n.Encode(generic); err != nil {
+				return nil, fmt.Errorf("%s: %w", key, err)
+			}
+			n.HeadComment, n.LineComment, n.FootComment = m.Content[i+1].HeadComment, m.Content[i+1].LineComment, m.Content[i+1].FootComment
+			m.Content[i+1] = &n
+			found = true
+		}
+		if !found {
+			return nil, fmt.Errorf("brak klucza %s", key)
+		}
+	}
+	var out bytes.Buffer
+	enc := yaml.NewEncoder(&out)
+	enc.SetIndent(2)
+	if err := enc.Encode(&root); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
+// ValuesOf zwraca values.yaml charta z archiwum jako mapę — to, co wdroży
+// Argo CD z pakietu pobranego z rejestru.
+func ValuesOf(archive []byte) (map[string]any, error) {
+	gz, err := gzip.NewReader(bytes.NewReader(archive))
+	if err != nil {
+		return nil, err
+	}
+	tr := tar.NewReader(gz)
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return nil, errors.New("archiwum bez values.yaml")
+		}
+		if err != nil {
+			return nil, err
+		}
+		if _, file, _ := strings.Cut(h.Name, "/"); file != "values.yaml" {
+			continue
+		}
+		data, err := io.ReadAll(tr)
+		if err != nil {
+			return nil, err
+		}
+		var values map[string]any
+		if err := sigsyaml.Unmarshal(data, &values); err != nil {
+			return nil, fmt.Errorf("values.yaml: %w", err)
+		}
+		return values, nil
+	}
+}
+
 // packaged składa konfigurację i manifest OCI dla archiwum charta z plików
 // files z metadanymi m.
 func packaged(name string, files map[string][]byte, m Meta, archive []byte, epoch time.Time, source string) (OCI, error) {

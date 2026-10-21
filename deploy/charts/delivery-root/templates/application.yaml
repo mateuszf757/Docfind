@@ -1,0 +1,39 @@
+# Główna Application (app-of-apps): pakiet dostawy w zakresie wersji. Argo
+# wybiera najwyższą wersję z rejestru, rozwiązuje ją do digestu i zakłada
+# z niej projekty i Applications komponentów falami.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: docfind-delivery
+  namespace: {{ .Release.Namespace }}
+  # Bez finalizera resources-finalizer: usunięcie korzenia zostawia
+  # Applications komponentów i ich zasoby.
+spec:
+  project: delivery
+  source:
+    repoURL: {{ .Values.bundle.repoURL | quote }}
+    # Źródło OCI wymaga ścieżki; warstwa charta Helma leży w korzeniu.
+    path: .
+    targetRevision: {{ required "bundle.versions" .Values.bundle.versions | quote }}
+    helm:
+      releaseName: delivery
+      valuesObject:
+        environment: {{ required "environment" .Values.environment | quote }}
+        runtime:
+          acmeEmail: {{ .Values.runtime.acmeEmail | quote }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ .Release.Namespace | quote }}
+  syncPolicy:
+    automated:
+      # Komponent usunięty z pakietu znika jako Application; jego zasoby
+      # zostają (Applications komponentów są bez finalizera).
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+  revisionHistoryLimit: 10

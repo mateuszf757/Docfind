@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Wartości korzenia dostawy docfind-delivery-root",
+  "description": "Bez schematu Helm po cichu ignoruje nieznany klucz — literówka w zakresie wersji dawałaby główną Application, która niczego nie wdraża.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["environment", "bundle", "runtime"],
+  "properties": {
+    "global": {"type": "object", "description": "Helm dokłada `global` do wartości każdego charta."},
+    "environment": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+    "bundle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repoURL", "versions"],
+      "properties": {
+        "repoURL": {"type": "string", "pattern": "^oci://[a-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)+$"},
+        "versions": {"type": "string", "minLength": 1, "description": "Zakres SemVer; składnię sprawdza dft (ta sama biblioteka co w Argo CD)."}
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["acmeEmail"],
+      "properties": {"acmeEmail": {"type": "string"}}
+    }
+  }
+}

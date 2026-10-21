@@ -3,6 +3,7 @@ package environment
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -64,7 +65,7 @@ func TestRepositoryEnvironments(t *testing.T) {
 	}
 	// Staging śledzi chart z rejestru przez Argo CD (decyzja 46): każdy
 	// commit z main po bramkach CI. Pozostałe środowiska wdraża dft.
-	if a := staging.Delivery.ArgoCD; a == nil || a.Chart != "ghcr.io/mateuszf757/charts/docfind" || a.Versions != ">=0.0.0-0" {
+	if a := staging.Delivery.ArgoCD; a == nil || a.Bundle != "ghcr.io/mateuszf757/charts/docfind-delivery" || a.Versions != ">=0.0.0-0" {
 		t.Errorf("staging: dostawa %+v", a)
 	}
 	for _, name := range []string{"dev", "ci", "prod"} {
@@ -210,15 +211,15 @@ func TestReadRejects(t *testing.T) {
 		{"prod", "wydanie spoza rejestru", "  sources: [registry]", "  sources: [local, registry]", "releasesOnly"},
 		{"prod", "wydanie bez atestacji", "  attested: true\n", "", "releasesOnly bez artifact.attested"},
 		{"ci", "atestacja bez rejestru", "  sources: [archive, registry]", "  sources: [archive]", "atestacje mają tylko obrazy z rejestru"},
-		{"staging", "chart ze schematem", "chart: ghcr.io/mateuszf757/charts/docfind", "chart: oci://ghcr.io/mateuszf757/charts/docfind", "delivery.argocd.chart"},
-		{"staging", "chart bez repozytorium", "chart: ghcr.io/mateuszf757/charts/docfind", "chart: docfind", "delivery.argocd.chart"},
+		{"staging", "pakiet ze schematem", "bundle: ghcr.io/mateuszf757/charts/docfind-delivery", "bundle: oci://ghcr.io/mateuszf757/charts/docfind-delivery", "delivery.argocd.bundle"},
+		{"staging", "pakiet bez repozytorium", "bundle: ghcr.io/mateuszf757/charts/docfind-delivery", "bundle: docfind-delivery", "delivery.argocd.bundle"},
 		{"staging", "zakres z literówką", `versions: ">=0.0.0-0"`, `versions: ">==0.0.0-0"`, "delivery.argocd.versions"},
 		{"staging", "zakres pusty", `versions: ">=0.0.0-0"`, `versions: ""`, "delivery.argocd.versions"},
 		// Argo bierze obraz z charta; obraz z drzewa nie miałby którędy
 		// wejść.
 		{"staging", "Argo CD z obrazem spoza rejestru", "  sources: [registry]", "  sources: [local, registry]", "obraz tylko z charta w rejestrze"},
 		{"dev", "samonaprawa bez Argo CD", "allowed: [cluster-create,", "allowed: [self-heal, cluster-create,", "self-heal bez delivery.argocd"},
-		{"prod", "Argo CD bez klastra k3d", "app:\n", "delivery:\n  argocd:\n    chart: ghcr.io/mateuszf757/charts/docfind\n    versions: \">=0.0.0\"\napp:\n", "tylko na klastrach k3d"},
+		{"prod", "Argo CD bez klastra k3d", "app:\n", "delivery:\n  argocd:\n    bundle: ghcr.io/mateuszf757/charts/docfind-delivery\n    versions: \">=0.0.0\"\napp:\n", "tylko na klastrach k3d"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -324,20 +325,44 @@ func TestChartValues(t *testing.T) {
 	if got := strings.Join(prod.AppValues(""), " "); !strings.Contains(got, "route.hostname=prod.docfind.lol") || strings.Contains(got, "externalSecret") {
 		t.Errorf("prod: %s", got)
 	}
-	// Application stagingu: chart z rejestru w zakresie i wartości aplikacji
-	// z definicji — te same, które dft podaje przy instalacji z drzewa.
+	// Staging z Argo CD: wartości aplikacji bez nic z klastra (CA z ConfigMapy,
+	// decyzja 81), a główna Application śledzi pakiet z adresem ACME spoza
+	// gita.
 	staging, err := Read(repoRoot, "staging")
 	if err != nil {
 		t.Fatal(err)
 	}
-	got = strings.Join(staging.DeliveryValues("Q0E="), " ")
-	for _, want := range []string{
-		"application.name=docfind", "application.namespace=docfind",
-		"application.repoURL=ghcr.io/mateuszf757/charts", "application.chart=docfind", "application.versions=>=0.0.0-0",
-		"application.values.route.hostname=staging.docfind.lol", "application.values.api.secrets.externalSecret.caBundle=Q0E=",
-	} {
+	got = strings.Join(staging.AppValues("Q0E="), " ")
+	if !strings.Contains(got, "api.secrets.externalSecret.caConfigMap="+PlatformCAConfigMap) || strings.Contains(got, "caBundle") {
+		t.Errorf("staging: %s", got)
+	}
+	got = strings.Join(staging.RootValues("ops@example.com"), " ")
+	for _, want := range []string{"environment=staging", "bundle.repoURL=oci://ghcr.io/mateuszf757/charts/docfind-delivery", "bundle.versions=>=0.0.0-0", "runtime.acmeEmail=ops@example.com"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("staging: brak %s w %s", want, got)
+		}
+	}
+}
+
+// TestSetValues: mapa z --set z typami Helma — pakiet dostawy niesie wartości
+// środowisk jako mapy.
+func TestSetValues(t *testing.T) {
+	got, err := SetValues([]string{"gateway.name=docfind", "gateway.httpsRedirectPort=8445", "api.secrets.externalSecret.enabled=true", "tag=0123", "zero=0", "x.y=-5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"gateway": map[string]any{"name": "docfind", "httpsRedirectPort": int64(8445)},
+		"api":     map[string]any{"secrets": map[string]any{"externalSecret": map[string]any{"enabled": true}}},
+		// Zero wiodące zostaje tekstem — tak jak w Helmie (skrócony commit).
+		"tag": "0123", "zero": int64(0), "x": map[string]any{"y": int64(-5)},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("SetValues = %#v", got)
+	}
+	for _, bad := range [][]string{{"bez-rownosci"}, {"=x"}, {"a=1", "a.b=2"}} {
+		if _, err := SetValues(bad); err == nil {
+			t.Errorf("%v przyjęte", bad)
 		}
 	}
 }

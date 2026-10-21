@@ -321,3 +321,44 @@ func TestMirrorRefuses(t *testing.T) {
 		})
 	}
 }
+
+// TestValues: pakiet dostawy dostaje całe gałęzie values.yaml (komponenty,
+// środowiska), reszta pliku z komentarzami zostaje, a ten sam pakiet to ten
+// sam digest. Klucz, którego nie ma w values.yaml, to błąd.
+func TestValues(t *testing.T) {
+	files, err := Files("../../../../deploy/charts/delivery")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := Meta{Version: "0.4.1-dev.3", AppVersion: "fc8dfc11099d"}
+	values := map[string]any{
+		"components":   []map[string]any{{"name": "openbao", "wave": 4, "values": map[string]any{"b": 1, "a": 2}}},
+		"environments": map[string]any{"staging": map[string]any{"platform": map[string]any{"gateway": map[string]any{"name": "docfind"}}}},
+	}
+	epoch := time.Unix(1791800000, 0)
+	a, err := Values("docfind-delivery", files, m, values, epoch, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Values("docfind-delivery", files, m, values, epoch, "")
+	if err != nil || a.Digest() != b.Digest() {
+		t.Fatalf("dwa pakowania: %s, %s, %v", a.Digest(), b.Digest(), err)
+	}
+	doc := unpack(t, a.Archive)["docfind-delivery/values.yaml"]
+	for _, want := range []string{"# Podaje główna Application", "name: openbao", "wave: 4", "clusterResources:"} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("values.yaml bez %q:\n%s", want, doc)
+		}
+	}
+	got, err := ValuesOf(a.Archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	comps, _ := got["components"].([]any)
+	if len(comps) != 1 || comps[0].(map[string]any)["name"] != "openbao" {
+		t.Errorf("ValuesOf: %v", got["components"])
+	}
+	if _, err := Values("docfind-delivery", files, m, map[string]any{"komponenty": []any{}}, epoch, ""); err == nil {
+		t.Error("nieznany klucz w values.yaml przyjęty")
+	}
+}

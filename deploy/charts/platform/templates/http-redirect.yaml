@@ -1,3 +1,4 @@
+{{- if .Values.parts.ingress }}
 # Każde żądanie na listenerze HTTP dostaje 301 na HTTPS. Trasa bez nazw hostów
 # obejmuje wszystkie — przekierowanie jest sprawą platformy, nie aplikacji.
 apiVersion: gateway.networking.k8s.io/v1
@@ -18,3 +19,4 @@ spec:
             scheme: https
             port: {{ .Values.gateway.httpsRedirectPort }}
             statusCode: 301
+{{- end }}

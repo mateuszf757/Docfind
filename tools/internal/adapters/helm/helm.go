@@ -87,6 +87,16 @@ func (h Helm) Revision(ctx context.Context, t cluster.Target, namespace, release
 	return status.Version, nil
 }
 
+// Manifest zwraca manifest ostatniej rewizji wydania (`helm get manifest`) —
+// zasoby, które wydanie zainstalowało.
+func (h Helm) Manifest(ctx context.Context, t cluster.Target, namespace, release string) ([]byte, error) {
+	out, err := proc.Output(ctx, h.Runner, proc.Cmd{Name: "helm", Args: []string{"get", "manifest", release, "--namespace", namespace, "--kubeconfig", t.Kubeconfig, "--kube-context", t.Context}})
+	if err != nil {
+		return nil, fmt.Errorf("helm get manifest %s: %w", release, err)
+	}
+	return []byte(out), nil
+}
+
 // Rollback cofa release do rewizji revision i czeka na gotowość zasobów,
 // jak Install. Rollback to nowa rewizja z manifestem tamtej — na klastrze te
 // same operacje co upgrade do niej.
