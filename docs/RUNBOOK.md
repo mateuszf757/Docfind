@@ -465,6 +465,20 @@ zamierzone — nie omijaj go ręczną publikacją.
    migocze, potrzebuje przyczyny, nie kolejnych ponowień.
 4. Issue zamyka się samo przy pierwszym zielonym biegu `main`.
 
+### Import obrazu do węzłów bez wyniku
+
+**Objaw:** w logu `cluster` `UWAGA: k3d image import … bez wyniku po 2m0s
+(próba 1 z 2) — ponawiam`, a gdy druga próba też zawiśnie, błąd „2 próby bez
+wyniku”. k3d wisi, gdy `ctr` na jednym węźle skończy się wcześniej (decyzja 19).
+Przed tym limitem objawem był `cluster` anulowany po 30 minutach na linii
+`import …` albo `sonda …`, bez przyczyny w logu.
+
+1. Sprawdź wyjście k3d nad ostrzeżeniem. `Failed to copy read stream` to `ctr`
+   zakończony wcześniej; brak tej linii to węzeł, który przestał czytać.
+2. Jedno ostrzeżenie przy zielonym zadaniu nie wymaga działania. Powtarzające
+   się albo błąd po dwóch próbach to bramka, która migocze: przyczyny szukaj
+   w `dowody-cluster` (`nodes/`), a nie w kolejnym `gh run rerun`.
+
 ### Noc się nie odbyła
 
 **Objaw:** issue „Zdrowie main” z „ostatni bieg nocny … temu” albo „brak

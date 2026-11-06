@@ -366,6 +366,29 @@ tam, gdzie nie trzeba.
 zmieni zachowanie w kolejnej wersji Kubernetesa — wtedy klaster lokalny
 przechodzi na Dockera z rootem, a rootless zostaje dla pozostałej pracy.
 
+**Uzupełnienie (2026-11-06): limit importu.** `--mode direct` ma jeszcze jeden
+koszt. k3d rozdziela strumień obrazu na węzły rurami bez bufora i czeka na
+wszystkie, więc `ctr` zakończony wcześniej na jednym węźle zawiesza import bez
+końca. Odtworzone na k3d 5.9.0: po ubiciu `ctr` na jednym z trzech węzłów k3d
+działał dalej jeszcze po 150 s, a `ctr` na pozostałych dwóch czekały. W CI to 7
+z 197 zadań `cluster` od 2026-10-10 — wszystkie dojścia do limitu 30 minut —
+bez przyczyny w logu, bo adapter nie przekazywał wyjścia k3d. Co wywołuje to
+w CI, nie wiadomo; tego samego drzewa bieg o 12:16 przeszedł, o 12:43 zawisł.
+
+Próba importu ma teraz limit 2 minut (import w CI trwa do 6 s), zawieszenie
+dostaje jedno ponowienie, a wyjście k3d trafia do logu. To ponowienie wywołania
+zewnętrznego w adapterze, z limitem i logiem (§3.4 kontraktu), a nie ponowienie
+bramki.
+
+**Co tracę:** ponowienie maskuje pojedynczą porażkę `ctr` — zostaje po niej
+tylko `UWAGA` w logu. Węzła, który przestał czytać, nie naprawia (odtworzone na
+zamrożonym `ctr`): zadanie kończy się wtedy błędem po około 4,5 minuty zamiast
+ciszą po 30.
+
+**Kiedy zmieniam zdanie:** gdy ostrzeżenia będą się powtarzać — import po węźle
+przez `docker exec -i`, z kodem i stderr każdego `ctr` osobno. Gdy k3d naprawi
+rozdzielanie strumienia, ponowienie znika, a limit zostaje.
+
 ## 20. Wszystko z zewnątrz przypięte digestem albo SHA commita
 
 **Wybieram niezmienne referencje zamiast czytelnych.** Tag obrazu i tag akcji

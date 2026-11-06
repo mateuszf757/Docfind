@@ -2,6 +2,7 @@ package k3d
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -96,6 +97,103 @@ func TestCreate(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(logDir, "k3d-x-staging-server-0.log")); err == nil {
 		t.Error("log węzła cudzego klastra")
+	}
+}
+
+// TestImport: zawieszony k3d nie zjada limitu zadania CI — próba ma limit,
+// zawieszenie dostaje jedno ponowienie widoczne w logu, a błąd k3d i anulowanie
+// z zewnątrz kończą import od razu.
+func TestImport(t *testing.T) {
+	hang := func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	k3dFailed := &proc.ExitError{Cmd: "k3d image import", Code: 1}
+	tests := []struct {
+		name string
+		// attempts — zachowanie kolejnych prób.
+		attempts  []func(context.Context) error
+		wantCalls int
+		wantErr   string
+		wantWarn  bool
+	}{
+		{
+			name:      "udany import to jedna próba",
+			attempts:  []func(context.Context) error{func(context.Context) error { return nil }},
+			wantCalls: 1,
+		},
+		{
+			name:      "zawieszenie ponawia raz i zostawia ślad w logu",
+			attempts:  []func(context.Context) error{hang, func(context.Context) error { return nil }},
+			wantCalls: 2,
+			wantWarn:  true,
+		},
+		{
+			name:      "dwa zawieszenia to błąd z przyczyną",
+			attempts:  []func(context.Context) error{hang, hang},
+			wantCalls: 2,
+			wantErr:   "bez wyniku",
+			wantWarn:  true,
+		},
+		{
+			name:      "błąd k3d nie jest zawieszeniem i nie jest ponawiany",
+			attempts:  []func(context.Context) error{func(context.Context) error { return k3dFailed }},
+			wantCalls: 1,
+			wantErr:   "k3d image import obraz.tar do x",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			quiet(t)
+			var log strings.Builder
+			cli.Err = &log
+			var calls []proc.Cmd
+			runner := proc.RunnerFunc(func(ctx context.Context, c proc.Cmd) (proc.Result, error) {
+				calls = append(calls, c)
+				if _, ok := ctx.Deadline(); !ok {
+					t.Error("próba importu bez limitu czasu")
+				}
+				return proc.Result{}, tt.attempts[len(calls)-1](ctx)
+			})
+			err := K3d{Runner: runner, importLimit: time.Millisecond}.Import(context.Background(), "x", "obraz.tar")
+			switch {
+			case tt.wantErr == "" && err != nil:
+				t.Fatalf("błąd: %v", err)
+			case tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)):
+				t.Fatalf("błąd %v, chcę %q", err, tt.wantErr)
+			}
+			if len(calls) != tt.wantCalls {
+				t.Fatalf("prób: %d, chcę %d", len(calls), tt.wantCalls)
+			}
+			if got := calls[0].String(); got != "k3d image import obraz.tar --cluster x --mode direct" {
+				t.Errorf("polecenie: %s", got)
+			}
+			// Bez wyjścia k3d zawieszenie nie zostawia w logu żadnej przyczyny.
+			if calls[0].Stdout == nil || calls[0].Stderr == nil {
+				t.Error("wyjście k3d nie trafia do logu")
+			}
+			if got := strings.Contains(log.String(), "ponawiam"); got != tt.wantWarn {
+				t.Errorf("ostrzeżenie o ponowieniu: %v, chcę %v: %q", got, tt.wantWarn, log.String())
+			}
+		})
+	}
+}
+
+// TestImportCancelled: anulowanie z zewnątrz (SIGTERM, limit zadania) to nie
+// zawieszenie k3d — ponowienie opóźniłoby tylko zakończenie biegu.
+func TestImportCancelled(t *testing.T) {
+	quiet(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	runner := proc.RunnerFunc(func(ctx context.Context, _ proc.Cmd) (proc.Result, error) {
+		calls++
+		cancel()
+		<-ctx.Done()
+		return proc.Result{}, ctx.Err()
+	})
+	err := K3d{Runner: runner, importLimit: time.Hour}.Import(ctx, "x", "obraz.tar")
+	if !errors.Is(err, context.Canceled) || calls != 1 {
+		t.Errorf("błąd %v po %d próbach", err, calls)
 	}
 }
 
