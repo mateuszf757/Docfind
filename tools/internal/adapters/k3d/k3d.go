@@ -6,6 +6,7 @@ package k3d
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,6 +24,8 @@ import (
 // K3d — program k3d (i docker dla kontenerów węzłów).
 type K3d struct {
 	Runner proc.Runner
+	// importLimit — limit jednej próby importu; zero to defaultImportLimit.
+	importLimit time.Duration
 }
 
 func (k K3d) stream(ctx context.Context, args ...string) error {
@@ -168,15 +171,45 @@ func (k K3d) Kubeconfig(ctx context.Context, name string) ([]byte, error) {
 	return res.Stdout, nil
 }
 
+const (
+	// defaultImportLimit — limit jednej próby importu. Import w CI trwa do 6 s,
+	// więc po tym czasie to nie wolny dysk, tylko zawieszenie.
+	defaultImportLimit = 2 * time.Minute
+	importAttempts     = 2
+)
+
 // Import wgrywa obraz (z demona Dockera albo archiwum) do węzłów klastra.
 // Tryb direct wgrywa go prosto do containerd na każdym węźle; domyślny tryb
 // uruchamia pomocniczy kontener z zamontowanym gniazdem Dockera — pełna
 // kontrola nad demonem, a przy rootless i tak zawodzi (decyzja 19).
+//
+// k3d rozdziela strumień obrazu na węzły rurami bez bufora i czeka na
+// wszystkie: gdy ctr na jednym węźle skończy się wcześniej, pozostałe nie
+// dostają już danych ani końca strumienia, a k3d nie kończy się nigdy. Stąd
+// limit próby i jedno ponowienie — obraz jest adresowany treścią, więc ponowny
+// import niczego nie psuje — oraz wyjście k3d w logu, bo bez niego zawieszenie
+// nie zostawia żadnej przyczyny.
 func (k K3d) Import(ctx context.Context, name, image string) error {
-	if _, err := k.Runner.Run(ctx, proc.Cmd{Name: "k3d", Args: []string{"image", "import", image, "--cluster", name, "--mode", "direct"}}); err != nil {
-		return fmt.Errorf("k3d image import %s do %s: %w", image, name, err)
+	limit := k.importLimit
+	if limit == 0 {
+		limit = defaultImportLimit
 	}
-	return nil
+	args := []string{"image", "import", image, "--cluster", name, "--mode", "direct"}
+	for attempt := 1; ; attempt++ {
+		try, cancel := context.WithTimeout(ctx, limit)
+		_, err := k.Runner.Run(try, proc.Cmd{Name: "k3d", Args: args, Stdout: cli.Out, Stderr: cli.Err})
+		hung := errors.Is(try.Err(), context.DeadlineExceeded) && ctx.Err() == nil
+		cancel()
+		switch {
+		case err == nil:
+			return nil
+		case !hung:
+			return fmt.Errorf("k3d image import %s do %s: %w", image, name, err)
+		case attempt == importAttempts:
+			return fmt.Errorf("k3d image import %s do %s: %d próby bez wyniku, każda przerwana po %s — wyżej wyjście k3d", image, name, importAttempts, limit)
+		}
+		cli.Warn("k3d image import %s do %s: bez wyniku po %s (próba %d z %d) — ponawiam", image, name, limit, attempt, importAttempts)
+	}
 }
 
 // NodeLogs zapisuje logi kontenerów węzłów (także zatrzymanych) do
