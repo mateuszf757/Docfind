@@ -66,10 +66,11 @@ func (r Report) Summary() string {
 	return b.String()
 }
 
-// IssueTitle — tytuł issue nocnego skanu; po nim issue jest odnajdywane.
+// IssueTitle — tytuł issue skanu; po nim issue jest odnajdywane, więc zostaje
+// mimo braku skanu z harmonogramu (decyzja 83).
 const IssueTitle = "Podatności w obrazie api i narzędziach Go (skan nocny)"
 
-// IssueBody — treść issue nocnego skanu: raport każdego skanu, który się
+// IssueBody — treść issue skanu: raport każdego skanu, który się
 // wykonał, i lista tych, które raportu nie dały.
 func IssueBody(reports []Report, missing []string) string {
 	var b strings.Builder
@@ -80,6 +81,6 @@ func IssueBody(reports []Report, missing []string) string {
 	if len(missing) > 0 {
 		fmt.Fprintf(&b, "**Bez raportu:** %s — skan się nie wykonał, więc o jego podatnościach nic nie wiadomo.\n\n", strings.Join(missing, ", "))
 	}
-	b.WriteString("Issue prowadzi `dft vulns-issue` z nocnego biegu workflowu ci — zamknie je sam, gdy wszystkie skany wykonają się bez blokujących podatności i bez wyjątków wygasających w ciągu tygodnia.\n")
+	b.WriteString("Issue prowadzi `dft vulns-issue` z ręcznego biegu workflowu ci (`gh workflow run ci.yml --ref main`) — zamknie je sam, gdy wszystkie skany wykonają się bez blokujących podatności i bez wyjątków wygasających w ciągu tygodnia.\n")
 	return b.String()
 }

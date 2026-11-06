@@ -198,6 +198,18 @@ func TestVulncheckException(t *testing.T) {
 	}
 }
 
+// TestVulncheckSkip: z harmonogramu (decyzja 83) nie ma skanu ani raportu —
+// podatność w bazie nie zmienia wyniku, a Publish nie dostaje nic.
+func TestVulncheckSkip(t *testing.T) {
+	silence(t)
+	found := vuln.Finding{ID: "GO-2026-0001", Package: "stdlib", Version: "v1.27.1", Severity: vuln.SeverityUnknown, Fixed: []string{"v1.27.2"}}
+	c := Checker{Go: &toolchain{findings: []vuln.Finding{found}}, VulnSkip: true,
+		Publish: func(vuln.Report) error { t.Error("raport mimo pominiętego skanu"); return nil }}
+	if err := c.Vulncheck(context.Background()); err != nil {
+		t.Fatalf("pominięty skan: %v", err)
+	}
+}
+
 // TestVulncheckModes: tryby z decyzji 37. Z punktem odniesienia blokuje
 // tylko to, czego nie było w kodzie z commita bazowego, w trybie raportu
 // nic, a raport dostaje Publish także przy wyniku negatywnym — przy

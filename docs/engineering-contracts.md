@@ -164,10 +164,10 @@ pakietu dostawy w trakcie → kod 1, bez tagu; kod bramek z niezatwierdzonymi zm
 
 | Warstwa | Zdarzenia | Zadania i zakres | Budżet (p95, §0.5) | Wymagana |
 |---|---|---|---|---|
-| W1 szybka | PR, push `main`, noc | równolegle: `lint` — wersje, workflowy, kontrakt, gitleaks na historii, Python, charty z politykami; `test` — Go z `-race`, pokrycie, govulncheck; `build` albo `build-publish` — obraz, baza, testy na musl, warunki Etapu 1, powtarzalność; `negatives` — warianty negatywne; `tools` — powtarzalność narzędzi; `vulns` — skan obrazu zaraz po `build` | 6 min [ŻYCZENIE: p95 2026-10-17 — 15,3 min na PR-ach, 15,6 na push; biegi sprzed zrównoleglenia] | tak: `fast-feedback` |
+| W1 szybka | PR, push `main`, noc | równolegle: `lint` — wersje, workflowy, kontrakt, gitleaks na historii, Python, charty z politykami; `test` — Go z `-race`, pokrycie, govulncheck; `build` albo `build-publish` — obraz, baza, testy na musl, warunki Etapu 1, powtarzalność; `negatives` — warianty negatywne; `tools` — powtarzalność narzędzi; `vulns` — skan obrazu zaraz po `build`; nocą bez skanów: `vulns` i govulncheck z harmonogramu nie biegną (decyzja 83) | 6 min [ŻYCZENIE: p95 2026-10-17 — 15,3 min na PR-ach, 15,6 na push; biegi sprzed zrównoleglenia] | tak: `fast-feedback` |
 | W2 integracja przed scaleniem | PR, push `main`, noc | `plan` — profil zmiany (§3.7, na PR-ach); po `lint`, `test` i `build`: `cluster` — klaster `ci`, wdrożenie, tożsamość, drain każdego węzła, OpenBao, rotacja, TLS, dowody | 20 min [ŻYCZENIE: p95 2026-10-17 — 23,1 min na PR-ach, 22,5 na push] | tak: `integration` |
 | W3 po scaleniu | push `main` | `attest`, `chart`, `attest-chart`: pochodzenie i SBOM, atestacja, chart OCI z digestem przetestowanym | 30 min (p95 2026-10-17: 27,9 min) | nie (czerwony → §3.6) |
-| W4 noc | `schedule`, `workflow_dispatch` | W1 i W2 na `main`; `vulns-issue` z wyjątkami wygasającymi w ciągu tygodnia; `settings-drift`; `main-health` (także na push); w `cluster`: rolling update, upgrade N-1 → N i rollback pod ruchem, negatywy na klastrze | 40 min (p95 2026-10-17: 17,1 min) | nie |
+| W4 noc | `schedule`, `workflow_dispatch` | W1 i W2 na `main`; `vulns-issue` z wyjątkami wygasającymi w ciągu tygodnia, tylko przy `workflow_dispatch` (decyzja 83); `settings-drift`; `main-health` (także na push); w `cluster`: rolling update, upgrade N-1 → N i rollback pod ruchem, negatywy na klastrze | 40 min (p95 2026-10-17: 17,1 min) | nie |
 | W5 wydanie | tag `vX.Y.Z` | `release`, `attest-release`, `vulns` z polityką wydania, `promote` po zgodzie | 10 min do oczekiwania na zgodę (jeden bieg: 1,4 min) | nie (zatwierdza autor) |
 
 Egzekwuje: `dft check workflows` — zadanie workflowu ci bez warstwy w `core/ci` to błąd;
@@ -396,8 +396,8 @@ podsumowanie biegu. Warstwa: W1. Wariant negatywny: pakiet warstwy poniżej mini
 **6.2 Podatności.** Blokuje podatność naprawialna o wadze HIGH, CRITICAL albo nieznanej, bez
 ważnego wyjątku (§10): na PR-ze — tylko nowa względem obrazu i kodu `tools/` z commita
 bazowego; gdy obrazu commita bazowego jeszcze nie ma w rejestrze — względem obrazu
-najbliższego przodka (§10), z ostrzeżeniem w raporcie; na tagu — każda; na `main` i nocą —
-raport i issue.
+najbliższego przodka (§10), z ostrzeżeniem w raporcie; na tagu — każda; na `main` — raport;
+w biegu ręcznym — raport i issue; harmonogram nie skanuje (decyzja 83).
 Egzekwuje: `check:vulns` (`stages/vulns`), govulncheck w `dft check go` i `dft test`.
 Dowód: `vulns-api.json` (punkt odniesienia i obraz, którego zabrakło), `vulns-go.json`
 z wersjami baz. Warstwa: W1 (Go i obraz), W5. Wariant negatywny: wygasły wyjątek →
@@ -576,7 +576,8 @@ Decyzja: 36, 50, 57.
 w kalendarzu danych; noc ostrzega 7 dni przed datą.
 Egzekwuje: walidacja dat wyjątków podatności (`core/vuln`) i wyjątków od kontraktu
 (`core/contract`, w tym data rotacji klucza aplikacji auto-merge); wyjątek wygasający w ciągu
-progu z §10 trafia do issue nocnego — podatności do `vulns:issue`, kontrakt do `ci:main-health`
+progu z §10 trafia do issue — podatności do `vulns:issue` z biegu ręcznego (decyzja 83), kontrakt
+nocą do `ci:main-health`
 [ŻYCZENIE: kalendarz wsparcia wersji i certyfikatów]. Dowód: log `test`, issue nocne.
 Warstwa: W1, W4. Wariant negatywny: wyjątek z datą dalej niż 90 dni albo po terminie →
 czerwony `test`; wyjątek wygasający za 7 dni → issue, za 8 dni → brak (testy `core/vuln`,
@@ -649,7 +650,7 @@ docelowe bez strażnika (budżety warstw, Z, pokrycie) stoją w klauzulach, w zn
 | §3.6 | czerwony main bez issue | ≤ 24h0m0s | stages/mainhealth |
 | §6.2 | ważność wyjątku podatności | ≤ 90 dni | core/vuln |
 | §8.9 | rozjazd zegara maszyny z API GitHuba | ≤ 1m0s przed `cluster up` i `release` | core/clock, adapters/host |
-| §8.7 | ostrzeżenie przed wygaśnięciem wyjątku | 168h0m0s przed datą, w issue nocnym | stages/vulns, stages/gocode |
+| §8.7 | ostrzeżenie przed wygaśnięciem wyjątku | 168h0m0s przed datą, w issue skanu | stages/vulns, stages/gocode |
 <!-- progi: koniec -->
 
 Koniec kontraktu. Zmiana: §0.3. Wyjątek: §0.4.

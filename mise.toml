@@ -200,7 +200,7 @@ description = "Promocja wydania na prod (decyzje 38 i 40): -- <obraz@sha256:…>
 run = "ci/dft promote"
 
 [tasks."vulns:issue"]
-description = "Wynik nocnych skanów podatności (obraz, kod Go) z katalogu raportów jako jedno issue (otwarcie, aktualizacja, zamknięcie)"
+description = "Wynik skanów podatności (obraz, kod Go) z katalogu raportów jako jedno issue (otwarcie, aktualizacja, zamknięcie)"
 run = "ci/dft vulns-issue"
 
 [tasks.ci]

@@ -131,7 +131,8 @@ func TestParseTestFlags(t *testing.T) {
 	}{
 		{[]string{"--event", "pull_request", "--base", "abc"}, testMode{vulns: goVulnMode{baseline: "abc"}, base: "abc"}},
 		{[]string{"--event", "push", "--base", ""}, testMode{vulns: goVulnMode{reportOnly: true}}},
-		{[]string{"--event", "schedule"}, testMode{vulns: goVulnMode{reportOnly: true}}},
+		{[]string{"--event", "schedule"}, testMode{vulns: goVulnMode{skip: true}}},
+		{[]string{"--event", "workflow_dispatch"}, testMode{vulns: goVulnMode{reportOnly: true}}},
 		{nil, testMode{}},
 		{[]string{"--base", "origin/main"}, testMode{vulns: goVulnMode{baseline: "origin/main"}, base: "origin/main"}},
 		{[]string{"--vulns-baseline", "origin/main"}, testMode{vulns: goVulnMode{baseline: "origin/main"}}},

@@ -69,8 +69,10 @@ type Checker struct {
 	// było. Kod bierze Sources. Pusty — blokuje każda podatność.
 	VulnBaseline string
 	Sources      Sources
-	// VulnReportOnly — raport bez blokowania (main, nocą; decyzja 37).
+	// VulnReportOnly — raport bez blokowania (main, bieg ręczny; decyzja 37).
 	VulnReportOnly bool
+	// VulnSkip — bez skanu i bez raportu (harmonogram; decyzja 83).
+	VulnSkip bool
 	// Publish dostaje raport govulncheck, także przy wyniku negatywnym
 	// (plik raportu, podsumowanie biegu); nil — bez raportu.
 	Publish func(vuln.Report) error
@@ -339,6 +341,10 @@ func (c Checker) coverage(profile string) error {
 // z poprawką, chyba że ma ważny wyjątek (zakres go), była już
 // w VulnBaseline albo bieg tylko raportuje; bez poprawki — ostrzeżenie.
 func (c Checker) Vulncheck(ctx context.Context) error {
+	if c.VulnSkip {
+		cli.Step("pominięty: harmonogram nie skanuje (decyzja 83)")
+		return nil
+	}
 	rep, err := c.vulnReport(ctx)
 	// Raport także przy wyniku negatywnym — awaria skanu raportu nie ma.
 	if err != nil && cli.ExitCode(err) != cli.ExitUnmet {
@@ -402,7 +408,7 @@ func (c Checker) vulnReport(ctx context.Context) (vuln.Report, error) {
 // govulncheck ocenia ją po wersji go, którym biegnie. Nowa podatność
 // w stdlib jest więc w obu skanach i nie blokuje PR-a, ale nowe wywołanie
 // podatnej funkcji stdlib — tak. PR, który obniża wersję Go, nie jest tu
-// wyłapany; wyłapie go raport na main i skan nocny.
+// wyłapany; wyłapie go raport na main.
 func (c Checker) baselineVulns(ctx context.Context, db vuln.Database) (_ []vuln.Finding, ok bool, err error) {
 	tmp, err := os.MkdirTemp("", "dft-govulncheck-")
 	if err != nil {

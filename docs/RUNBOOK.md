@@ -493,7 +493,8 @@ a w repozytorium publicznym wyłącza go po 60 dniach bez aktywności.
 - `disabled_inactivity` — włącz (autor, prawa admina):
   `./bin/mise exec -- gh workflow enable ci.yml`;
 - noc ręcznie: `./bin/mise exec -- gh workflow run ci.yml --ref main`.
-  `workflow_dispatch` biegnie jak noc: W1 i W2, raport podatności
+  `workflow_dispatch` biegnie jak noc, a do tego skanuje podatności, czego
+  harmonogram już nie robi (decyzja 83): W1 i W2, raport podatności
   z wygasającymi wyjątkami, dryf ustawień, budżety, rolling update,
   upgrade N-1 → N i rollback pod ruchem oraz negatywy na klastrze.
 

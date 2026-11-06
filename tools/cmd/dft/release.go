@@ -302,7 +302,7 @@ func reportTrial(v *cli.Verdict, name, unit string, res trial.Result, need int) 
 	cli.Step("%s: %d zielonych %s z rzędu — status można dopisać do .github/rulesets/main.json", name, res.Streak, unit)
 }
 
-// runVulnsIssue — wynik nocnych skanów do jednego issue (stages/vulns).
+// runVulnsIssue — wynik skanów podatności do jednego issue (stages/vulns).
 // Argument to katalog z raportami obu skanów; których szukać, wie dft, a nie
 // workflow — nowy skan nie zostanie pominięty przez zapomniany argument.
 // Brak pliku to skan, który się nie wykonał, a nie błąd wywołania.

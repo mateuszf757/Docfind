@@ -92,7 +92,7 @@ var commands = map[string]command{
 	},
 	"vulns-issue": {
 		usage: "dft vulns-issue <katalog raportów>",
-		help:  "wynik nocnych skanów podatności (obraz, kod Go) jako jedno issue: otwiera, aktualizuje albo zamyka (gh)",
+		help:  "wynik skanów podatności (obraz, kod Go) jako jedno issue: otwiera, aktualizuje albo zamyka (gh)",
 		run:   runVulnsIssue,
 	},
 	"trial": {

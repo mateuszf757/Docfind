@@ -1170,6 +1170,9 @@ próbnego — przyczyna przed wymaganiem, nie ponowienia.
 > w rejestrze, punktem odniesienia jest obraz najbliższego przodka, a nie
 > „bez porównania”; okres próbny `vulns` liczy też scalone PR-y, bo seria
 > na `main` mierzy tylko tryb raportu.
+>
+> Zmienione decyzją 83: harmonogram nie skanuje, wiersze „nocą” poniżej
+> dotyczą już tylko biegu ręcznego.
 
 **Wybieram dwie atestacje i skaner, którego podpis sprawdza mise.**
 Publikacja niosła atestację BuildKitu z pochodzeniem, bez SBOM; nikt jej
@@ -2312,7 +2315,8 @@ bieg zamiast go streszczać.
   która przestała przychodzić, sama tego nie zgłosi.
 - **Wygasające wyjątki.** Wyjątek podatności, który wygaśnie w ciągu
   tygodnia, trafia do raportu, ostrzeżenia i issue nocnego i trzyma je
-  otwarte jak blokująca podatność — za tydzień nią będzie.
+  otwarte jak blokująca podatność — za tydzień nią będzie. Od decyzji 83
+  tylko w biegu ręcznym.
 - **Przerwy w nocach.** Seria okresu próbnego kończy się na przerwie
   dłuższej niż 48 h między biegami nocnymi: dziura w pomiarze to nie
   zielony bieg.
@@ -3475,6 +3479,46 @@ Opis i naprawa hosta są w RUNBOOK.
 czasie trwania (sprawdzam przy każdym podniesieniu wersji, test:
 `TestUpGitOpsResync`) albo gdy panika zacznie przechodzić przez politykę
 ponowień — wtedy `gitops.Stalled` i `SyncApplication` znikają.
+
+## 83. Bez nocnych skanów podatności: skan przy zmianie i na żądanie
+
+> Zmienia decyzje 37 i 54 w części dotyczącej nocy. Decyzja autora
+> z 2026-11-06.
+
+**Wybieram skan przy zmianie i na żądanie zamiast skanu z harmonogramu.**
+Bieg z harmonogramu nie uruchamia już zadań `vulns` i `vulns-issue`, a `dft
+test --event schedule` pomija govulncheck. Reszta nocy biegnie jak dotąd: W1
+i W2 na `main`, dryf ustawień, zdrowie `main`, budżety, upgrade i rollback pod
+ruchem. Zostają:
+
+| Kiedy | Co skanuje | Co blokuje |
+|---|---|---|
+| PR | obraz i kod `tools/` | podatności, które PR wnosi |
+| push na `main` | obraz i kod `tools/` | nic — raport w podsumowaniu biegu |
+| tag `v*` | obraz wydania | każda naprawialna HIGH/CRITICAL bez wyjątku |
+| `workflow_dispatch` | obraz i kod `tools/` | nic — raport do issue, które też zamyka |
+
+Issue prowadzi dalej `dft vulns-issue`, pod tym samym tytułem, bo po nim jest
+odnajdywane. Sam harmonogram zostaje, a warunki są na zdarzeniu `schedule`,
+więc powrót to cofnięcie tej zmiany.
+
+**Co tracę:**
+- podatność opublikowana w pakiecie obrazu, który się nie zmienia, nie wychodzi
+  sama. Zobaczy ją dopiero następny push na `main` (raport, którego nikt nie
+  musi czytać), bieg ręczny albo tag — ten ostatni zatrzymuje wydanie w chwili,
+  w której najmniej się tego chce;
+- przypomnienia o wyjątkach podatności wygasających w ciągu tygodnia
+  (§8.7 kontraktu) przychodzą tylko z biegu ręcznego. Wygasły wyjątek nadal
+  blokuje tag;
+- issue nie zamknie się samo po naprawie, dopóki ktoś nie uruchomi biegu
+  ręcznego;
+- pokrycie: PR obniżający wersję Go wyłapywał raport na `main` i noc — zostaje
+  sam raport.
+
+**Kiedy zmieniam zdanie:** przed pierwszą dostawą do klienta (Etap 10). Obraz
+u klienta nie zmienia się między wydaniami, więc tylko skan z harmonogramu
+powie, że działająca wersja ma nową podatność. Wcześniej — jeśli tag zatrzyma
+wydanie podatnością starszą niż tydzień, o której nikt nie wiedział.
 
 ## Czego bym dziś nie powtórzył
 

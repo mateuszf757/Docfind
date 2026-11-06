@@ -216,18 +216,17 @@ type Issues interface {
 	CloseIssue(ctx context.Context, number int, comment string) error
 }
 
-// SyncIssue przenosi wynik nocnych skanów — obrazu i kodu narzędzi — do
+// SyncIssue przenosi wynik skanów podatności — obrazu i kodu narzędzi — do
 // jednego issue zamiast czerwieni na main (decyzja 37): blokujące
 // podatności w którymkolwiek — issue otwarte albo zaktualizowane; brak
 // blokujących we wszystkich — otwarte issue zamknięte z komentarzem.
 //
 // missing — skany, które nie dały raportu (zadanie przed nimi nie przeszło).
 // Brak raportu to brak wiedzy, a nie brak podatności: issue nie zostaje
-// zamknięte, a wynik jest niespełniony, żeby bieg nocny nie wyglądał na
-// kompletny.
+// zamknięte, a wynik jest niespełniony, żeby bieg nie wyglądał na kompletny.
 func SyncIssue(ctx context.Context, issues Issues, reports []vuln.Report, missing []string) error {
 	if len(reports) == 0 {
-		return cli.Unmet("żaden nocny skan nie dał raportu (%s) — issue bez zmian", strings.Join(missing, ", "))
+		return cli.Unmet("żaden skan nie dał raportu (%s) — issue bez zmian", strings.Join(missing, ", "))
 	}
 	blocking, expiring := 0, 0
 	for _, r := range reports {

@@ -119,7 +119,8 @@ zero nieudanych), i sprząta po sobie także po przerwaniu.
   wdrożenie z rejestru na `ci`, `staging` i `prod` sprawdza obie atestacje
   i commit (decyzja 37)
 - skan podatności obrazu (OSV-Scanner): naprawialne HIGH/CRITICAL blokują
-  PR, jeśli PR je wnosi, i wydanie zawsze; nocą raport do issue; wyjątki
+  PR, jeśli PR je wnosi, i wydanie zawsze; raport do issue tylko z biegu
+  ręcznego, harmonogram nie skanuje (decyzja 83); wyjątki
   z uzasadnieniem i datą wygaśnięcia w `ci/vuln-exceptions.yaml`
 - efemeryczny klaster k3d w CI na każdym PR-ze, po scaleniu i nocą: obraz
   z zadania build (archiwum albo digest z GHCR), drain każdego węzła,
