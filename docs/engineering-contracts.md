@@ -444,7 +444,7 @@ Decyzja: 22, 49, 64.
 GitHuba), obrazy digestem, narzędzia z `mise.lock` (`locked = true`), charty sumą — także chart
 publikowany tylko jako OCI, pobierany jako warstwa manifestu, bez `helm pull` — a w rejestrze
 jako lustro tych samych bajtów po digeście, z tagiem, który nie zmienia treści; moduły Go
-z `go.sum` i tylko z `proxy.golang.org`; cooldown Dependabota 7 dni (major 14).
+z `go.sum` i tylko z `proxy.golang.org`; cooldown Dependabota 7 dni (major 14); aktualizacje wersji wstrzymane (decyzja 84).
 Egzekwuje: mise, ustawienie `sha_pinning_required` (`dft repo-settings`), `core/policy`
 (digest), `dft check versions`; suma charta przy każdym pobraniu (`adapters/helm`), lustro
 w zadaniu `chart` (`chart:mirror`, `stages/chartpub`); każda akcja złożona w `directories`

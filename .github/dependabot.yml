@@ -1,3 +1,7 @@
+# WSTRZYMANY (decyzja 84): `open-pull-requests-limit: 0` w każdym wpisie to
+# udokumentowane tymczasowe wyłączenie aktualizacji wersji. Reszta konfiguracji
+# zostaje; powrót to usunięcie tych czterech linii.
+#
 # Przypięcia bez mechanizmu aktualizacji starzeją się po cichu: digest bazy
 # obrazu sprzed pół roku to baza z poprawkami bezpieczeństwa sprzed pół roku.
 # Dependabot proponuje aktualizacje jako PR-y, które przechodzą ten sam
@@ -43,6 +47,7 @@ updates:
     directories: ["/", "/.github/actions/*"]
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     cooldown:
       default-days: 7
     groups:
@@ -57,6 +62,7 @@ updates:
     directories: ["/services/api", "/ci/images"]
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     cooldown:
       default-days: 7
 
@@ -65,6 +71,7 @@ updates:
     directory: /services/api
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     cooldown:
       default-days: 7
       semver-patch-days: 7
@@ -86,6 +93,7 @@ updates:
     directory: /tools
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
     cooldown:
       default-days: 7
       semver-patch-days: 7
