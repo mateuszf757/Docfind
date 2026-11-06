@@ -163,7 +163,7 @@ func Thresholds() []Threshold {
 		{"§3.6", "czerwony main bez issue", fmt.Sprintf("≤ %v", MainRedLimit), "stages/mainhealth"},
 		{"§6.2", "ważność wyjątku podatności", fmt.Sprintf("≤ %d dni", vuln.MaxExceptionDays), "core/vuln"},
 		{"§8.9", "rozjazd zegara maszyny z API GitHuba", fmt.Sprintf("≤ %v przed `cluster up` i `release`", MaxClockSkew), "core/clock, adapters/host"},
-		{"§8.7", "ostrzeżenie przed wygaśnięciem wyjątku", fmt.Sprintf("%v przed datą, w issue nocnym", ExceptionWarning), "stages/vulns, stages/gocode"},
+		{"§8.7", "ostrzeżenie przed wygaśnięciem wyjątku", fmt.Sprintf("%v przed datą, w issue skanu", ExceptionWarning), "stages/vulns, stages/gocode"},
 	}
 }
 

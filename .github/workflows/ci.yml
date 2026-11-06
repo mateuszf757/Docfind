@@ -14,8 +14,9 @@ name: ci
 #           wydania, przechodzi skan podatności i po zgodzie autora trafia
 #           na prod (zadanie promote, decyzja 38). Testy, build i klaster
 #           przeszedł już na main, a bramki akceptacji — na stagingu
-# nocą    → to samo co PR, na main: seria biegów tego samego kodu mówi, czy
-#           bramka klastrowa migocze (okres próbny, decyzja 36)
+# nocą    → to samo co PR, na main, bez skanów podatności (decyzja 83): seria
+#           biegów tego samego kodu mówi, czy bramka klastrowa migocze
+#           (okres próbny, decyzja 36)
 #
 # Obraz nie niesie wersji, tylko commit: wersję wdrożenia podaje chart
 # zmienną DOCFIND_VERSION. Inaczej obraz dla produkcji nie byłby obrazem,
@@ -26,7 +27,8 @@ name: ci
 # opublikowanego obrazu jest wyjściem zadania build i trafia do jego
 # podsumowania — promuje się digest, nie tag. Zadanie vulns skanuje obraz
 # (decyzja 37): na PR-ze blokuje nowe naprawialne HIGH/CRITICAL, na tagu
-# każdą bez wyjątku, na main i nocą tylko raportuje — nocą do issue.
+# każdą bez wyjątku, na main tylko raportuje, a w biegu ręcznym raportuje
+# do issue. Z harmonogramu nie biegnie (decyzja 83).
 #
 # Build obrazu biegnie także na PR-ach, bo zmiana zależności albo obrazu
 # bazowego sprawdzona samymi testami jednostkowymi trafiłaby do main, zanim
@@ -66,9 +68,10 @@ on:
   # szczytu; w repozytorium publicznym wyłącza go po 60 dniach bez aktywności.
   schedule:
     - cron: "17 3 * * *"
-  # Noc na żądanie (decyzja 54): to samo co harmonogram, uruchamiane z UI albo
-  # `gh workflow run ci.yml --ref main` — po zmianie nocnych zadań i gdy GitHub
-  # pominął harmonogram.
+  # Noc na żądanie (decyzja 54): to samo co harmonogram plus skany podatności
+  # (decyzja 83), uruchamiane z UI albo `gh workflow run ci.yml --ref main` —
+  # po zmianie nocnych zadań, gdy GitHub pominął harmonogram i gdy potrzebny
+  # jest aktualny raport podatności.
   workflow_dispatch:
 
 # Akcje przypięte pełnym SHA commita, nie tagiem. Tag akcji jest przesuwalny —
@@ -218,9 +221,9 @@ jobs:
         run: ./bin/mise exec -- ci/dft --help > /dev/null
 
       # govulncheck na PR-ze blokuje tylko podatności, których nie ma w kodzie
-      # tools/ z commita bazowego (decyzja 37); na main i nocą tylko
-      # raportuje — nowa podatność w bazie Go trafia do issue, a nie na
-      # czerwono. Tryb wybiera dft ze zdarzenia.
+      # tools/ z commita bazowego (decyzja 37); na main i w biegu ręcznym
+      # tylko raportuje, a z harmonogramu nie biegnie (decyzja 83). Tryb
+      # wybiera dft ze zdarzenia.
       - name: kod Go
         env:
           EVENT: ${{ github.event_name }}
@@ -229,9 +232,10 @@ jobs:
 
       # Raport govulncheck także przy czerwonym kroku — wtedy jest
       # najbardziej potrzebny. Brak pliku znaczy, że test nie doszedł do
-      # govulncheck; nocą zgłosi to vulns-issue.
+      # govulncheck; w biegu ręcznym zgłosi to vulns-issue. Z harmonogramu
+      # raportu nie ma, bo nie ma skanu (decyzja 83).
       - name: raport podatności kodu Go
-        if: always()
+        if: always() && github.event_name != 'schedule'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: raport-podatnosci-go
@@ -575,7 +579,8 @@ jobs:
     # digest z build-publish (push na main) albo wydanie z release (tag).
     # Warstwa W1 (decyzja 74): skan zaraz po obrazie, bez czekania na lint
     # i test — od nich nie zależy, a jego wynik ma przyjść w szybkim sygnale.
-    if: ${{ !cancelled() && (needs.build.result == 'success' || needs.build-publish.result == 'success' || needs.release.result == 'success') }}
+    # Z harmonogramu nie biegnie: skan to PR, push, tag i bieg ręczny (decyzja 83).
+    if: ${{ !cancelled() && github.event_name != 'schedule' && (needs.build.result == 'success' || needs.build-publish.result == 'success' || needs.release.result == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -623,8 +628,8 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: ./bin/mise run check:vulns -- --image-archive "$IMAGE_ARCHIVE" --config-digest "$CONFIG_DIGEST" --baseline-commit "$BASE_SHA"
 
-      - name: skan nocny obrazu z main (raport)
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+      - name: skan obrazu z main na żądanie (raport)
+        if: github.event_name == 'workflow_dispatch'
         env:
           IMAGE_ARCHIVE: ${{ runner.temp }}/obraz/image-api.tar
           CONFIG_DIGEST: ${{ needs.build.outputs.config }}
@@ -658,8 +663,9 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-  # Nocą wynik skanu idzie do issue, a nie na czerwono na main: podatność
-  # opublikowana w nocy w pakiecie obrazu nie jest porażką ostatniego commita.
+  # W biegu ręcznym wynik skanu idzie do issue, a nie na czerwono na main:
+  # nowa podatność w pakiecie obrazu nie jest porażką ostatniego commita.
+  # Z harmonogramu nie biegnie (decyzja 83).
   #
   # Jedno issue na oba skany: obrazu (zadanie vulns) i kodu narzędzi Go
   # (govulncheck w zadaniu test). Zadanie biegnie także wtedy, gdy któryś
@@ -668,15 +674,15 @@ jobs:
   # i wynikiem niespełnionym, a issue nie zamyka.
   vulns-issue:
     needs: [test, vulns]
-    # Noc: harmonogram albo uruchomienie ręczne — jedyne zdarzenia poza PR-em
-    # i push. Koniunkcja wykluczeń, a nie alternatywa: regułę uprawnień
-    # (decyzja 49) przekonuje tylko jawne wykluczenie pull_request.
-    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' }}
+    # Tylko uruchomienie ręczne. Koniunkcja wykluczeń, a nie równość:
+    # regułę uprawnień (decyzja 49) przekonuje tylko jawne wykluczenie
+    # pull_request.
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.event_name != 'push' && github.event_name != 'schedule' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
-      # Otwarcie, aktualizacja albo zamknięcie issue nocnego skanu.
+      # Otwarcie, aktualizacja albo zamknięcie issue skanu.
       issues: write
     env:
       MISE_AUTO_INSTALL: "false"
@@ -701,7 +707,7 @@ jobs:
           merge-multiple: true
           path: ${{ runner.temp }}/raporty
 
-      - name: issue skanu nocnego
+      - name: issue skanu
         env:
           GH_TOKEN: ${{ github.token }}
           REPORTS: ${{ runner.temp }}/raporty

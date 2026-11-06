@@ -299,10 +299,13 @@ func checkCharts(ctx context.Context, w *workspace) (err error) {
 //	--vulns-baseline REV      kod tools/ z REV jako punkt odniesienia:
 //	                          blokuje tylko to, czego tam nie ma (PR: commit
 //	                          bazowy; lokalnie np. origin/main)
-//	--vulns-report-only       raport bez blokowania (main, nocą)
+//	--vulns-report-only       raport bez blokowania (main, bieg ręczny)
+//
+// skip nie ma flagi: ustawia je tylko zdarzenie schedule (decyzja 83).
 type goVulnMode struct {
 	baseline   string
 	reportOnly bool
+	skip       bool
 }
 
 // testUsage — `dft test`; zdarzenie i commit bazowy podaje CI.
@@ -320,7 +323,9 @@ const (
 // w DECYZJE (decyzja 50).
 //
 //	--event pull_request --base REV   PR: oba tryby względem REV
-//	--event <inne>                    push, noc, ręcznie: govulncheck tylko
+//	--event schedule                  jak niżej, ale bez govulncheck: harmonogram
+//	                                  nie skanuje (decyzja 83)
+//	--event <inne>                    push, ręcznie: govulncheck tylko
 //	                                  raportuje, pól chronionych nie ma
 //	                                  z czym porównać (PR już porównał)
 //	bez --event                       lokalnie: --base REV jak na PR-ze,
@@ -366,6 +371,9 @@ func testModeFor(event, base string, vulns goVulnMode) (testMode, error) {
 		if base != "" || vulns != (goVulnMode{}) {
 			return testMode{}, cli.Usage("użycie: %s — poza pull_request bez --base i flag govulncheck", testUsage)
 		}
+		if event == "schedule" {
+			return testMode{vulns: goVulnMode{skip: true}}, nil
+		}
 		return testMode{vulns: goVulnMode{reportOnly: true}}, nil
 	case base != "" && vulns.baseline != "":
 		return testMode{}, cli.Usage("użycie: %s — --base wyznacza już punkt odniesienia govulncheck", testUsage)
@@ -407,6 +415,7 @@ func goChecker(w *workspace, mode goVulnMode) (gocode.Checker, error) {
 		VulnBaseline:   mode.baseline,
 		Sources:        git.Repo{Dir: moduleDir, Runner: w.runner},
 		VulnReportOnly: mode.reportOnly,
+		VulnSkip:       mode.skip,
 		Publish: func(rep vuln.Report) error {
 			return errors.Join(w.writeReport(reportVulnsGo, rep), appendSummary(rep.Summary()))
 		},
