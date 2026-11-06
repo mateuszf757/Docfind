@@ -186,11 +186,12 @@ func (s Scanner) Scan(ctx context.Context, archive string, download bool) (_ []v
 		args = append(args, "--download-offline-databases")
 	}
 	_, err = s.Runner.Run(ctx, proc.Cmd{Name: "osv-scanner", Args: args, Env: []string{"OSV_SCANNER_LOCAL_DB_CACHE_DIRECTORY=" + s.DBDir}})
-	// 0 — brak podatności, 1 — są (to wynik, nie awaria); 128 — skaner nie
-	// znalazł żadnych pakietów, czyli nic nie sprawdził.
-	switch code := proc.ExitCode(err); code {
-	case 0, 1:
-	case 128:
+	// 0 — brak podatności (Run nie zwraca wtedy błędu, a proc.ExitCode(nil) to
+	// -1), 1 — są (to wynik, nie awaria); 128 — skaner nie znalazł żadnych
+	// pakietów, czyli nic nie sprawdził.
+	switch code := proc.ExitCode(err); {
+	case err == nil, code == 1:
+	case code == 128:
 		return nil, fmt.Errorf("osv-scanner nie znalazł pakietów w %s — skan niczego nie sprawdził", archive)
 	default:
 		return nil, fmt.Errorf("osv-scanner: %w", err)

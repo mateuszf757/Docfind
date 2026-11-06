@@ -83,6 +83,7 @@ func TestScanArchive(t *testing.T) {
 		wantErr  bool
 		wantSeen int
 	}{
+		{"brak podatności (kod 0) to wynik", 0, false, 2},
 		{"podatności znalezione (kod 1) to wynik", 1, false, 2},
 		{"brak pakietów (kod 128) to awaria", 128, true, 0},
 		{"inny kod to awaria", 127, true, 0},
