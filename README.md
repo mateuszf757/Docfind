@@ -105,9 +105,9 @@ zero nieudanych), i sprząta po sobie także po przerwaniu.
 - wszystko z zewnątrz przypięte niezmiennie: narzędzia sumą w `mise.lock`,
   charty sumą, obrazy i BuildKit digestem, akcje GitHuba SHA commita, runner
   wersją systemu, schematy kubeconform commitem; aktualizacje proponuje
-  Dependabot (decyzje 20 i 23)
-- łatki od Dependabota — także odświeżenia digestu obrazu bazowego — scalane
-  automatycznie po przejściu CI, z siedmiodniowym cooldownem; minor i major
+  Dependabot (decyzje 20 i 23), teraz wstrzymany (decyzja 84)
+- łatki od Dependabota, gdy działa — także odświeżenia digestu obrazu bazowego —
+  scalane automatycznie po przejściu CI, z siedmiodniowym cooldownem; minor i major
   czekają na przegląd, a nowe wydanie Alpine pod tym samym tagiem zatrzymuje
   build (decyzja 22)
 - testy jednostkowe biegną dwa razy: na hoście i w obrazie na musl, na tej

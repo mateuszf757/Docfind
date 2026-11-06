@@ -481,6 +481,8 @@ zwyklejszy układ dla każdego, kto otworzy obraz.
 
 ## 22. Łatki od Dependabota scalane automatycznie, za bramką CI
 
+> Wstrzymane decyzją 84: Dependabot nie otwiera PR-ów.
+
 **Wybieram automat z warunkami, nie automat bez warunków.** Przypięcia z decyzji
 20 bez aktualizacji się starzeją, a ręczne scalanie każdej łatki to praca, która
 w końcu przestaje być robiona. Łatki (`version-update:semver-patch`) i
@@ -3519,6 +3521,42 @@ więc powrót to cofnięcie tej zmiany.
 u klienta nie zmienia się między wydaniami, więc tylko skan z harmonogramu
 powie, że działająca wersja ma nową podatność. Wcześniej — jeśli tag zatrzyma
 wydanie podatnością starszą niż tydzień, o której nikt nie wiedział.
+
+## 84. Dependabot wstrzymany limitem PR-ów, plik zostaje
+
+> Wstrzymuje decyzję 22 i tę część decyzji 20, która liczy na automatyczne
+> aktualizacje przypięć. Decyzja autora z 2026-11-06.
+
+**Wybieram `open-pull-requests-limit: 0` zamiast usunięcia albo zakomentowania
+wpisów.** [Dokumentacja opcji
+Dependabota](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference)
+opisuje zero jako tymczasowe wyłączenie aktualizacji wersji dla menedżera
+pakietów. Ekosystemy, katalogi, cooldown i grupy zostają w
+`.github/dependabot.yml`, a bramka pokrycia akcji złożonych w `dft check
+workflows` nadal ma co sprawdzać. Zakomentowanie wszystkich wpisów zostawiłoby
+`updates: []`, którego dokumentacja nie opisuje, i wymagałoby wyłączenia tej
+bramki. Powrót to usunięcie czterech linii.
+
+Aktualizacje bezpieczeństwa są wyłączone w ustawieniach repozytorium
+(`automated-security-fixes` zwraca `enabled: false`, stan z 2026-11-06), więc
+nie ma drugiego źródła PR-ów.
+
+Workflow `dependabot-auto-merge` i klucz aplikacji zostają. Bez PR-ów od
+Dependabota zadanie jest pomijane warunkiem na autora PR-a, a rotacja klucza
+z `ci/contract-exceptions.yaml` (2027-01-15) obowiązuje dalej.
+
+**Co tracę:**
+- przypięcia starzeją się po cichu: digesty obrazów, akcje, pakiety Pythona
+  i moduły Go. Podbicia, które przychodziły same, trzeba robić ręcznie, razem
+  z cooldownem, którego nikt już nie pilnuje;
+- razem z decyzją 83 nic samo nie powie, że niezmienione przypięcie ma nową
+  podatność. Dowie się o tym bieg ręczny albo dopiero tag;
+- Dockerfile, `ci/pins.env` i `mise.toml` nadal opisują Dependabota jako źródło
+  aktualizacji — to opis stanu docelowego, nie obecnego.
+
+**Kiedy zmieniam zdanie:** razem z decyzją 83, przed pierwszą dostawą do klienta
+(Etap 10). Wcześniej, jeśli ręczne podbijanie zacznie być odkładane: pierwszy
+tag zatrzymany przez podatność, którą załatałaby zwykła łatka od Dependabota.
 
 ## Czego bym dziś nie powtórzył
 
